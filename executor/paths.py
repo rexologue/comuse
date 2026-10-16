@@ -8,13 +8,12 @@ and checks the task's folder permissions."""
 
 from __future__ import annotations
 
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
+from common.pathrefs import DATA_PREFIX, normalize_folder
 from common.schemas.task import Permissions
 from common.tools import PermissionDenied
 
-
-DATA_PREFIX = "data:"
 
 # Only these DATA_DIR subfolders are visible to tools (app.db and secrets are not).
 _DATA_AREAS = ("templates", "outputs")
@@ -100,12 +99,3 @@ class WorkspacePaths:
             f"(разрешены: {', '.join(folders) or 'ничего'})"
         )
 
-
-def normalize_folder(folder: str) -> str:
-    """`./Отчёты/`, `Отчёты\\` and `Отчёты` all mean the same workspace folder."""
-    cleaned = folder.strip().replace("\\", "/").strip("/")
-
-    if cleaned in ("", "."):
-        return ""
-
-    return PurePosixPath(cleaned).as_posix()
