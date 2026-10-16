@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
 from common.errors import ApiError
+from common.storage.queries import run_detail
 from main import views
 from main.auth import require_client
 from main.proxy import reverse_proxy
@@ -89,7 +90,7 @@ async def start_run(body: RunBody, request: Request) -> Any:
 
 @router.get("/runs/{run_id}", summary="Run status with its steps")
 async def get_run(run_id: str):
-    run = views.run_detail(run_id)
+    run = run_detail(run_id)
     if run is None:
         raise ApiError(status_code=404, message=f"Run `{run_id}` not found")
 

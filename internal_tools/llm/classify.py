@@ -52,7 +52,7 @@ async def classify(inp: ClassifyInput, ctx: ToolContext) -> ClassifyOutput:
                 ),
             }
         ],
-        model=ctx.settings.llm.model_agent,
+        model=ctx.settings.llm.model_tools,
         schema=schema,
         name="classify",
         validate=validate,

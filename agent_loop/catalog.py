@@ -17,6 +17,9 @@ log = logging.getLogger("catalog")
 
 _CATALOG_TTL_SEC = 60
 
+# Looking around is how every request starts; these are never ranked out.
+CORE_TOOLS = {"fs.list", "docs.read"}
+
 
 class ToolCatalog:
     def __init__(self, main: MainClient, llm: LLMClient, embed_model: str, top_k: int):
@@ -43,7 +46,7 @@ class ToolCatalog:
     async def select(self, query: str, always: set[str] | None = None) -> list[dict[str, Any]]:
         """Top-k tools for the query plus `always` (tools already used in the session)."""
         manifests = await self.manifests()
-        always = {name for name in (always or set()) if name in manifests}
+        always = {name for name in (always or set()) | CORE_TOOLS if name in manifests}
 
         if len(manifests) <= self.top_k:
             return list(manifests.values())

@@ -88,7 +88,9 @@ class LLMClient:
                 details={"base_message": str(e)},
             ) from e
 
-        missing = [m for m in required_models if m not in models]
+        # Ollama lists `bge-m3:latest` but serves plain `bge-m3` too.
+        served = set(models) | {m.removesuffix(":latest") for m in models}
+        missing = [m for m in required_models if m not in served]
         if missing:
             raise ApiError(
                 status_code=404,
@@ -105,6 +107,7 @@ class LLMClient:
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
         temperature: float | None = None,
+        reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         """One non-streaming completion; returns the assistant message with
         reasoning blocks stripped from `content`."""
@@ -118,6 +121,10 @@ class LLMClient:
 
         if temperature is not None:
             body["temperature"] = temperature
+
+        # Reasoning models (gpt-oss) trade quality for latency: low / medium / high.
+        if reasoning_effort:
+            body["reasoning_effort"] = reasoning_effort
 
         data = await self._send("POST", self.route, json_body=body)
 

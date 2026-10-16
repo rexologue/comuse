@@ -32,7 +32,7 @@ async def write(inp: WriteInput, ctx: ToolContext) -> WriteOutput:
             {"role": "system", "content": "Пиши по-русски, деловым и простым языком. Верни только сам текст."},
             {"role": "user", "content": f"{inp.instruction}\n\n{('Данные:\n' + context) if context else ''}"},
         ],
-        model=ctx.settings.llm.model_agent,
+        model=ctx.settings.llm.model_tools,
     )
 
     if not message["content"]:

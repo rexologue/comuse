@@ -24,6 +24,8 @@ log = logging.getLogger("loop")
 # Tool results are cut before they go back into the context window.
 _RESULT_CHARS = 6000
 
+_MODEL_ATTEMPTS = 3
+
 
 @dataclass(slots=True)
 class TurnResult:
@@ -55,7 +57,7 @@ class AgentLoop:
             messages = [{"role": "system", "content": system_prompt(date.today())}]
             messages += history.llm_history(session_id, self.settings.agent.history_messages)
 
-            reply = await self.llm.chat(messages, model=self.settings.llm.model_agent, tools=tools)
+            reply = await self._complete(messages, tools)
             tool_calls = _normalize_calls(reply.get("tool_calls") or [])
 
             message_id = history.add_message(session_id, "assistant", reply["content"], tool_calls=tool_calls or None)
@@ -66,7 +68,11 @@ class AgentLoop:
 
             for call in tool_calls:
                 output = await self._dispatch(session_id, message_id, call, by_function)
-                result.tool_events.append({"tool": call["function"]["name"], "status": output.get("status")})
+                event = {"tool": tool_name(call["function"]["name"]), "status": output.get("status")}
+                result.tool_events.append(event)
+
+                # Lets a UI show progress while a long turn is still running.
+                await self.main.publish("agent.tool", {"session_id": session_id, **event})
 
                 history.add_message(
                     session_id,
@@ -80,6 +86,29 @@ class AgentLoop:
         history.add_message(session_id, "assistant", result.content)
 
         return result
+
+
+    async def _complete(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> dict[str, Any]:
+        """One model step. Ollama answers 500 when a model emits a malformed tool call;
+        sampling again usually fixes it."""
+        llm = self.settings.llm
+
+        for attempt in range(1, _MODEL_ATTEMPTS + 1):
+            try:
+                return await self.llm.chat(
+                    messages,
+                    model=llm.model_agent,
+                    tools=tools,
+                    reasoning_effort=llm.agent_reasoning_effort or None,
+                )
+
+            except ApiError as e:
+                if e.status_code != 502 or attempt == _MODEL_ATTEMPTS:
+                    raise
+
+                log.warning("model step failed (%s), retrying %d/%d", e.message, attempt, _MODEL_ATTEMPTS)
+
+        raise AssertionError("unreachable")
 
 
     async def _dispatch(

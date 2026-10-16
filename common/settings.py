@@ -60,8 +60,10 @@ class LLMSettings:
     api_key: str
     no_proxy: bool
     model_agent: str
+    model_tools: str
     model_compiler: str
     model_embed: str
+    agent_reasoning_effort: str
     timeout: int
     max_retries: int
 
@@ -159,9 +161,20 @@ class Settings:
             "LLM_NO_PROXY",
         )
 
-        llm_model_agent = os.environ.get("LLM_MODEL_AGENT", "qwen3:30b")
-        llm_model_compiler = os.environ.get("LLM_MODEL_COMPILER", llm_model_agent)
+        # The chat loop needs the strongest multi-step tool user; llm.* tools and the
+        # compiler do single structured calls where a fast model is enough.
+        llm_model_agent = os.environ.get("LLM_MODEL_AGENT", "gpt-oss:120b")
+        llm_model_tools = os.environ.get("LLM_MODEL_TOOLS", "qwen3:30b")
+        llm_model_compiler = os.environ.get("LLM_MODEL_COMPILER", llm_model_tools)
         llm_model_embed = os.environ.get("LLM_MODEL_EMBED", "bge-m3")
+
+        # low | medium | high for reasoning models; empty = do not send the field.
+        llm_agent_reasoning_effort = os.environ.get("LLM_AGENT_REASONING_EFFORT", "low").strip().lower()
+        if llm_agent_reasoning_effort not in ("", "low", "medium", "high"):
+            raise SettingsError(
+                f"Incorrect `LLM_AGENT_REASONING_EFFORT`: {llm_agent_reasoning_effort!r}. "
+                f"Must be empty or one of ['low', 'medium', 'high']."
+            )
 
         llm_timeout = int_coercion(
             os.environ.get("LLM_TIMEOUT_SEC", "300"),
@@ -186,7 +199,7 @@ class Settings:
         )
 
         agent_tools_top_k = int_coercion(
-            os.environ.get("AGENT_TOOLS_TOP_K", "8"),
+            os.environ.get("AGENT_TOOLS_TOP_K", "16"),
             "AGENT_TOOLS_TOP_K",
             low=1,
         )
@@ -267,8 +280,10 @@ class Settings:
                 api_key=llm_api_key,
                 no_proxy=llm_no_proxy,
                 model_agent=llm_model_agent,
+                model_tools=llm_model_tools,
                 model_compiler=llm_model_compiler,
                 model_embed=llm_model_embed,
+                agent_reasoning_effort=llm_agent_reasoning_effort,
                 timeout=llm_timeout,
                 max_retries=llm_max_retries,
             ),
