@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+*.egg-info/
+
+# Окружение и данные
+.env
+data/
+workspace/
+
+# IDE
+.idea/
+.vscode/
