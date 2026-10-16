@@ -1,0 +1,129 @@
+"""Common FastAPI scaffolding: logging, storage, main client, registration, auth."""
+
+from __future__ import annotations
+
+import asyncio
+import hmac
+import logging
+import os
+import sys
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
+from typing import Callable
+
+from fastapi import APIRouter, Depends, FastAPI, Request
+
+from common.clients.main_client import INTERNAL_TOKEN_HEADER, MainClient
+from common.errors import ApiError, install_error_handlers
+from common.settings import Settings
+from common.storage.db import init_engine
+
+
+log = logging.getLogger("service")
+
+# Services re-register periodically so a restarted main relearns their addresses.
+_REGISTER_INTERVAL_SEC = 30
+
+LifespanHook = Callable[[FastAPI], AbstractAsyncContextManager[None]]
+
+
+def configure_logging() -> None:
+    """Send structured logs to stdout at the LOG_LEVEL from the environment."""
+    logging.basicConfig(
+        level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+        stream=sys.stdout,
+    )
+
+
+async def require_internal_token(request: Request) -> None:
+    """Only main (and other services via main) may call a service directly."""
+    expected = request.app.state.settings.service.internal_token
+    if not expected:
+        return
+
+    provided = request.headers.get(INTERNAL_TOKEN_HEADER, "")
+    if not hmac.compare_digest(provided, expected):
+        raise ApiError(status_code=401, message="Missing or invalid internal token")
+
+
+ops_router = APIRouter()
+
+
+@ops_router.get("/health", summary="Liveness")
+async def health(request: Request):
+    return {"status": "ok", "service": request.app.state.settings.service.name}
+
+
+async def _register_forever(main: MainClient, name: str, url: str) -> None:
+    while True:
+        try:
+            await main.register(name, url)
+
+        except ApiError as e:
+            log.warning("registration in main failed: %s", e.message)
+
+        await asyncio.sleep(_REGISTER_INTERVAL_SEC)
+
+
+def create_service_app(
+    *,
+    name: str,
+    title: str,
+    routers: list[tuple[APIRouter, str]],
+    lifespan_hook: LifespanHook | None = None,
+    protect: bool = True,
+) -> FastAPI:
+    """Build a service app. `routers` are (router, tag) pairs; with `protect` every
+    route except /health requires the internal token."""
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+
+        configure_logging()
+
+        settings = Settings.from_env(name)
+        init_engine(settings.storage)
+
+        main = MainClient.from_settings(settings.service)
+
+        app.state.settings = settings
+        app.state.main = main
+
+        register_task = None
+        if name != "main":
+            register_task = asyncio.create_task(
+                _register_forever(main, name, settings.service.self_url)
+            )
+
+        log.info(
+            "ready: service=%s self_url=%s main=%s data_dir=%s",
+            name,
+            settings.service.self_url,
+            settings.service.main_url,
+            settings.storage.data_dir,
+        )
+
+        try:
+            async with (lifespan_hook(app) if lifespan_hook else nullcontext()):
+                yield
+
+        finally:
+            if register_task is not None:
+                register_task.cancel()
+                try:
+                    await register_task
+                except asyncio.CancelledError:
+                    pass
+
+            await main.close()
+
+    app = FastAPI(title=title, version="0.1.0", lifespan=lifespan)
+    install_error_handlers(app)
+
+    app.include_router(ops_router, tags=["ops"])
+
+    dependencies = [Depends(require_internal_token)] if protect else []
+    for router, tag in routers:
+        app.include_router(router, tags=[tag], dependencies=dependencies)
+
+    return app
