@@ -72,13 +72,22 @@ class ToolContext:
         return self.paths.to_ref(path)
 
 
-    def output_path(self, filename: str) -> Path:
-        """A fresh file under `data:outputs/<run or session>/`, recorded as an artifact."""
+    def output_dir(self, subdir: str = "") -> Path:
+        """`data:outputs/<run or session>/<subdir>`, created on demand."""
         scope = self.run_id or self.session_id or "adhoc"
-        safe_name = Path(filename).name or "output"
 
-        path = self.settings.storage.outputs_dir / scope / safe_name
-        path.parent.mkdir(parents=True, exist_ok=True)
+        path = self.settings.storage.outputs_dir / scope
+        if subdir:
+            path = path / Path(subdir).name
+
+        path.mkdir(parents=True, exist_ok=True)
+
+        return path
+
+
+    def output_path(self, filename: str) -> Path:
+        """A file under `data:outputs/<run or session>/`, recorded as an artifact."""
+        path = self.output_dir() / (Path(filename).name or "output")
 
         self.artifacts.append(self.to_ref(path))
 

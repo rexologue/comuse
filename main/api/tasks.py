@@ -1,0 +1,101 @@
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi import APIRouter, Depends, Request
+from pydantic import BaseModel
+
+from common.errors import ApiError
+from main import views
+from main.auth import require_client
+from main.proxy import reverse_proxy
+
+
+router = APIRouter(dependencies=[Depends(require_client)])
+
+
+class RunBody(BaseModel):
+    task_id: str | None = None
+    task_version_id: str | None = None
+    dry_run: bool = False
+    wait: bool = False
+
+
+# -----------------------------
+# TASKS
+# -----------------------------
+
+@router.get("/tasks", summary="Tasks with their active scenario cards")
+async def list_tasks():
+    return {"tasks": views.task_list()}
+
+
+@router.get("/tasks/{task_id}", summary="Task, current version and history")
+async def get_task(task_id: str):
+    task = views.task_detail(task_id)
+    if task is None:
+        raise ApiError(status_code=404, message=f"Task `{task_id}` not found")
+
+    return task
+
+
+@router.get("/tasks/{task_id}/versions/{version_id}", summary="One version")
+async def get_version(task_id: str, version_id: str):
+    version = views.version_detail(task_id, version_id)
+    if version is None:
+        raise ApiError(status_code=404, message=f"Version `{version_id}` not found")
+
+    return version
+
+
+@router.get("/tasks/{task_id}/versions/{version_id}/diff", summary="Diff against the parent version")
+async def get_diff(task_id: str, version_id: str, request: Request):
+    return await reverse_proxy(request, "compiler", f"tasks/{task_id}/versions/{version_id}/diff")
+
+
+@router.post("/tasks/{task_id}/versions/{version_id}/approve", summary="Make a version active")
+async def approve(task_id: str, version_id: str, request: Request):
+    return await request.app.state.orchestrator.approve_version(task_id, version_id)
+
+
+@router.post("/tasks/{task_id}/versions/{version_id}/reject", summary="Reject a draft version")
+async def reject(task_id: str, version_id: str, request: Request):
+    return await request.app.state.orchestrator.reject_version(task_id, version_id)
+
+
+@router.post("/tasks/{task_id}/{action}", summary="pause | resume | archive")
+async def task_action(task_id: str, action: str, request: Request):
+    if action not in ("pause", "resume", "archive"):
+        raise ApiError(status_code=404, message=f"Unknown action `{action}`")
+
+    return await request.app.state.orchestrator.set_task_status(task_id, action)
+
+
+@router.get("/tasks/{task_id}/runs", summary="Run history of a task")
+async def task_runs(task_id: str):
+    return {"runs": views.run_list(task_id)}
+
+
+# -----------------------------
+# RUNS
+# -----------------------------
+
+@router.post("/runs", summary="Run a task now")
+async def start_run(body: RunBody, request: Request) -> Any:
+    payload = {**body.model_dump(exclude_none=True), "trigger": "manual"}
+
+    return await request.app.state.registry.client("runner").post("/runs", json=payload)
+
+
+@router.get("/runs/{run_id}", summary="Run status with its steps")
+async def get_run(run_id: str):
+    run = views.run_detail(run_id)
+    if run is None:
+        raise ApiError(status_code=404, message=f"Run `{run_id}` not found")
+
+    return run
+
+
+@router.post("/runs/{run_id}/cancel", summary="Cancel a run")
+async def cancel_run(run_id: str, request: Request):
+    return await request.app.state.registry.client("runner").post(f"/runs/{run_id}/cancel")
