@@ -86,6 +86,11 @@ RULES = f"""Ты превращаешь разговор пользовател�
    start_of_week, end_of_week, start_of_prev_week, end_of_prev_week, start_of_month, end_of_month,
    start_of_prev_month, end_of_prev_month, add_days(n), format_date('%d.%m.%Y').
 6. Если в разговоре шаблон уже создан (docs.make_template), не создавай его заново — используй готовый путь data:templates/….
+   Ключи context в docs.fill_template — ровно поля шаблона (fields и tables из docs.make_template).
+   Числа считай xlsx.aggregate: число строк — .output.rows, суммы — .output.totals, группы — .output.groups.
+   Строки таблицы шаблона готовь шагом data.map_rows: fields — выражения над row БЕЗ фигурных скобок
+   (например {{"client": "row.key", "amount": "row.sums['Сумма'] | format_number"}}), limit — сколько строк.
+   Для чисел в тексте есть фильтр format_number, для дат — format_date (по умолчанию ДД.ММ.ГГГГ).
 7. Для обработки каждого файла по отдельности — foreach с вложенными steps, например:
    {json.dumps(_FOREACH_EXAMPLE, ensure_ascii=False)}
 8. Пути — только относительные (как в результатах fs.list) или data:…; никаких абсолютных путей.

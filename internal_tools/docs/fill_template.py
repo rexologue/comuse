@@ -54,6 +54,12 @@ def _render(template, context, images, output) -> None:
     document = DocxTemplate(str(template))
     values = dict(context)
 
+    # A missing field would silently render empty; fail loudly so a dry run shows it.
+    expected = document.get_undeclared_template_variables()
+    missing = sorted(expected - set(values) - set(images))
+    if missing:
+        raise ToolError(f"В context не хватает полей шаблона: {missing}; шаблон ждёт: {sorted(expected)}")
+
     for name, path in images.items():
         values[name] = InlineImage(document, str(path), width=Mm(160))
 

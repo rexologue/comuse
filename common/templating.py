@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from datetime import date, datetime, timedelta
+from types import GeneratorType
 from typing import Any
 
 from jinja2 import StrictUndefined, TemplateError, meta
@@ -72,6 +73,14 @@ def format_date(value: Any, fmt: str = "%d.%m.%Y") -> str:
     return _as_date(value).strftime(fmt)
 
 
+def format_number(value: Any, decimals: int = 0) -> str:
+    """1435500.0 → «1 435 500» (Russian grouping with a non-breaking space)."""
+    number = float(value)
+    text = f"{number:,.{int(decimals)}f}".replace(",", "\u00a0")
+
+    return text.replace(".", ",") if decimals else text
+
+
 FILTERS = {
     "start_of_week": start_of_week,
     "end_of_week": end_of_week,
@@ -83,6 +92,7 @@ FILTERS = {
     "end_of_prev_month": end_of_prev_month,
     "add_days": add_days,
     "format_date": format_date,
+    "format_number": format_number,
 }
 
 
@@ -120,7 +130,7 @@ def render_str(text: str, ctx: dict[str, Any]) -> Any:
 
     match = _SINGLE_EXPR.match(text)
     if match and "{{" not in match.group("expr"):
-        return evaluate(match.group("expr"), ctx)
+        return jsonable_lazy(evaluate(match.group("expr"), ctx))
 
     return _ENV.from_string(text).render(ctx)
 
@@ -194,10 +204,22 @@ def _as_template(expr: str) -> str:
     return "{{ " + body.strip() + " }}"
 
 
+def jsonable_lazy(value: Any) -> Any:
+    """Materialize a lazy Jinja result so it can be reused and serialized."""
+    if isinstance(value, (GeneratorType, map, filter)):
+        return list(value)
+
+    return value
+
+
 def jsonable(value: Any) -> Any:
-    """Dates from filters become ISO strings before they leave the runner."""
+    """Dates become ISO strings and lazy sequences (`map`, `select` results are
+    generators in Jinja) become lists before a value leaves the runner."""
     if isinstance(value, (datetime, date)):
         return value.isoformat()
+
+    if isinstance(value, (GeneratorType, map, filter, tuple)):
+        return [jsonable(item) for item in value]
 
     if isinstance(value, list):
         return [jsonable(item) for item in value]

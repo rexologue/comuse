@@ -151,3 +151,23 @@ def test_unknown_filter_is_a_validation_error():
 def test_unknown_filter_in_foreach():
     errors = _bad(lambda s: s["steps"][3].update(foreach="{{ files.output.files | nope }}"))
     assert "nope" in " ".join(errors)
+
+
+def test_unused_model_folders_are_not_granted():
+    spec = copy.deepcopy(GOOD)
+    spec["steps"] = spec["steps"][:3]
+    spec["permissions"] = {"write_folders": ["Отчёты/Отчёты"]}
+
+    permissions = derive_permissions(validate_spec(spec, CATALOG), CATALOG)
+
+    assert permissions.write_folders == []
+
+
+def test_model_folders_kept_where_paths_are_templated():
+    spec = copy.deepcopy(GOOD)
+    spec["permissions"] = {"write_folders": ["Отчёты/Продажи"]}
+
+    permissions = derive_permissions(validate_spec(spec, CATALOG), CATALOG)
+
+    # fs.move's src is `{{ file.path }}`: only the model knows it is Отчёты/Продажи.
+    assert permissions.write_folders == ["Архив", "Отчёты/Продажи"]

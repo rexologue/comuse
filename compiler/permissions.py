@@ -27,8 +27,12 @@ _FIELDS = {
 
 
 def derive_permissions(spec: TaskSpec, catalog: dict[str, dict[str, Any]]) -> Permissions:
-    found: dict[str, list[str]] = {field: list(getattr(spec.permissions, field)) for field in _FIELDS.values()}
+    found: dict[str, list[str]] = {field: [] for field in _FIELDS.values()}
     found["net_domains"] = list(spec.permissions.net_domains)
+
+    # Fields some argument could not determine (fully templated); only there the
+    # model's own list is trusted, otherwise unused folders would be granted.
+    undetermined: set[str] = set()
 
     for step in spec.all_steps():
         manifest = catalog.get(step.tool or "")
@@ -43,8 +47,15 @@ def derive_permissions(spec: TaskSpec, catalog: dict[str, dict[str, Any]]) -> Pe
             field = _FIELDS[match.group("kind")]
             for value in _values(step.args.get(match.group("arg"))):
                 item = _folder_of(value) if field.endswith("folders") else value.strip()
-                if item is not None:
+
+                if item is not None and not (field == "mail_send_to" and templating.has_template(item)):
                     found[field].append(item)
+
+                elif templating.has_template(value) and not value.startswith(DATA_PREFIX):
+                    undetermined.add(field)
+
+    for field in undetermined:
+        found[field] += list(getattr(spec.permissions, field))
 
     trigger = spec.trigger
     if trigger.type == "file_appeared" and trigger.folder is not None:
