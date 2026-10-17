@@ -45,74 +45,72 @@ scheduler решает, когда запускать, runner — в каком 
 
 ## Структура репозитория
 
-Один репозиторий, каждый сервис лежит в своей папке, а общий код (схемы, БД, клиент LLM) вынесен в `common/`. Python-пакеты называем через подчёркивание (`agent_loop`), потому что пакет с дефисом не импортируется. В URL дефис остаётся.
+Один репозиторий, каждый сервис лежит в своей папке, а общий код (настройки, схемы, БД, клиенты) вынесен в `common/`. Python-пакеты называются через подчёркивание (`agent_loop`), потому что пакет с дефисом не импортируется. В URL дефис остаётся. Стиль кода взят из `virag`: `Settings.from_env()` на dataclass'ах, единый `ApiError`, `lifespan` и роутеры в `api/`.
 
 ```
 project/
-├── main/                  # шлюз: внешний API, реестр сервисов, оркестрация, SSE
-│   ├── app.py
+├── main/                  # шлюз: внешний API, реестр, оркестрация, подтверждения, SSE
+│   ├── main.py            # app
 │   ├── registry.py        # какие сервисы живы и по каким адресам
-│   ├── orchestrator.py    # многошаговые сценарии: approve → reload и т.п.
-│   ├── approvals.py       # подтверждения и вопросы пользователю
-│   └── routes/            # agent, compiler, tasks, runs, tools, skills, accounts, events
+│   ├── orchestrator.py    # approve → reload, ответ → resume, compile → approval
+│   ├── events.py          # шина событий (таблица events + SSE-подписчики)
+│   ├── proxy.py, auth.py, views.py
+│   └── api/               # internal, gateway, tasks, approvals
 ├── agent_loop/            # чат с LLM, вызов инструментов, трейс
-│   ├── app.py             # /v1/chat/completions
-│   ├── loop.py
-│   ├── tool_selector.py   # отбирает 5–10 релевантных инструментов (эмбеддинги bge-m3)
-│   ├── meta_tools.py      # task.compile, task.patch, task.run_now, task.list, skill.create
-│   └── prompts/
+│   ├── main.py
+│   ├── loop.py            # цикл хода, повторы, «пинок» при пустом ответе
+│   ├── catalog.py         # отбор инструментов по эмбеддингам
+│   ├── meta_tools.py      # task_compile, task_patch, task_approve, approval_answer, action_confirm…
+│   ├── history.py, prompts.py
+│   └── api/chat.py        # /v1/chat/completions, /sessions
 ├── compiler/              # трейс чата → Task, правки → JSON Patch
-│   ├── app.py
-│   ├── compile.py
-│   ├── patch.py
-│   ├── validate.py
-│   └── prompts/
+│   ├── main.py, compile.py
+│   ├── validate.py        # проверка по каталогу, включая ссылки шаг.output.поле
+│   ├── permissions.py     # права из capabilities команд
+│   ├── cards.py           # карточки шагов, расписание словами, diff
+│   ├── store.py, prompts.py
+│   └── api/tasks.py
 ├── runner/                # исполнение Task по шагам
-│   ├── app.py
-│   ├── engine.py
-│   └── templating.py      # Jinja2 SandboxedEnvironment
-├── executor/              # единая точка вызова инструментов
-│   ├── app.py
-│   ├── registry.py        # каталог: internal_tools + skills + внешние MCP
-│   ├── permissions.py
-│   ├── paths.py           # относительные пути задач → абсолютные внутри WORKSPACE_DIR
-│   ├── secrets.py         # keyring
-│   └── mcp/               # MCP-клиент, запуск Deno-скиллов
-├── scheduler/             # триггеры: cron, папка, почта
-│   ├── app.py
-│   ├── jobs.py
-│   └── watchers/          # files.py, mail.py
-├── internal_tools/        # встроенные команды, одна команда = один файл
-│   ├── fs/                # list.py, read.py, copy.py, move.py, write.py
-│   ├── docs/              # read.py, fill_template.py, make_template.py
-│   ├── xlsx/              # read_table.py, write_table.py
-│   ├── mail/              # search.py, read.py, create_draft.py, move.py, send.py
-│   │   └── adapters/      # imap_smtp.py, presets.yaml
-│   ├── charts/            # bar.py, line.py
-│   ├── llm/               # extract.py, classify.py, write.py
-│   └── user/              # ask.py, notify.py
-├── skills/                # скиллы, которые написал агент
-│   └── <name>/            # manifest.yaml, skill.ts
-├── common/                # общий пакет, его импортируют все сервисы
-│   ├── schemas/           # pydantic: Task, Step, ToolSpec, Run, Event
-│   ├── storage/           # SQLAlchemy-модели, репозитории, миграции Alembic
-│   ├── llm/               # клиент к провайдеру (OpenAI-совместимый)
-│   ├── tools/             # декоратор @tool, ToolContext
-│   ├── http.py            # клиент к main
-│   └── config.py          # pydantic-settings: env → config.yaml → умолчания
-├── deploy/
-│   └── docker.env         # то, чем Docker отличается от локального запуска
-├── data/                  # app.db, templates/, outputs/ (в Docker — том)
+│   ├── main.py, engine.py
+│   └── api/runs.py
+├── executor/              # единая точка вызова команд
+│   ├── main.py, runtime.py
+│   ├── registry.py        # каталог из internal_tools/ → таблица tools
+│   ├── paths.py           # песочница путей и права на папки
+│   ├── secrets.py         # keyring или зашифрованный файл
+│   └── api/               # execute (+ /tools), accounts
+├── scheduler/             # cron, папки, почта
+│   ├── main.py, jobs.py
+│   └── api/jobs.py
+├── internal_tools/        # встроенные команды: файл = команда (или пара с общим входом)
+│   ├── fs/                # list, transfer (copy/move), write
+│   ├── docs/              # read, fill_template, make_template, readers
+│   ├── xlsx/              # read_table, write_table, aggregate
+│   ├── mail/              # search, read, send, create_draft, adapters/
+│   ├── charts/            # charts (bar/line)
+│   ├── llm/               # extract, classify, write, inputs
+│   └── user/              # ask, notify
+├── common/
+│   ├── settings.py        # Settings.from_env(), int/bool coercion, load_dotenv
+│   ├── errors.py          # ApiError + обработчики
+│   ├── service.py         # фабрика сервиса: lifespan, регистрация, internal-токен, /health
+│   ├── templating.py      # Jinja-песочница и фильтры дат (compiler + runner)
+│   ├── pathrefs.py, utils.py
+│   ├── clients/           # llm_client, main_client
+│   ├── schemas/           # task, execution
+│   ├── storage/           # db, models, queries
+│   └── tools/             # @tool, ToolContext, ошибки
+├── deploy/                # docker-compose.yaml, .env.example
+├── docs/SPEC.md
+├── misc/make_demo_data.py # демо-папка для сценария еженедельного отчёта
 ├── tests/
-├── launcher.py            # поднимает все сервисы или один по имени
-├── config.yaml            # несекретные настройки, общие для всех окружений
-├── .env.example           # шаблон .env: LLM, токены, папки
-├── Dockerfile             # один образ на все сервисы
-├── docker-compose.yml
+├── launcher.py            # все сервисы процессами или один по имени
+├── Dockerfile
+├── .env.example
 └── pyproject.toml
 ```
 
-Отдельного сервиса storage нет: это пакет `common/storage`, который импортирует каждый сервис. Правила записи в разделе «База данных».
+Отдельного сервиса storage нет: это пакет `common/storage`, который импортирует каждый сервис. Правила записи — в разделе «База данных». Скиллы от агента (`skills/`, Deno) пока не реализованы.
 
 ## Сервисы
 
@@ -187,7 +185,7 @@ project/
 - `POST /execute {tool, args, context}` → `{status, output, artifacts}`, где status: `ok`, `error` или `needs_approval`. В `context`: режим (`chat` или `run`), `session_id` или `run_id` + `step_id`, permissions задачи, `dry_run`.
 - `GET /tools`, `GET /tools/{name}`, `POST /tools/reload`; `POST /skills/{id}/install`; `POST /accounts`, `DELETE /accounts/{id}`.
 - **Конвейер вызова:** найти инструмент → проверить args по input-схеме → проверить права (capabilities инструмента против permissions задачи) → применить политику для внешних действий (dry run, черновик) → подставить секреты из keyring → вызвать с таймаутом → проверить output → записать в `tool_calls` без секретов.
-- **Регистрация команд.** В исходной схеме команды в executor регистрировал main. Предлагаю наоборот: executor при старте сам сканирует `internal_tools/` и одобренные `skills/`, обновляет таблицу `tools` и регистрируется в main. Тогда main не знает кода инструментов, а источник правды один: папка с командами.
+- **Регистрация команд.** executor при старте сам сканирует `internal_tools/`, обновляет таблицу `tools` и регистрируется в main. main не знает кода инструментов, источник правды один — папка с командами.
 
 ### scheduler :8005
 
@@ -252,15 +250,15 @@ async def send(inp: Input, ctx: ToolContext) -> Output:
 
 | Группа | Команды | side\_effect | На чём |
 | --- | --- | --- | --- |
-| `fs` | list, read, copy, move, write | read, write | pathlib, только внутри разрешённых папок |
-| `docs` | read, fill\_template, make\_template | read, write | markitdown, docxtpl, python-docx |
-| `xlsx` | read\_table, write\_table | read, write | openpyxl, pandas |
-| `mail` | search, read, create\_draft, move, send | read, write, external | адаптеры ниже |
+| `fs` | list, copy, move, write | read, write | pathlib, только внутри разрешённых папок |
+| `docs` | read, fill\_template, make\_template | read, write | python-docx, docxtpl, openpyxl, pdfplumber |
+| `xlsx` | read\_table, write\_table, aggregate | read, write | openpyxl; `aggregate` считает суммы, группы и топ-N кодом — числа в отчётах никогда не считает LLM |
+| `mail` | search, read, create\_draft, send | read, write, external | stdlib imaplib/smtplib |
 | `charts` | bar, line | write | matplotlib → PNG |
 | `llm` | extract, classify, write | none | common.llm, structured output |
 | `user` | ask, notify | none | approvals и events в main |
 
-**Почта.** Агент видит один набор команд `mail.*`, адаптер выбирается по `accounts.kind`. `imap_smtp` покрывает Gmail, Яндекс, Mail.ru, Outlook.com и корпоративные серверы; адреса серверов лежат в `presets.yaml`. `outlook_com` появится позже, в v1 на Windows тоже работаем через IMAP/SMTP. Черновик через IMAP — это `APPEND` в папку «Черновики».
+**Почта.** Агент видит один набор команд `mail.*`, адаптер выбирается по `accounts.kind`. `imap_smtp` покрывает Gmail, Яндекс, Mail.ru, Outlook.com и корпоративные серверы; адреса серверов лежат в `adapters/presets.py`. `outlook_com` появится позже, в v1 на Windows тоже работаем через IMAP/SMTP. Черновик через IMAP — это `APPEND` в папку «Черновики».
 
 **Мета-инструменты** агента (`task.*`, `skill.create`) не лежат в `internal_tools`: они управляют системой и живут в `agent_loop/meta_tools.py`.
 
@@ -288,7 +286,7 @@ tools:
     side_effect: read
 ```
 
-Сторонние MCP-серверы подключаются тем же механизмом через `config.yaml` и по умолчанию выключены.
+Сторонние MCP-серверы будут подключаться тем же механизмом через настройки и по умолчанию выключены.
 
 ## Модель задачи
 
@@ -458,15 +456,11 @@ tools:
 | Шаблон в Task выполняет произвольный код | Jinja2 SandboxedEnvironment и StrictUndefined |
 | Письмо ушло не тому в первых запусках | Политика `draft_first_n`: первые n запусков создают черновики и спрашивают подтверждение |
 
-Секреты аккаунтов и скиллов читает только executor, в момент вызова команды. Ключ к LLM, если он есть, задаётся через `LLM_API_KEY` и читается `common.llm`; нашему серверу ключ не нужен. На Windows секреты лежат в Credential Manager, в Docker — в зашифрованном файле `keyrings.alt` в томе с данными, пароль берётся из `KEYRING_PASSWORD`.
+Секреты аккаунтов и скиллов читает только executor, в момент вызова команды. Ключ к LLM, если он есть, задаётся через `LLM_API_KEY` и читается `common/clients/llm_client.py`; нашему серверу ключ не нужен. На Windows секреты лежат в Credential Manager, в Docker — в файле `data/secrets.enc`, зашифрованном Fernet с ключом из `KEYRING_PASSWORD` (scrypt).
 
 ## Конфигурация и развёртывание
 
-Один код и один `.env` работают на Windows без Docker и в Docker; разница вынесена в маленький файл `deploy/docker.env`. Все настройки читает `common/config.py` на pydantic-settings в таком порядке: переменные окружения → `config.yaml` → умолчания в коде.
-
-- **`.env`** — то, что меняется от машины к машине: LLM, токены, папка с документами. В git только `.env.example`.
-- **`config.yaml`** — общее для всех окружений: лимиты агента, таймауты, пресеты почты, порты по умолчанию.
-- **`deploy/docker.env`** — только отличия Docker: адреса сервисов, пути внутри контейнера, бэкенд keyring.
+Все настройки — переменные окружения, их читает `Settings.from_env()` (`common/settings.py`). Неверное значение останавливает запуск с `SettingsError`, а не всплывает позже. Обязательна только `LLM_MODEL`. Для локального запуска `launcher.py` подхватывает `.env` из корня репозитория, в Docker — `deploy/.env` через compose.
 
 ### Переменные
 
@@ -475,138 +469,95 @@ tools:
 | `MAIN_URL` | `http://127.0.0.1:8000` | `http://main:8000` | Куда сервисы шлют запросы |
 | `SERVICE_HOST` | `127.0.0.1` | `0.0.0.0` | На каком адресе слушать |
 | `SELF_URL` | `http://127.0.0.1:<порт>` (умолчание) | `http://<имя сервиса>:<порт>` | Адрес, который сервис сообщает main при регистрации |
-| `DATA_DIR` | `./data` | `/data` (том) | app.db, шаблоны, готовые файлы |
-| `WORKSPACE_DIR` | `C:/Users/<имя>/Documents` | `/workspace` | Корень папок, с которыми работают задачи |
-| `LLM_BASE_URL` | `http://llm-host:8000/v1` | то же | OpenAI-совместимый endpoint |
+| `DATA_DIR` | `data` | `/data` (том) | app.db, шаблоны, готовые файлы, secrets.enc |
+| `WORKSPACE_DIR` | `workspace` или `C:/Users/<имя>/Documents` | `/workspace` | Корень папок пользователя |
+| `LLM_BASE_URL` | `http://llm-host:8000/v1` | то же | Любой OpenAI-совместимый `/v1` с вызовом инструментов |
 | `LLM_API_KEY` | пусто | пусто | Пусто — без заголовка Authorization |
-| `LLM_NO_PROXY` | `true` | `true` | Не брать прокси из окружения (`httpx trust_env=False`), как `--noproxy` в b.sh |
-| `LLM_MODEL_AGENT`, `LLM_MODEL_COMPILER` | `qwen3:30b` | то же | Модели по ролям, меняются независимо |
-| `LLM_MODEL_EMBED` | `bge-m3` | то же | Эмбеддинги для отбора инструментов |
+| `LLM_NO_PROXY` | `true` | `true` | Не брать прокси из окружения, как `--noproxy` в b.sh |
+| `LLM_MODEL` | обязательна | обязательна | Одна модель на всё |
+| `LLM_MODEL_CHAT` | необяз. | необяз. | Переопределение: агент в чате и компиляция задач |
+| `LLM_MODEL_INSTRUCT` | необяз. | необяз. | Переопределение: `llm.*`-команды, разметка шаблонов |
+| `LLM_CHAT_REASONING_EFFORT` | пусто | пусто | `low`/`medium`/`high` для reasoning-моделей; пусто — не отправляется |
+| `LLM_MODEL_EMBED` | `bge-m3` | то же | Отбор инструментов; пусто — агент видит все |
 | `API_TOKEN` | пусто | пусто или задан | Пусто — внешний API main без проверки |
-| `INTERNAL_TOKEN` | генерирует launcher.py | задаётся в `.env` | Защита маршрутов `/internal/*` |
-| `KEYRING_BACKEND` | `system` (Credential Manager) | `file` | Где хранить пароли почты |
-| `KEYRING_PASSWORD` | не нужен | задаётся в `.env` | Пароль к файлу секретов в `/data` |
+| `INTERNAL_TOKEN` | генерирует launcher.py | задаётся в `deploy/.env` | Защита внутренних маршрутов |
+| `KEYRING_BACKEND` | `system` | `file` | Где хранить пароли почты |
+| `KEYRING_PASSWORD` | не нужен | задаётся | Ключ к `secrets.enc` |
+| `WATCH_POLLING` | `false` | `true` | Опрос папок вместо событий ФС |
+| `AGENT_*`, `COMPILER_*`, `TOOL_TIMEOUT_SEC`, `LLM_TIMEOUT_SEC`… | | | Лимиты и таймауты с разумными умолчаниями |
 
-Порты заданы умолчаниями (8000–8005) и переопределяются переменной `PORT`, но трогать их обычно не нужно. Поскольку каждый сервис сам сообщает main свой `SELF_URL`, никакого списка адресов поддерживать не надо.
+Порты заданы умолчаниями (8000–8005) и переопределяются `PORT`. Каждый сервис сам сообщает main свой `SELF_URL`, поэтому список адресов поддерживать не нужно.
 
-**Пути в задачах только относительные** — от `WORKSPACE_DIR` (`Отчёты/Продажи`). Тогда одна и та же задача работает и на Windows (`C:/Users/.../Documents/Отчёты/Продажи`), и в контейнере (`/workspace/Отчёты/Продажи`). Преобразование делает `executor/paths.py`, он же не даёт выйти за корень.
+**Пути в задачах только относительные** — от `WORKSPACE_DIR` (`Отчёты/Продажи`) или `data:templates/…`, `data:outputs/…`. Одна и та же задача работает и на Windows, и в контейнере. Преобразование и проверку делает `executor/paths.py`.
 
-### Без Docker (Windows)
+### Без Docker
 
-`python launcher.py` запускает шесть процессов uvicorn через `subprocess`, собирает их логи в одну консоль с префиксом сервиса и перезапускает упавшие. `python launcher.py runner` поднимает один сервис, `--reload` включает перезагрузку при изменении кода. Никаких bash-скриптов, поэтому одинаково работает на Windows, Linux и macOS. Deno ставится отдельно и нужен только для скиллов.
+`python launcher.py` запускает шесть процессов uvicorn (сначала main, потом остальные), собирает логи в одну консоль с префиксом сервиса и перезапускает упавшие. `python launcher.py runner` поднимает один сервис, `--reload` перезапускает при правке кода. Bash-скриптов нет — одинаково на Windows, Linux и macOS.
 
 ### В Docker
 
-Один образ на все сервисы (python:3.12-slim, зависимости, Deno), сервис выбирается командой. Наружу публикуется только порт main.
+`Dockerfile`: python:3.12-slim, non-root пользователь, зависимости из `pyproject.toml` через `tomllib`. `deploy/docker-compose.yaml`: один образ, по контейнеру на сервис (`command: python launcher.py <service>`), наружу опубликован только main, остальные в сети compose. Отличия от локального запуска заданы в `environment` compose: адреса, `/data`, `/workspace`, `KEYRING_BACKEND=file`, `WATCH_POLLING=true`. Шаблон настроек — `deploy/.env.example` (блок DEPLOY SETTINGS + настройки приложения, `TZ` для cron).
 
-```yaml
-# docker-compose.yml
-x-svc: &svc
-  build: .
-  env_file: [.env, deploy/docker.env]   # второй файл перекрывает первый
-  volumes:
-    - app-data:/data
-    - ${HOST_WORKSPACE:-./workspace}:/workspace
-  restart: unless-stopped
+Нюансы Docker Desktop на Windows:
 
-services:
-  main:
-    <<: *svc
-    command: python launcher.py main
-    environment: { SELF_URL: "http://main:8000" }
-    ports: ["127.0.0.1:8000:8000"]
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
-  agent-loop:
-    <<: *svc
-    command: python launcher.py agent_loop
-    environment: { SELF_URL: "http://agent-loop:8001" }
-    depends_on: { main: { condition: service_healthy } }
-  # compiler, runner, executor, scheduler — так же, порты 8002–8005
+- **app.db лежит в именованном томе `agent-data`, а не в папке Windows** — блокировки SQLite в режиме WAL ненадёжны через bind mount из Windows. Папка пользователя монтируется обычно.
+- **События ФС из смонтированной папки Windows до контейнера не доходят** — поэтому `WATCH_POLLING=true`.
 
-volumes:
-  app-data:
-```
+## Требования к LLM
 
-```bash
-# deploy/docker.env
-MAIN_URL=http://main:8000
-SERVICE_HOST=0.0.0.0
-DATA_DIR=/data
-WORKSPACE_DIR=/workspace
-KEYRING_BACKEND=file
-WATCH_POLLING=true
-```
+Код не привязан к конкретным моделям. Нужен OpenAI-совместимый `/v1/chat/completions` с вызовом инструментов; всё остальное — с фолбэками:
 
-```bash
-# .env.example
-LLM_BASE_URL=http://llm-host:8000/v1
-LLM_API_KEY=
-LLM_NO_PROXY=true
-LLM_MODEL_AGENT=qwen3:30b
-LLM_MODEL_COMPILER=qwen3:30b
-LLM_MODEL_EMBED=bge-m3
-API_TOKEN=
-INTERNAL_TOKEN=
-KEYRING_PASSWORD=
-WORKSPACE_DIR=C:/Users/<имя>/Documents   # без Docker
-HOST_WORKSPACE=C:/Users/<имя>/Documents    # что монтировать в /workspace
-```
+- **Structured output.** `LLMClient.structured` перебирает `json_schema` → `json_object` → обычный текст со схемой в промпте и запоминает, какой режим сработал для модели. Переход между режимами не тратит попыток; попытки (3) тратят только ответы, не прошедшие валидацию, — ошибки возвращаются модели.
+- **Эмбеддинги** необязательны: без них агент видит все инструменты.
+- **`reasoning_effort`** отправляется, только если задан.
+- **Сбои сервера** (500 на кривом вызове инструмента) — ход модели повторяется до 3 раз; пустой ответ без вызовов получает один «пинок» продолжить.
+- **Даты.** Модели плохо считают календарь, поэтому прошлая/текущая неделя и прошлый месяц подставляются в системный промпт готовыми.
 
-Два нюанса Docker Desktop на Windows:
+Наблюдения на сервере команды (октябрь 2026):
 
-- **app.db держим в именованном томе `app-data`, а не в папке Windows.** Блокировки SQLite в режиме WAL ненадёжно работают через bind mount из Windows. Папка с документами монтируется обычно.
-- **События файловой системы из смонтированной папки Windows могут не доходить до контейнера.** Поэтому триггер `file_appeared` в Docker работает через `PollingObserver` watchdog (флаг `WATCH_POLLING=true` в `docker.env`).
+| Модель | Как ведёт себя | Где используем |
+| --- | --- | --- |
+| `gpt-oss:120b` | Доводит многошаговые цепочки до конца; constrained JSON отдаёт пустым — работает через текстовый режим; 20–40 с на шаг | `LLM_MODEL_CHAT`: агент и компиляция |
+| `qwen3:30b` | Быстрая, хорошо делает одиночные вызовы и JSON; в многошаговом чате останавливается после первого инструмента | `LLM_MODEL`: `llm.*`-команды |
+| `llama3.3:70b` | Путается в путях, останавливается на полпути | не используем |
+| `deepseek-r1:70b` | Сервер не поддерживает для неё вызов инструментов | не используем |
+| `bge-m3` | Эмбеддинги | `LLM_MODEL_EMBED` |
 
-### Модели на сервере команды
-
-Проверено 16.10.2026 одним запросом на модель; время может включать загрузку модели в память.
-
-| Модель | Tool calling | Structured output | Время (tools / JSON) | Роль |
-| --- | --- | --- | --- | --- |
-| `qwen3:30b` | да | да | 7 с / 2 с | По умолчанию: agent-loop, compiler, `llm.*` |
-| `llama3.3:70b` | да | не проверяли | 11 с / — | Запасная для agent-loop |
-| `gpt-oss:120b` | да | пустой ответ | 29 с / 17 с | Не для compiler и `llm.extract` |
-| `deepseek-r1:70b` | нет (сервер отвечает ошибкой) | — | — | Только текст в `llm.write`, если нужен |
-| `bge-m3` | — | — | — | Эмбеддинги для `tool_selector` |
-
-Из таблицы следует требование к `common.llm`: если модель вернула пустой или невалидный JSON, клиент повторяет запрос со схемой в промпте и валидирует ответ сам. Теги `<think>` от reasoning-моделей вырезаются до разбора.
-
-## Стек, план и открытые вопросы
+## Стек
 
 | Задача | Библиотеки |
 | --- | --- |
 | HTTP-сервисы | FastAPI, uvicorn, httpx, sse-starlette |
 | Схемы | pydantic v2 |
-| БД | SQLite (WAL), SQLAlchemy 2, Alembic |
-| LLM | openai SDK с `base_url` (облако, Ollama, LM Studio, vLLM) или litellm |
-| Шаблоны и правки Task | Jinja2 (sandbox), jsonpatch |
-| Расписание и события | APScheduler, watchdog |
-| Документы | markitdown, python-docx, docxtpl, openpyxl, pandas, pdfplumber, matplotlib |
-| Почта | imapclient, aiosmtplib, pywin32 (Outlook на Windows) |
-| Секреты | keyring |
-| Скиллы | Deno, mcp (Python SDK) |
-| Запуск | `launcher.py` (процесс на каждый сервис) или docker compose |
+| БД | SQLite (WAL), SQLAlchemy 2 (`create_all`, миграций пока нет) |
+| LLM | httpx напрямую к OpenAI-совместимому API |
+| Шаблоны и правки Task | Jinja2 (sandbox), jsonpatch, jsonschema |
+| Расписание и события | APScheduler 3, watchdog |
+| Документы | python-docx, docxtpl, openpyxl, pdfplumber, matplotlib |
+| Почта | stdlib imaplib/smtplib |
+| Секреты | keyring, cryptography (Fernet + scrypt) |
+| Запуск | `launcher.py` или docker compose |
+| Тесты | pytest, pytest-asyncio |
 
-**Запуск.** Каждый сервис всегда работает отдельным процессом: локально через `launcher.py`, в контейнерах через `docker compose`. Подробности в разделе «Конфигурация и развёртывание».
+## Состояние и план
 
-### План работ
-
-- [ ] `common`: схемы Task и ToolSpec, storage и миграции, клиент к main. Делается первым, остальные от него зависят
-- [ ] main и executor с пятью командами: `fs.list`, `docs.read`, `docs.fill_template`, `llm.extract`, `mail.send`
-- [ ] agent-loop: цикл, трейс, мета-инструменты
-- [ ] compiler: compile, validate, patch
-- [ ] runner и scheduler (сначала только cron)
-- [ ] Сквозной демо-сценарий: пример отчёта → задача → запуск → письмо на почте
-- [ ] Бонус: скилл в Deno, самовосстановление шага после ошибки
-
-После `common` четыре следующих пункта можно делать параллельно, по человеку на пункт: сервисы связаны только схемами и HTTP-контрактами.
+- [x] `common`, main, executor и 21 встроенная команда
+- [x] agent-loop: цикл, трейс, мета-инструменты, события прогресса
+- [x] compiler: compile с пробным запуском и починкой, validate, patch, diff
+- [x] runner (пауза/продолжение) и scheduler (cron, папка, почта)
+- [x] launcher, Docker, тесты
+- [x] Сквозной сценарий «пример отчёта → такой же отчёт за прошлую неделю» на сервере команды
+- [ ] Сквозной сценарий целиком: задача по расписанию → запуск → письмо
+- [ ] Фронтенд
+- [ ] Скиллы от агента (Deno + MCP)
+- [ ] Alembic-миграции
 
 ### Принятые решения
 
-- **Запуск всегда отдельными процессами.** Режима монолита нет.
-- **Все вызовы между сервисами идут через main**, включая runner → executor. Прямых вызовов нет: сервисы знают только `MAIN_URL`.
-- **LLM — сервер команды, без ключа.** Модель по умолчанию `qwen3:30b`, см. проверку моделей в разделе «Конфигурация и развёртывание».
-- **Целевая ОС — Windows, без Outlook COM.** Почта только через IMAP/SMTP; код без bash-скриптов, пути только через pathlib.
-- **Токен опционален.** Пустой `API_TOKEN` — внешний API без проверки; пустой `LLM_API_KEY` — заголовок Authorization не отправляется.
-- **Docker опционален.** Один и тот же код и `.env` работают и с ним, и без него.
+- **Все вызовы между сервисами идут через main**, сервисы знают только `MAIN_URL`.
+- **Запуск всегда отдельными процессами**, режима монолита нет.
+- **LLM — любая OpenAI-совместимая с вызовом инструментов**, модели задаются только конфигом (роли CHAT и INSTRUCT необязательны).
+- **Целевая ОС — Windows, без Outlook COM.** Почта через IMAP/SMTP, пути через pathlib.
+- **Токен на внешний API опционален**, internal-токен защищает внутренние маршруты.
+- **Docker опционален**, код один и тот же.
+- **Числа в отчётах считает код** (`xlsx.aggregate`), LLM только размечает и извлекает текст.

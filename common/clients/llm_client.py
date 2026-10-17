@@ -215,10 +215,25 @@ class LLMClient:
                 last_error = "empty content"
                 continue
 
+            try:
+                data = extract_json(content)
+
+            except ValueError:
+                # No JSON at all under a constrained mode means the mode does not work
+                # for this model, not that the model got the task wrong.
+                if mode < _LAST_MODE:
+                    log.warning("structured mode %s gave no JSON for %s, trying the next", _MODES[mode], model)
+                    mode += 1
+                    continue
+
+                data = None
+
             self._structured_mode[model] = mode
 
             try:
-                data = extract_json(content)
+                if data is None:
+                    raise ValueError("В ответе нет JSON")
+
                 return validate(data) if validate else data
 
             except (ValueError, TypeError, KeyError) as e:
