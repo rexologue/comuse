@@ -5,67 +5,57 @@ from datetime import date
 from typing import Any
 
 
+# Deliberately a different domain from the demo scenarios: models copy example steps
+# verbatim (a mail step the user never asked for), so the example shows the mechanics only.
 _EXAMPLE = {
     "schema_version": 1,
-    "title": "Еженедельный отчёт по продажам",
-    "description": "Собрать выгрузки за прошлую неделю, заполнить отчёт и отправить руководителю",
-    "trigger": {"type": "cron", "expr": "0 10 * * MON"},
-    "permissions": {"read_folders": ["Отчёты/Продажи"], "mail_accounts": ["work"], "mail_send_to": ["boss@company.ru"]},
+    "title": "Сводка по командировкам за месяц",
+    "description": "Посчитать расходы на командировки за прошлый месяц по сотрудникам и сделать сводку",
+    "trigger": {"type": "cron", "expr": "0 9 1 * *"},
+    "permissions": {"read_folders": ["Бухгалтерия/Командировки"]},
     "approval": {"mode": "draft_first_n", "n": 3},
     "variables": {
-        "week_start": "{{ today | start_of_prev_week }}",
-        "week_end": "{{ today | end_of_prev_week }}",
+        "month_start": "{{ today | start_of_prev_month }}",
+        "month_end": "{{ today | end_of_prev_month }}",
     },
     "steps": [
         {
-            "id": "files",
+            "id": "reports",
             "tool": "fs.list",
             "args": {
-                "folder": "Отчёты/Продажи",
+                "folder": "Бухгалтерия/Командировки",
                 "pattern": "*.xlsx",
-                "modified_from": "{{ week_start }}",
-                "modified_to": "{{ week_end }}",
+                "modified_from": "{{ month_start }}",
+                "modified_to": "{{ month_end }}",
             },
-            "on_empty": "ask_user",
+            "on_empty": "skip",
         },
         {
-            "id": "data",
-            "tool": "llm.extract",
+            "id": "totals",
+            "tool": "xlsx.aggregate",
             "args": {
-                "inputs": "{{ files.output.files }}",
-                "instruction": "Суммарная выручка и число заказов за неделю",
-                "output_schema": {
-                    "type": "object",
-                    "properties": {"revenue": {"type": "number"}, "orders": {"type": "integer"}},
-                    "required": ["revenue", "orders"],
-                },
+                "inputs": "{{ reports.output.files }}",
+                "sum_columns": ["Сумма"],
+                "group_by": "Сотрудник",
             },
         },
         {
-            "id": "doc",
+            "id": "summary",
             "tool": "docs.fill_template",
             "args": {
-                "template": "data:templates/weekly_sales.docx",
+                "template": "data:templates/travel_summary.docx",
                 "context": {
-                    "period": "{{ week_start | format_date }} – {{ week_end | format_date }}",
-                    "revenue": "{{ data.output.data.revenue }}",
-                    "orders": "{{ data.output.data.orders }}",
+                    "month": "{{ month_start | format_date('%m.%Y') }}",
+                    "total": "{{ totals.output.totals['Сумма'] }}",
+                    "rows": "{{ totals.output.groups }}",
                 },
-                "output_name": "Отчёт {{ week_start | format_date }}.docx",
+                "output_name": "Командировки {{ month_start | format_date('%m.%Y') }}.docx",
             },
         },
         {
-            "id": "send",
-            "tool": "mail.send",
-            "args": {
-                "account": "work",
-                "to": ["boss@company.ru"],
-                "subject": "Отчёт по продажам за {{ week_start | format_date }} – {{ week_end | format_date }}",
-                "body": "Добрый день! Отчёт во вложении.",
-                "attachments": ["{{ doc.output.path }}"],
-            },
-            "on_error": "retry",
-            "retries": 2,
+            "id": "done",
+            "tool": "user.notify",
+            "args": {"message": "Сводка по командировкам готова: {{ summary.output.path }}"},
         },
     ],
 }
@@ -160,7 +150,9 @@ def repair_request(dry_run: dict[str, Any]) -> str:
     return (
         "Пробный запуск этой задачи на реальных данных упал.\n"
         f"Ошибка: {dry_run.get('error')}\n{details}\n\n"
-        "Исправь задачу так, чтобы она работала. Помни: файлы ищутся шагом fs.list (с pattern и датами), "
+        "Исправь задачу так, чтобы она работала. Если шагу не хватает того, чего не было в разговоре "
+        "(почтового аккаунта, адреса, файла), — убери этот шаг, а не выдумывай значение. "
+        "Помни: файлы ищутся шагом fs.list (с pattern и датами), "
         "а не собираются из имён; ссылки на результаты — только на поля из output-схем. "
         "Верни задачу целиком, только JSON."
     )

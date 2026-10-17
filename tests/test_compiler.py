@@ -134,3 +134,10 @@ def test_diff_lists_changes_in_words():
 
     assert any("пятницам в 09:00" in line for line in lines)
     assert any("*.csv" in line for line in lines)
+
+
+def test_prompt_examples_stay_valid():
+    from compiler.prompts import _EXAMPLE, _FOREACH_EXAMPLE
+
+    validate_spec(_EXAMPLE, CATALOG)
+    validate_spec({"title": "t", "steps": [{"id": "files", "tool": "fs.list", "args": {}}, _FOREACH_EXAMPLE]}, CATALOG)
