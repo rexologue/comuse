@@ -141,3 +141,13 @@ def test_prompt_examples_stay_valid():
 
     validate_spec(_EXAMPLE, CATALOG)
     validate_spec({"title": "t", "steps": [{"id": "files", "tool": "fs.list", "args": {}}, _FOREACH_EXAMPLE]}, CATALOG)
+
+
+def test_unknown_filter_is_a_validation_error():
+    errors = _bad(lambda s: s["steps"][1]["args"].update(inputs="{{ files.output.files | from_json }}"))
+    assert "from_json" in errors[0]
+
+
+def test_unknown_filter_in_foreach():
+    errors = _bad(lambda s: s["steps"][3].update(foreach="{{ files.output.files | nope }}"))
+    assert "nope" in " ".join(errors)

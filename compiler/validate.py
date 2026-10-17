@@ -77,10 +77,12 @@ def _check_steps(
         where = f"{path}[{i}] ({step.id})"
 
         if step.when:
+            errors += [f"{where}.when: {err}" for err in templating.check_expression(step.when)]
             _check_names(templating.expression_names(step.when), visible, f"{where}.when", errors)
             _check_output_refs(step.when, outputs, catalog, f"{where}.when", errors)
 
         if step.foreach is not None:
+            errors += [f"{where}.foreach: {err}" for err in templating.check_expression(step.foreach)]
             _check_names(templating.expression_names(step.foreach), visible, f"{where}.foreach", errors)
             _check_output_refs(step.foreach, outputs, catalog, f"{where}.foreach", errors)
             _check_steps(step.steps or [], visible | {step.as_}, outputs, catalog, errors, f"{where}.steps")

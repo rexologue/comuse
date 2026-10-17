@@ -135,11 +135,16 @@ def evaluate(expr: str, ctx: dict[str, Any]) -> Any:
 
 
 def referenced_names(value: Any) -> set[str]:
-    """Top-level names a template reads (`files` in `{{ files.output }}`)."""
+    """Top-level names a template reads (`files` in `{{ files.output }}`); templates
+    that do not compile contribute nothing (check_syntax reports them)."""
     names: set[str] = set()
 
     if isinstance(value, str) and has_template(value):
-        names |= meta.find_undeclared_variables(_ENV.parse(value))
+        try:
+            names |= meta.find_undeclared_variables(_ENV.parse(value))
+
+        except TemplateError:
+            pass
 
     elif isinstance(value, list):
         for item in value:
@@ -153,21 +158,19 @@ def referenced_names(value: Any) -> set[str]:
 
 
 def expression_names(expr: str) -> set[str]:
-    match = _SINGLE_EXPR.match(expr)
-    body = match.group("expr") if match else expr
-
-    return meta.find_undeclared_variables(_ENV.parse("{{ " + body.strip() + " }}"))
+    return referenced_names(_as_template(expr))
 
 
 def check_syntax(value: Any) -> list[str]:
+    """Compile every template: parsing alone misses unknown filters and tests."""
     errors: list[str] = []
 
     if isinstance(value, str) and has_template(value):
         try:
-            _ENV.parse(value)
+            _ENV.from_string(value)
 
         except TemplateError as e:
-            errors.append(f"{value!r}: {e}")
+            errors.append(f"{value!r}: {e}. Доступные фильтры дат: {', '.join(FILTERS)}")
 
     elif isinstance(value, list):
         for item in value:
@@ -178,6 +181,17 @@ def check_syntax(value: Any) -> list[str]:
             errors += check_syntax(item)
 
     return errors
+
+
+def check_expression(expr: str) -> list[str]:
+    return check_syntax(_as_template(expr))
+
+
+def _as_template(expr: str) -> str:
+    match = _SINGLE_EXPR.match(expr)
+    body = match.group("expr") if match else expr
+
+    return "{{ " + body.strip() + " }}"
 
 
 def jsonable(value: Any) -> Any:
@@ -196,6 +210,7 @@ def jsonable(value: Any) -> Any:
 
 __all__ = [
     "BUILTIN_NAMES",
+    "check_expression",
     "check_syntax",
     "evaluate",
     "expression_names",
