@@ -1,0 +1,63 @@
+"""Settings.from_env — required vars, role fallbacks, coercion and bounds."""
+
+from __future__ import annotations
+
+import pytest
+
+from common.settings import Settings, SettingsError, load_dotenv
+
+
+def test_defaults(env):
+    s = Settings.from_env("executor")
+
+    assert s.service.port == 8004
+    assert s.service.self_url == "http://127.0.0.1:8004"
+    assert s.service.internal_token == ""
+    assert s.storage.data_dir == env / "data"
+
+
+def test_one_model_serves_every_role(env):
+    s = Settings.from_env("main")
+
+    assert s.llm.model_chat == "test-model"
+    assert s.llm.model_instruct == "test-model"
+    assert s.llm.model_embed == ""
+    assert s.llm.chat_reasoning_effort == ""
+
+
+def test_role_overrides(env, monkeypatch):
+    monkeypatch.setenv("LLM_MODEL_CHAT", "big")
+    monkeypatch.setenv("LLM_MODEL_INSTRUCT", "fast")
+    s = Settings.from_env("main")
+
+    assert (s.llm.model_chat, s.llm.model_instruct) == ("big", "fast")
+
+
+def test_llm_model_is_required(env, monkeypatch):
+    monkeypatch.delenv("LLM_MODEL")
+
+    with pytest.raises(SettingsError):
+        Settings.from_env("main")
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [("PORT", "70000"), ("KEYRING_BACKEND", "vault"), ("LLM_CHAT_REASONING_EFFORT", "max"), ("LLM_NO_PROXY", "maybe")],
+)
+def test_invalid_values(env, monkeypatch, key, value):
+    monkeypatch.setenv(key, value)
+
+    with pytest.raises(SettingsError):
+        Settings.from_env("main")
+
+
+def test_unknown_service(env):
+    with pytest.raises(SettingsError):
+        Settings.from_env("billing")
+
+
+def test_dotenv_comments_and_quotes(tmp_path):
+    path = tmp_path / ".env"
+    path.write_text('A=1 # comment\nB="two words"\n# skipped\nC=\n', encoding="utf-8")
+
+    assert load_dotenv(path) == {"A": "1", "B": "two words", "C": ""}

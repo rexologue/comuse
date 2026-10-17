@@ -17,6 +17,10 @@ log = logging.getLogger("llm")
 # Fixed linear backoff between transient-connection retries (seconds * attempt).
 _RETRY_BACKOFF_SEC = 1.0
 
+# Structured output, from strict to loose; see LLMClient.structured.
+_MODES = ("json_schema", "json_object", "plain")
+_LAST_MODE = len(_MODES) - 1
+
 
 class LLMClient:
     def __init__(
@@ -36,6 +40,9 @@ class LLMClient:
         # `--noproxy '*'` equivalent: ignore HTTP(S)_PROXY from the environment, the
         # team's LLM server is reachable directly and corporate proxies break it.
         self._client = httpx.AsyncClient(timeout=timeout, trust_env=not no_proxy)
+
+        # Index into _MODES of the structured-output mode that last worked per model.
+        self._structured_mode: dict[str, int] = {}
 
 
     @property
@@ -171,48 +178,51 @@ class LLMClient:
     ) -> Any:
         """Ask for JSON matching `schema`; validation errors go back to the model.
 
-        JSON-schema mode is tried first. Servers or models without it (an error, or an
-        empty reply) get plain JSON mode with the schema spelled out in the prompt."""
+        Output modes are tried from strict to loose: json_schema, json_object, then
+        plain text with the schema in the prompt. A server or model that rejects a mode
+        or answers it with empty content (gpt-oss on Ollama does both) drops to the
+        next one; the mode that worked is remembered per model. Falling back costs no
+        attempt — `attempts` counts only replies the model got wrong."""
+        mode = self._structured_mode.get(model, 0)
         conversation = list(messages)
-        use_schema_mode = True
         last_error = "no attempts made"
+        attempt = 0
 
-        for attempt in range(1, attempts + 1):
-            if use_schema_mode:
-                response_format = {"type": "json_schema", "json_schema": {"name": name, "schema": schema}}
-            else:
-                response_format = {"type": "json_object"}
-
+        while attempt < attempts:
             try:
                 message = await self.chat(
-                    conversation,
+                    _with_schema_hint(conversation, schema) if mode > 0 else conversation,
                     model=model,
-                    response_format=response_format,
+                    response_format=_response_format(mode, name, schema),
                     reasoning_effort=reasoning_effort,
                 )
+                content = message["content"]
 
             except ApiError as e:
-                if use_schema_mode and e.status_code in (400, 422, 500):
-                    log.warning("json_schema mode rejected (%s), retrying in json mode", e.message)
-                    use_schema_mode = False
-                    conversation = _with_schema_hint(conversation, schema)
+                if mode < _LAST_MODE and e.status_code in (400, 422, 500, 502):
+                    log.warning("structured mode %s failed for %s (%s), trying the next", _MODES[mode], model, e.message)
+                    mode += 1
                     continue
                 raise
 
-            content = message["content"]
-
             if not content:
+                if mode < _LAST_MODE:
+                    log.warning("structured mode %s gave empty content for %s, trying the next", _MODES[mode], model)
+                    mode += 1
+                    continue
+
+                attempt += 1
                 last_error = "empty content"
-                if use_schema_mode:
-                    use_schema_mode = False
-                    conversation = _with_schema_hint(conversation, schema)
                 continue
+
+            self._structured_mode[model] = mode
 
             try:
                 data = extract_json(content)
                 return validate(data) if validate else data
 
             except (ValueError, TypeError, KeyError) as e:
+                attempt += 1
                 last_error = str(e)
                 log.info("structured attempt %d rejected: %s", attempt, truncate(last_error, 500))
                 conversation = conversation + [
@@ -230,7 +240,7 @@ class LLMClient:
         raise ApiError(
             status_code=502,
             message="LLM did not return valid structured output",
-            details={"last_error": truncate(last_error, 2000), "attempts": attempts},
+            details={"last_error": truncate(last_error, 2000), "attempts": attempts, "mode": _MODES[mode]},
         )
 
 
@@ -267,6 +277,16 @@ class LLMClient:
                 message=f"Cannot decode LLM response from {url}",
                 details={"text": truncate(response.text, 1000)},
             ) from e
+
+
+def _response_format(mode: int, name: str, schema: dict[str, Any]) -> dict[str, Any] | None:
+    if _MODES[mode] == "json_schema":
+        return {"type": "json_schema", "json_schema": {"name": name, "schema": schema}}
+
+    if _MODES[mode] == "json_object":
+        return {"type": "json_object"}
+
+    return None
 
 
 def _with_schema_hint(messages: list[dict[str, Any]], schema: dict[str, Any]) -> list[dict[str, Any]]:

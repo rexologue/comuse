@@ -1,0 +1,99 @@
+# One image for all services; each container runs one of them. Only main is
+# published on the host — the rest talk over the compose network, through main.
+
+x-service: &service
+  build:
+    context: ..
+  image: ${AGENT_DEPLOY_IMAGE}
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+  env_file:
+    - path: .env
+      required: true
+  environment: &service-env
+    MAIN_URL: http://main:8000
+    SERVICE_HOST: 0.0.0.0
+    DATA_DIR: /data
+    WORKSPACE_DIR: /workspace
+    # Docker Desktop does not forward file events from Windows folders.
+    WATCH_POLLING: "true"
+    KEYRING_BACKEND: file
+  volumes:
+    # SQLite WAL locking is unreliable on Windows bind mounts: keep app data in a volume.
+    - agent-data:/data
+    - ${AGENT_DEPLOY_WORKSPACE_PATH}:/workspace
+  networks:
+    - agent
+
+x-depends-on-main: &depends-on-main
+  main:
+    condition: service_healthy
+
+services:
+  main:
+    <<: *service
+    container_name: ${AGENT_DEPLOY_CONTAINER_PREFIX}-main
+    command: ["python", "launcher.py", "main"]
+    environment:
+      <<: *service-env
+      SELF_URL: http://main:8000
+    ports:
+      - "${AGENT_DEPLOY_HOST}:${AGENT_DEPLOY_PORT}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  executor:
+    <<: *service
+    container_name: ${AGENT_DEPLOY_CONTAINER_PREFIX}-executor
+    command: ["python", "launcher.py", "executor"]
+    environment:
+      <<: *service-env
+      SELF_URL: http://executor:8004
+    depends_on: *depends-on-main
+
+  agent-loop:
+    <<: *service
+    container_name: ${AGENT_DEPLOY_CONTAINER_PREFIX}-agent-loop
+    command: ["python", "launcher.py", "agent_loop"]
+    environment:
+      <<: *service-env
+      SELF_URL: http://agent-loop:8001
+    depends_on: *depends-on-main
+
+  compiler:
+    <<: *service
+    container_name: ${AGENT_DEPLOY_CONTAINER_PREFIX}-compiler
+    command: ["python", "launcher.py", "compiler"]
+    environment:
+      <<: *service-env
+      SELF_URL: http://compiler:8002
+    depends_on: *depends-on-main
+
+  runner:
+    <<: *service
+    container_name: ${AGENT_DEPLOY_CONTAINER_PREFIX}-runner
+    command: ["python", "launcher.py", "runner"]
+    environment:
+      <<: *service-env
+      SELF_URL: http://runner:8003
+    depends_on: *depends-on-main
+
+  scheduler:
+    <<: *service
+    container_name: ${AGENT_DEPLOY_CONTAINER_PREFIX}-scheduler
+    command: ["python", "launcher.py", "scheduler"]
+    environment:
+      <<: *service-env
+      SELF_URL: http://scheduler:8005
+    depends_on: *depends-on-main
+
+volumes:
+  agent-data:
+
+networks:
+  agent:
