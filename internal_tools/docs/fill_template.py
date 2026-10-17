@@ -9,6 +9,9 @@ from pydantic import Field
 from common.tools import ToolContext, ToolError, ToolInput, ToolOutput, tool
 
 
+_LOOP = re.compile(r"\{%-?\s*(?:tr|tc|p|r)?\s*for\s+([A-Za-z_]\w*)\s+in\s+([A-Za-z_]\w*)")
+
+
 class Input(ToolInput):
     template: str = Field(description="Шаблон .docx с полями {{ имя }}, обычно data:templates/…")
     context: dict[str, Any] = Field(default_factory=dict, description="Значения полей шаблона")
@@ -54,11 +57,14 @@ def _render(template, context, images, output) -> None:
     document = DocxTemplate(str(template))
     values = dict(context)
 
-    # A missing field would silently render empty; fail loudly so a dry run shows it.
+    # A missing field renders empty without any error; fail loudly instead so a dry
+    # run shows it and the compiler can repair the task.
     expected = document.get_undeclared_template_variables()
     missing = sorted(expected - set(values) - set(images))
     if missing:
         raise ToolError(f"В context не хватает полей шаблона: {missing}; шаблон ждёт: {sorted(expected)}")
+
+    _check_table_rows(document, values)
 
     for name, path in images.items():
         values[name] = InlineImage(document, str(path), width=Mm(160))
@@ -70,6 +76,31 @@ def _render(template, context, images, output) -> None:
         raise ToolError(f"Не удалось заполнить шаблон: {e}") from e
 
     document.save(str(output))
+
+
+def _check_table_rows(document, values: dict[str, Any]) -> None:
+    """`{%tr for row in top_clients %}` … `{{ row.client }}` needs every item of
+    top_clients to have `client`."""
+    if document.docx is None:
+        document.init_docx()
+
+    xml = document.patch_xml(document.get_xml())
+
+    for loop_var, list_name in _LOOP.findall(xml):
+        keys = set(re.findall(rf"\b{re.escape(loop_var)}\.([A-Za-z_][A-Za-z0-9_]*)", xml))
+        rows = values.get(list_name)
+
+        if not keys or not isinstance(rows, list):
+            continue
+
+        for i, row in enumerate(rows):
+            absent = sorted(keys - set(row)) if isinstance(row, dict) else sorted(keys)
+            if absent:
+                got = sorted(row) if isinstance(row, dict) else type(row).__name__
+                raise ToolError(
+                    f"Строки `{list_name}` должны иметь поля {sorted(keys)}; в строке {i + 1} нет {absent} "
+                    f"(пришло: {got}). Подготовь строки шагом data.map_rows."
+                )
 
 
 def _docx_name(name: str) -> str:
