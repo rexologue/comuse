@@ -22,7 +22,7 @@ from common.utils import truncate
 from compiler import prompts, store
 from compiler.cards import build_cards, describe_trigger, diff_specs, summarize
 from compiler.permissions import derive_permissions
-from compiler.validate import validate_spec
+from compiler.validate import SpecError, validate_spec
 
 
 log = logging.getLogger("compiler")
@@ -59,7 +59,8 @@ class Compiler:
             today=date.today(),
         )
 
-        spec = await self._ask_spec(messages, catalog)
+        chat_tools = successful_tools(session_id)
+        spec = await self._ask_spec(messages, catalog, chat_tools)
         version = None
 
         # A spec that validates can still fail on real data; show the model what the
@@ -84,7 +85,7 @@ class Compiler:
                 {"role": "assistant", "content": json.dumps(spec.dump(), ensure_ascii=False)},
                 {"role": "user", "content": prompts.repair_request(dry_run)},
             ]
-            spec = await self._ask_spec(messages, catalog)
+            spec = await self._ask_spec(messages, catalog, chat_tools)
 
         log.info("compiled task %s (%s) from session %s, dry run %s", version.task_id, spec.title, session_id, dry_run["status"])
 
@@ -100,14 +101,24 @@ class Compiler:
         }
 
 
-    async def _ask_spec(self, messages: list[dict[str, Any]], catalog: dict[str, dict[str, Any]]) -> TaskSpec:
+    async def _ask_spec(
+        self,
+        messages: list[dict[str, Any]],
+        catalog: dict[str, dict[str, Any]],
+        chat_tools: set[str],
+    ) -> TaskSpec:
+        def validate(data: Any) -> TaskSpec:
+            spec = validate_spec(data, catalog)
+            check_reflects_chat(spec, chat_tools)
+            return spec
+
         # Compiling is multi-step reasoning over the whole chat, so it uses the chat model.
         return await self.llm.structured(
             messages,
             model=self.settings.llm.model_chat,
             schema=TaskSpec.model_json_schema(by_alias=True),
             name="task_spec",
-            validate=lambda data: validate_spec(data, catalog),
+            validate=validate,
             attempts=self.settings.compiler.max_attempts,
             reasoning_effort=self.settings.llm.chat_reasoning_effort or None,
         )
@@ -211,6 +222,31 @@ class Compiler:
                 for step in run.get("steps", [])
             ],
         }
+
+
+def successful_tools(session_id: str) -> set[str]:
+    with session() as db:
+        rows = (
+            db.query(TraceEvent.tool)
+            .filter(TraceEvent.session_id == session_id, TraceEvent.status.in_(("ok", "confirmed")))
+            .distinct()
+            .all()
+        )
+
+    return {tool for (tool,) in rows if not tool.startswith("meta:")}
+
+
+def check_reflects_chat(spec: TaskSpec, chat_tools: set[str]) -> None:
+    """A compiled task must redo at least one thing the chat actually did; a spec of
+    only notifications means the model lost the conversation."""
+    used = {step.tool for step in spec.all_steps() if step.tool}
+    substantive = chat_tools - {"user.notify", "user.ask"}
+
+    if substantive and not used & substantive:
+        raise SpecError([
+            "задача не повторяет ни одного действия из разговора; "
+            f"в разговоре успешно выполнялись: {sorted(substantive)}"
+        ])
 
 
 def build_transcript(session_id: str) -> str:

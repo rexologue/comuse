@@ -171,3 +171,14 @@ def test_model_folders_kept_where_paths_are_templated():
 
     # fs.move's src is `{{ file.path }}`: only the model knows it is Отчёты/Продажи.
     assert permissions.write_folders == ["Архив", "Отчёты/Продажи"]
+
+
+def test_compiled_task_must_reflect_the_chat():
+    from compiler.compile import check_reflects_chat
+
+    notify_only = TaskSpec.model_validate({"title": "x", "steps": [{"id": "n", "tool": "user.notify", "args": {"message": "ok"}}]})
+
+    with pytest.raises(SpecError):
+        check_reflects_chat(notify_only, {"fs.list", "xlsx.aggregate", "user.notify"})
+
+    check_reflects_chat(validate_spec(GOOD, CATALOG), {"fs.list", "docs.make_template"})
