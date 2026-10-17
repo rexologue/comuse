@@ -93,7 +93,7 @@ class Compiler:
             "task_id": version.task_id,
             "version_id": version.id,
             "title": spec.title,
-            "summary": version.summary,
+            "summary": summarize(spec),
             "trigger": describe_trigger(spec.trigger),
             "permissions": spec.permissions.model_dump(),
             "cards": cards,

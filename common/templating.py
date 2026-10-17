@@ -180,7 +180,8 @@ def check_syntax(value: Any) -> list[str]:
             _ENV.from_string(value)
 
         except TemplateError as e:
-            errors.append(f"{value!r}: {e}. Доступные фильтры дат: {', '.join(FILTERS)}")
+            hint = f". Доступные фильтры дат: {', '.join(FILTERS)}" if "filter" in str(e).lower() else ""
+            errors.append(f"{value!r}: {e}{hint}")
 
     elif isinstance(value, list):
         for item in value:
