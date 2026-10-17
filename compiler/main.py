@@ -22,8 +22,8 @@ async def lifespan(app: FastAPI):
     llm = LLMClient.from_settings(settings.llm)
 
     try:
-        await llm.check_connection([settings.llm.model_compiler])
-        log.info("llm ok: %s model=%s", settings.llm.base_url, settings.llm.model_compiler)
+        await llm.check_connection([settings.llm.model_chat])
+        log.info("llm ok: %s model=%s", settings.llm.base_url, settings.llm.model_chat)
 
     except ApiError as e:
         log.warning("llm check failed: %s | details=%s", e.message, e.details)

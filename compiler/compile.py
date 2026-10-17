@@ -29,6 +29,8 @@ log = logging.getLogger("compiler")
 
 _CATALOG_TTL_SEC = 60
 
+_DRY_RUN_REPAIRS = 2
+
 
 class Compiler:
     def __init__(self, settings: Settings, llm: LLMClient, main: MainClient):
@@ -57,21 +59,32 @@ class Compiler:
             today=date.today(),
         )
 
-        spec: TaskSpec = await self.llm.structured(
-            messages,
-            model=self.settings.llm.model_compiler,
-            schema=TaskSpec.model_json_schema(by_alias=True),
-            name="task_spec",
-            validate=lambda data: validate_spec(data, catalog),
-            attempts=self.settings.compiler.max_attempts,
-        )
+        spec = await self._ask_spec(messages, catalog)
+        version = None
 
-        spec = spec.model_copy(update={"permissions": derive_permissions(spec, catalog)})
-        cards = build_cards(spec, catalog)
+        # A spec that validates can still fail on real data; show the model what the
+        # dry run hit and let it repair the spec a couple of times.
+        for repair in range(_DRY_RUN_REPAIRS + 1):
+            spec = spec.model_copy(update={"permissions": derive_permissions(spec, catalog)})
+            cards = build_cards(spec, catalog)
 
-        version = store.create_task(spec, session_id=session_id, cards=cards, summary=summarize(spec))
-        dry_run = await self._dry_run(version.id)
-        store.set_dry_run(version.id, dry_run)
+            if version is None:
+                version = store.create_task(spec, session_id=session_id, cards=cards, summary=summarize(spec))
+            else:
+                store.replace_draft(version.id, spec, cards=cards, summary=summarize(spec))
+
+            dry_run = await self._dry_run(version.id)
+            store.set_dry_run(version.id, dry_run)
+
+            if dry_run["status"] != "failed" or repair == _DRY_RUN_REPAIRS:
+                break
+
+            log.info("dry run of %s failed (%s), repairing", version.id, dry_run.get("error"))
+            messages = messages + [
+                {"role": "assistant", "content": json.dumps(spec.dump(), ensure_ascii=False)},
+                {"role": "user", "content": prompts.repair_request(dry_run)},
+            ]
+            spec = await self._ask_spec(messages, catalog)
 
         log.info("compiled task %s (%s) from session %s, dry run %s", version.task_id, spec.title, session_id, dry_run["status"])
 
@@ -85,6 +98,19 @@ class Compiler:
             "cards": cards,
             "dry_run": dry_run,
         }
+
+
+    async def _ask_spec(self, messages: list[dict[str, Any]], catalog: dict[str, dict[str, Any]]) -> TaskSpec:
+        # Compiling is multi-step reasoning over the whole chat, so it uses the chat model.
+        return await self.llm.structured(
+            messages,
+            model=self.settings.llm.model_chat,
+            schema=TaskSpec.model_json_schema(by_alias=True),
+            name="task_spec",
+            validate=lambda data: validate_spec(data, catalog),
+            attempts=self.settings.compiler.max_attempts,
+            reasoning_effort=self.settings.llm.chat_reasoning_effort or None,
+        )
 
 
     async def patch(self, task_id: str, instruction: str) -> dict[str, Any]:
@@ -104,11 +130,12 @@ class Compiler:
 
         result, spec = await self.llm.structured(
             messages,
-            model=self.settings.llm.model_compiler,
+            model=self.settings.llm.model_chat,
             schema=prompts.PATCH_SCHEMA,
             name="task_patch",
             validate=validate,
             attempts=self.settings.compiler.max_attempts,
+            reasoning_effort=self.settings.llm.chat_reasoning_effort or None,
         )
 
         spec = spec.model_copy(update={"permissions": derive_permissions(spec, catalog)})

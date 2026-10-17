@@ -59,11 +59,11 @@ class LLMSettings:
     base_url: str
     api_key: str
     no_proxy: bool
-    model_agent: str
-    model_tools: str
-    model_compiler: str
+    model_chat: str
+    model_instruct: str
+    # Empty = no embeddings: the agent sees every tool instead of the top-k.
     model_embed: str
-    agent_reasoning_effort: str
+    chat_reasoning_effort: str
     timeout: int
     max_retries: int
 
@@ -161,18 +161,19 @@ class Settings:
             "LLM_NO_PROXY",
         )
 
-        # The chat loop needs the strongest multi-step tool user; llm.* tools and the
-        # compiler do single structured calls where a fast model is enough.
-        llm_model_agent = os.environ.get("LLM_MODEL_AGENT", "gpt-oss:120b")
-        llm_model_tools = os.environ.get("LLM_MODEL_TOOLS", "qwen3:30b")
-        llm_model_compiler = os.environ.get("LLM_MODEL_COMPILER", llm_model_tools)
-        llm_model_embed = os.environ.get("LLM_MODEL_EMBED", "bge-m3")
+        # One model serves everything unless a role overrides it: CHAT drives the
+        # multi-step agent loop, INSTRUCT does single structured calls (llm.* tools,
+        # template markup, the compiler).
+        llm_model = require_env("LLM_MODEL")
+        llm_model_chat = os.environ.get("LLM_MODEL_CHAT") or llm_model
+        llm_model_instruct = os.environ.get("LLM_MODEL_INSTRUCT") or llm_model
+        llm_model_embed = os.environ.get("LLM_MODEL_EMBED", "")
 
-        # low | medium | high for reasoning models; empty = do not send the field.
-        llm_agent_reasoning_effort = os.environ.get("LLM_AGENT_REASONING_EFFORT", "low").strip().lower()
-        if llm_agent_reasoning_effort not in ("", "low", "medium", "high"):
+        # low | medium | high for reasoning models; empty = the field is not sent.
+        llm_chat_reasoning_effort = os.environ.get("LLM_CHAT_REASONING_EFFORT", "").strip().lower()
+        if llm_chat_reasoning_effort not in ("", "low", "medium", "high"):
             raise SettingsError(
-                f"Incorrect `LLM_AGENT_REASONING_EFFORT`: {llm_agent_reasoning_effort!r}. "
+                f"Incorrect `LLM_CHAT_REASONING_EFFORT`: {llm_chat_reasoning_effort!r}. "
                 f"Must be empty or one of ['low', 'medium', 'high']."
             )
 
@@ -199,7 +200,7 @@ class Settings:
         )
 
         agent_tools_top_k = int_coercion(
-            os.environ.get("AGENT_TOOLS_TOP_K", "16"),
+            os.environ.get("AGENT_TOOLS_TOP_K", "24"),
             "AGENT_TOOLS_TOP_K",
             low=1,
         )
@@ -279,11 +280,10 @@ class Settings:
                 base_url=llm_base_url,
                 api_key=llm_api_key,
                 no_proxy=llm_no_proxy,
-                model_agent=llm_model_agent,
-                model_tools=llm_model_tools,
-                model_compiler=llm_model_compiler,
+                model_chat=llm_model_chat,
+                model_instruct=llm_model_instruct,
                 model_embed=llm_model_embed,
-                agent_reasoning_effort=llm_agent_reasoning_effort,
+                chat_reasoning_effort=llm_chat_reasoning_effort,
                 timeout=llm_timeout,
                 max_retries=llm_max_retries,
             ),

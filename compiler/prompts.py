@@ -151,6 +151,19 @@ def patch_messages(
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
+def repair_request(dry_run: dict[str, Any]) -> str:
+    failed = [step for step in dry_run.get("steps", []) if step.get("status") == "error"]
+    details = "\n".join(f"- шаг {step['step']}: {step['error']}" for step in failed[-3:])
+
+    return (
+        "Пробный запуск этой задачи на реальных данных упал.\n"
+        f"Ошибка: {dry_run.get('error')}\n{details}\n\n"
+        "Исправь задачу так, чтобы она работала. Помни: файлы ищутся шагом fs.list (с pattern и датами), "
+        "а не собираются из имён; ссылки на результаты — только на поля из output-схем. "
+        "Верни задачу целиком, только JSON."
+    )
+
+
 PATCH_SCHEMA = {
     "type": "object",
     "properties": {

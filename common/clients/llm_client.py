@@ -167,12 +167,12 @@ class LLMClient:
         name: str = "result",
         validate: Callable[[Any], Any] | None = None,
         attempts: int = 3,
+        reasoning_effort: str | None = None,
     ) -> Any:
         """Ask for JSON matching `schema`; validation errors go back to the model.
 
-        JSON-schema mode is tried first. Some models (gpt-oss on Ollama) answer it with
-        empty content, so the next attempt falls back to plain JSON mode with the
-        schema spelled out in the prompt."""
+        JSON-schema mode is tried first. Servers or models without it (an error, or an
+        empty reply) get plain JSON mode with the schema spelled out in the prompt."""
         conversation = list(messages)
         use_schema_mode = True
         last_error = "no attempts made"
@@ -184,7 +184,12 @@ class LLMClient:
                 response_format = {"type": "json_object"}
 
             try:
-                message = await self.chat(conversation, model=model, response_format=response_format)
+                message = await self.chat(
+                    conversation,
+                    model=model,
+                    response_format=response_format,
+                    reasoning_effort=reasoning_effort,
+                )
 
             except ApiError as e:
                 if use_schema_mode and e.status_code in (400, 422, 500):

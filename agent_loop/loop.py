@@ -26,6 +26,8 @@ _RESULT_CHARS = 6000
 
 _MODEL_ATTEMPTS = 3
 
+_NUDGE = "Ты остановился без ответа. Продолжи работу инструментами или коротко сообщи пользователю результат."
+
 
 @dataclass(slots=True)
 class TurnResult:
@@ -52,18 +54,28 @@ class AgentLoop:
         tools = [to_function(m) for m in manifests] + meta_tools.DEFINITIONS
 
         result = TurnResult(session_id=session_id, content="")
+        nudged = False
 
         for _ in range(self.settings.agent.max_iterations):
             messages = [{"role": "system", "content": system_prompt(date.today())}]
             messages += history.llm_history(session_id, self.settings.agent.history_messages)
 
+            # Turn-local only: the nudge never becomes part of the stored chat.
+            if nudged:
+                messages.append({"role": "user", "content": _NUDGE})
+
             reply = await self._complete(messages, tools)
             tool_calls = _normalize_calls(reply.get("tool_calls") or [])
+
+            # An empty reply with no calls means the model stalled mid-task; ask once more.
+            if not tool_calls and not reply["content"] and not nudged:
+                nudged = True
+                continue
 
             message_id = history.add_message(session_id, "assistant", reply["content"], tool_calls=tool_calls or None)
 
             if not tool_calls:
-                result.content = reply["content"] or "Готово."
+                result.content = reply["content"] or "Не получилось завершить работу. Попробуйте переформулировать просьбу."
                 return result
 
             for call in tool_calls:
@@ -97,9 +109,9 @@ class AgentLoop:
             try:
                 return await self.llm.chat(
                     messages,
-                    model=llm.model_agent,
+                    model=llm.model_chat,
                     tools=tools,
-                    reasoning_effort=llm.agent_reasoning_effort or None,
+                    reasoning_effort=llm.chat_reasoning_effort or None,
                 )
 
             except ApiError as e:

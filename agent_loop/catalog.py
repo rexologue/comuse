@@ -48,7 +48,8 @@ class ToolCatalog:
         manifests = await self.manifests()
         always = {name for name in (always or set()) | CORE_TOOLS if name in manifests}
 
-        if len(manifests) <= self.top_k:
+        # Without an embeddings model (or with few tools) the model simply sees them all.
+        if not self.embed_model or len(manifests) <= self.top_k:
             return list(manifests.values())
 
         try:

@@ -14,6 +14,8 @@ from common import templating
 from common.schemas.task import Step, TaskSpec
 
 
+_OUTPUT_REF = re.compile(r"\b([a-z][a-z0-9_]*)\.output((?:\.[A-Za-z_][A-Za-z0-9_]*)*)")
+
 _ABSOLUTE_PATH = re.compile(r"^(?:[a-zA-Z]:[\\/]|/(?:home|Users|mnt|tmp|var|etc)/|~[\\/])")
 
 
@@ -50,7 +52,7 @@ def validate_spec(data: Any, catalog: dict[str, dict[str, Any]]) -> TaskSpec:
             errors.append(f"variables.{name}: неизвестные имена {sorted(unknown)}")
 
     scope = templating.BUILTIN_NAMES | variable_names
-    _check_steps(spec.steps, scope, catalog, errors, path="steps")
+    _check_steps(spec.steps, scope, {}, catalog, errors, path="steps")
 
     if errors:
         raise SpecError(errors)
@@ -61,25 +63,34 @@ def validate_spec(data: Any, catalog: dict[str, dict[str, Any]]) -> TaskSpec:
 def _check_steps(
     steps: list[Step],
     scope: set[str],
+    outputs: dict[str, dict[str, Any] | None],
     catalog: dict[str, dict[str, Any]],
     errors: list[str],
     path: str,
 ) -> None:
-    """Each step may reference variables and the steps before it (in its scope)."""
+    """Each step may reference variables and the steps before it (in its scope).
+    `outputs` maps visible step ids to their tools' output schemas."""
     visible = set(scope)
+    outputs = dict(outputs)
 
     for i, step in enumerate(steps):
         where = f"{path}[{i}] ({step.id})"
 
         if step.when:
             _check_names(templating.expression_names(step.when), visible, f"{where}.when", errors)
+            _check_output_refs(step.when, outputs, catalog, f"{where}.when", errors)
 
         if step.foreach is not None:
             _check_names(templating.expression_names(step.foreach), visible, f"{where}.foreach", errors)
-            _check_steps(step.steps or [], visible | {step.as_}, catalog, errors, f"{where}.steps")
+            _check_output_refs(step.foreach, outputs, catalog, f"{where}.foreach", errors)
+            _check_steps(step.steps or [], visible | {step.as_}, outputs, catalog, errors, f"{where}.steps")
+            # A foreach yields a list of per-item results; its fields are not checked.
+            outputs[step.id] = None
 
         else:
             _check_tool_step(step, visible, catalog, errors, where)
+            _check_output_refs(step.args, outputs, catalog, f"{where}.args", errors)
+            outputs[step.id] = catalog.get(step.tool or "", {}).get("output_schema")
 
         visible.add(step.id)
 
@@ -125,6 +136,66 @@ def _check_tool_step(
 
         except jsonschema.ValidationError as e:
             errors.append(f"{where}.args.{key}: {e.message}")
+
+
+def _check_output_refs(
+    value: Any,
+    outputs: dict[str, dict[str, Any] | None],
+    catalog: dict[str, dict[str, Any]],
+    where: str,
+    errors: list[str],
+) -> None:
+    """`files.output.files` must exist in fs.list's output schema, and so on down."""
+    for text in _strings(value):
+        for step_id, tail in _OUTPUT_REF.findall(text):
+            schema = outputs.get(step_id)
+            if schema is None:
+                continue
+
+            node, defs = schema, schema.get("$defs", {})
+            for field in [f for f in tail.split(".") if f]:
+                node = _resolve(node, defs)
+                properties = node.get("properties")
+
+                # Free-form results (llm.extract data, dicts) cannot be checked further.
+                if not properties:
+                    break
+
+                if field not in properties:
+                    errors.append(
+                        f"{where}: ссылка `{step_id}.output{tail}` — в результате нет поля `{field}`; "
+                        f"есть: {sorted(properties)}"
+                    )
+                    break
+
+                node = properties[field]
+
+
+def _strings(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value] if templating.has_template(value) or ".output" in value else []
+
+    if isinstance(value, list):
+        return [s for item in value for s in _strings(item)]
+
+    if isinstance(value, dict):
+        return [s for item in value.values() for s in _strings(item)]
+
+    return []
+
+
+def _resolve(node: dict[str, Any], defs: dict[str, Any]) -> dict[str, Any]:
+    ref = node.get("$ref", "")
+    if ref.startswith("#/$defs/"):
+        return defs.get(ref.split("/")[-1], {})
+
+    if "anyOf" in node:
+        for option in node["anyOf"]:
+            resolved = _resolve(option, defs)
+            if resolved.get("properties"):
+                return resolved
+
+    return node
 
 
 def _check_names(names: set[str], visible: set[str], where: str, errors: list[str]) -> None:

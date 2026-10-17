@@ -244,7 +244,7 @@ class _Walk:
             args = templating.jsonable(templating.render(step.args, ctx))
 
         except TemplateError as e:
-            return await self._handle_error(step, key, None, f"Не удалось подставить аргументы: {e}")
+            return await self._handle_error(step, key, None, f"Не удалось подставить аргументы: {e}", record=True)
 
         answer = self.state.answers.get(key)
 
@@ -288,7 +288,8 @@ class _Walk:
             if attempt < attempts:
                 await asyncio.sleep(_RETRY_BACKOFF_SEC * attempt)
 
-        return await self._handle_error(step, key, args, response.get("error") or "неизвестная ошибка")
+        # The failed attempt is already in step_runs (written by _call).
+        return await self._handle_error(step, key, args, response.get("error") or "неизвестная ошибка", record=False)
 
 
     def _apply_answer(self, answer: dict[str, Any]) -> tuple[bool, Any, str]:
@@ -340,8 +341,9 @@ class _Walk:
         )
 
 
-    async def _handle_error(self, step: Step, key: str, args: dict[str, Any] | None, error: str) -> Any:
-        self._record(key, step, status="error", inputs=args, output=None, error=error)
+    async def _handle_error(self, step: Step, key: str, args: dict[str, Any] | None, error: str, *, record: bool) -> Any:
+        if record:
+            self._record(key, step, status="error", inputs=args, output=None, error=error)
 
         if step.on_error == "skip":
             return self._finish(key, step, None, status="skipped", inputs=args, record=False)

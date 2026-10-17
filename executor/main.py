@@ -31,8 +31,8 @@ async def lifespan(app: FastAPI):
 
     # The LLM is only needed by llm.* tools; a missing server degrades, not blocks.
     try:
-        await llm.check_connection([settings.llm.model_tools])
-        log.info("llm ok: %s model=%s", settings.llm.base_url, settings.llm.model_tools)
+        await llm.check_connection([settings.llm.model_instruct])
+        log.info("llm ok: %s model=%s", settings.llm.base_url, settings.llm.model_instruct)
 
     except ApiError as e:
         log.warning("llm check failed: %s | details=%s", e.message, e.details)

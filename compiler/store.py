@@ -71,6 +71,24 @@ def add_version(
     return version
 
 
+def replace_draft(version_id: str, spec: TaskSpec, *, cards: list[dict[str, Any]], summary: str) -> None:
+    """Swap the spec of a draft in place (repairs after a failed dry run)."""
+    with session() as db:
+        version = db.get(TaskVersion, version_id)
+        if version.status != "draft":
+            raise ApiError(status_code=409, message=f"Version `{version_id}` is {version.status}, not a draft")
+
+        version.spec = spec.dump()
+        version.cards = cards
+        version.summary = summary
+
+        task = db.get(Task, version.task_id)
+        task.title = spec.title
+        task.description = spec.description
+
+        db.commit()
+
+
 def set_dry_run(version_id: str, result: dict[str, Any]) -> None:
     with session() as db:
         version = db.get(TaskVersion, version_id)
