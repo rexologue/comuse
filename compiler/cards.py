@@ -110,7 +110,8 @@ def _readable(value: Any) -> str:
         return ", ".join(_readable(v) for v in value)
 
     if isinstance(value, dict):
-        return "{…}"
+        # Field mappings read best as their names: «client, amount».
+        return ", ".join(str(key) for key in value) if value else "—"
 
     # `{{ week_start }}` reads as ‹week_start› on a card.
     return _EXPR.sub(lambda m: f"‹{m.group(1)}›", str(value))

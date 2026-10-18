@@ -182,3 +182,12 @@ def test_compiled_task_must_reflect_the_chat():
         check_reflects_chat(notify_only, {"fs.list", "xlsx.aggregate", "user.notify"})
 
     check_reflects_chat(validate_spec(GOOD, CATALOG), {"fs.list", "docs.make_template"})
+
+
+def test_mapping_cards_name_their_fields():
+    spec = TaskSpec.model_validate({
+        "title": "t",
+        "steps": [{"id": "rows", "tool": "data.map_rows", "args": {"rows": [], "fields": {"client": "row.key", "amount": "row.sum"}, "limit": 5}}],
+    })
+
+    assert build_cards(spec, CATALOG)[0]["text"] == "Подготовить строки с полями client, amount, не больше 5"

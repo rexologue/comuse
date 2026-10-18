@@ -55,7 +55,8 @@ def derive_permissions(spec: TaskSpec, catalog: dict[str, dict[str, Any]]) -> Pe
                     undetermined.add(field)
 
     for field in undetermined:
-        found[field] += list(getattr(spec.permissions, field))
+        # data: areas need no permission, so the model listing them is just noise.
+        found[field] += [v for v in getattr(spec.permissions, field) if not v.startswith(DATA_PREFIX)]
 
     trigger = spec.trigger
     if trigger.type == "file_appeared" and trigger.folder is not None:
