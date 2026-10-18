@@ -20,6 +20,10 @@ _CATALOG_TTL_SEC = 60
 # Looking around is how every request starts; these are never ranked out.
 CORE_TOOLS = {"fs.list", "docs.read"}
 
+# After an embeddings failure, ranking is skipped for a while instead of paying the
+# connection retries on every chat turn.
+_EMBED_BACKOFF_SEC = 300
+
 
 class ToolCatalog:
     def __init__(self, main: MainClient, llm: LLMClient, embed_model: str, top_k: int):
@@ -32,6 +36,7 @@ class ToolCatalog:
         self._manifests: dict[str, dict[str, Any]] = {}
         self._loaded_at = 0.0
         self._vectors: dict[str, list[float]] = {}
+        self._embed_down_until = 0.0
 
 
     async def manifests(self) -> dict[str, dict[str, Any]]:
@@ -49,14 +54,15 @@ class ToolCatalog:
         always = {name for name in (always or set()) | CORE_TOOLS if name in manifests}
 
         # Without an embeddings model (or with few tools) the model simply sees them all.
-        if not self.embed_model or len(manifests) <= self.top_k:
+        if not self.embed_model or len(manifests) <= self.top_k or time.monotonic() < self._embed_down_until:
             return list(manifests.values())
 
         try:
             ranked = await self._rank(query, manifests)
 
         except ApiError as e:
-            log.warning("embedding ranking failed, exposing all tools: %s", e.message)
+            log.warning("embedding ranking failed, exposing all tools for %ds: %s", _EMBED_BACKOFF_SEC, e.message)
+            self.mark_embeddings_down()
             return list(manifests.values())
 
         chosen = list(always)
@@ -68,6 +74,10 @@ class ToolCatalog:
                 chosen.append(name)
 
         return [manifests[name] for name in chosen]
+
+
+    def mark_embeddings_down(self) -> None:
+        self._embed_down_until = time.monotonic() + _EMBED_BACKOFF_SEC
 
 
     async def _rank(self, query: str, manifests: dict[str, dict[str, Any]]) -> list[str]:
