@@ -63,6 +63,9 @@ class LLMSettings:
     model_instruct: str
     # Empty = no embeddings: the agent sees every tool instead of the top-k.
     model_embed: str
+    # Embeddings may live on another server than chat (defaults to the same one).
+    embed_base_url: str
+    embed_api_key: str
     chat_reasoning_effort: str
     timeout: int
     max_retries: int
@@ -168,6 +171,14 @@ class Settings:
         llm_model_chat = os.environ.get("LLM_MODEL_CHAT") or llm_model
         llm_model_instruct = os.environ.get("LLM_MODEL_INSTRUCT") or llm_model
         llm_model_embed = os.environ.get("LLM_MODEL_EMBED", "")
+
+        llm_embed_base_url = (os.environ.get("LLM_EMBED_BASE_URL") or llm_base_url).rstrip("/")
+
+        # A separate embeddings server never inherits the chat server's key.
+        if "LLM_EMBED_API_KEY" in os.environ:
+            llm_embed_api_key = os.environ["LLM_EMBED_API_KEY"]
+        else:
+            llm_embed_api_key = llm_api_key if llm_embed_base_url == llm_base_url else ""
 
         # low | medium | high for reasoning models; empty = the field is not sent.
         llm_chat_reasoning_effort = os.environ.get("LLM_CHAT_REASONING_EFFORT", "").strip().lower()
@@ -283,6 +294,8 @@ class Settings:
                 model_chat=llm_model_chat,
                 model_instruct=llm_model_instruct,
                 model_embed=llm_model_embed,
+                embed_base_url=llm_embed_base_url,
+                embed_api_key=llm_embed_api_key,
                 chat_reasoning_effort=llm_chat_reasoning_effort,
                 timeout=llm_timeout,
                 max_retries=llm_max_retries,

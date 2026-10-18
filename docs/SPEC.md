@@ -479,6 +479,7 @@ tools:
 | `LLM_MODEL_INSTRUCT` | необяз. | необяз. | Переопределение: `llm.*`-команды, разметка шаблонов |
 | `LLM_CHAT_REASONING_EFFORT` | пусто | пусто | `low`/`medium`/`high` для reasoning-моделей; пусто — не отправляется |
 | `LLM_MODEL_EMBED` | `bge-m3` | то же | Отбор инструментов; пусто — агент видит все |
+| `LLM_EMBED_BASE_URL`, `LLM_EMBED_API_KEY` | пусто | пусто | Отдельный сервер эмбеддингов; по умолчанию `LLM_BASE_URL`, ключ основного сервера не наследуется |
 | `API_TOKEN` | пусто | пусто или задан | Пусто — внешний API main без проверки |
 | `INTERNAL_TOKEN` | генерирует launcher.py | задаётся в `deploy/.env` | Защита внутренних маршрутов |
 | `KEYRING_BACKEND` | `system` | `file` | Где хранить пароли почты |

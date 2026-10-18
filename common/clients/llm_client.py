@@ -77,6 +77,18 @@ class LLMClient:
         )
 
 
+    @classmethod
+    def embeddings_from_settings(cls, ls: LLMSettings) -> LLMClient:
+        """Client for the embeddings server, which may differ from the chat one."""
+        return cls(
+            base_url=ls.embed_base_url,
+            api_key=ls.embed_api_key,
+            timeout=ls.timeout,
+            no_proxy=ls.no_proxy,
+            max_retries=ls.max_retries,
+        )
+
+
     async def close(self) -> None:
         await self._client.aclose()
 

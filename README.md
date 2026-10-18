@@ -62,6 +62,7 @@ curl -s -X POST localhost:8000/agent/v1/chat/completions -H 'content-type: appli
 | `LLM_MODEL_INSTRUCT` | Переопределение: `llm.*`-команды и разметка шаблонов (одиночные вызовы) |
 | `LLM_CHAT_REASONING_EFFORT` | `low` / `medium` / `high` для reasoning-моделей; пусто — не отправляется |
 | `LLM_MODEL_EMBED` | Отбор инструментов по смыслу; пусто — агент видит все |
+| `LLM_EMBED_BASE_URL`, `LLM_EMBED_API_KEY` | Отдельный сервер для эмбеддингов; по умолчанию тот же, что для чата |
 
 Structured output необязателен: клиент перебирает `json_schema` → `json_object` → обычный текст
 со схемой в промпте и запоминает, что сработало для модели.

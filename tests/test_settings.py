@@ -61,3 +61,20 @@ def test_dotenv_comments_and_quotes(tmp_path):
     path.write_text('A=1 # comment\nB="two words"\n# skipped\nC=\n', encoding="utf-8")
 
     assert load_dotenv(path) == {"A": "1", "B": "two words", "C": ""}
+
+
+def test_embeddings_default_to_the_chat_server(env, monkeypatch):
+    monkeypatch.setenv("LLM_BASE_URL", "https://chat/v1")
+    monkeypatch.setenv("LLM_API_KEY", "secret")
+    s = Settings.from_env("agent_loop")
+
+    assert (s.llm.embed_base_url, s.llm.embed_api_key) == ("https://chat/v1", "secret")
+
+
+def test_separate_embeddings_server_does_not_get_the_chat_key(env, monkeypatch):
+    monkeypatch.setenv("LLM_BASE_URL", "https://chat/v1")
+    monkeypatch.setenv("LLM_API_KEY", "secret")
+    monkeypatch.setenv("LLM_EMBED_BASE_URL", "http://old-server/v1/")
+    s = Settings.from_env("agent_loop")
+
+    assert (s.llm.embed_base_url, s.llm.embed_api_key) == ("http://old-server/v1", "")
