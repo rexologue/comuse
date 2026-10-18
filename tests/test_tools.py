@@ -71,3 +71,26 @@ def test_fill_template_checks_fields_and_row_keys(tmp_path):
     text = [p.text for p in Document(str(out)).paragraphs] + [c.text for t in Document(str(out)).tables for r in t.rows for c in r.cells]
 
     assert "Итого: 3" in text and "Ромашка" in text
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("a/b.xlsx", ["a/b.xlsx"]),
+        ('["a/b.xlsx", "c/d.xlsx"]', ["a/b.xlsx", "c/d.xlsx"]),
+        ("a/b.xlsx, c/d.xlsx", ["a/b.xlsx", "c/d.xlsx"]),
+        ({"files": [{"path": "a.xlsx", "name": "a.xlsx"}]}, ["a.xlsx"]),
+        (["a.xlsx", {"path": "b.xlsx"}], ["a.xlsx", "b.xlsx"]),
+        ("Отчёты/Иванов, Петров.docx", ["Отчёты/Иванов, Петров.docx"]),
+    ],
+)
+def test_file_refs_accepts_every_shape(value, expected):
+    from common.tools.refs import file_refs
+
+    assert file_refs(value) == expected
+
+
+def test_aggregate_inputs_have_a_schema():
+    schema = discover()["xlsx.aggregate"].manifest()["input_schema"]["properties"]["inputs"]
+
+    assert "anyOf" in schema

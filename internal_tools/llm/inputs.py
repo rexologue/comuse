@@ -7,6 +7,7 @@ import asyncio
 from typing import Any
 
 from common.tools import PermissionDenied, ToolContext
+from common.tools.refs import file_refs
 from common.utils import truncate
 from internal_tools.docs.readers import read_document
 
@@ -44,8 +45,13 @@ async def _collect(value: Any, ctx: ToolContext, parts: list[str]) -> None:
         return
 
     text = str(value)
-    if _looks_like_path(text) and await _collect_path(text, ctx, parts):
-        return
+    refs = file_refs(text)
+
+    # A string naming one or more files reads those files; anything else is text.
+    if refs and all(_looks_like_path(ref) for ref in refs):
+        collected = [await _collect_path(ref, ctx, parts) for ref in refs]
+        if all(collected):
+            return
 
     parts.append(text)
 

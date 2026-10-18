@@ -205,7 +205,7 @@ class Settings:
         # -----------------------------
 
         agent_max_iterations = int_coercion(
-            os.environ.get("AGENT_MAX_ITERATIONS", "10"),
+            os.environ.get("AGENT_MAX_ITERATIONS", "16"),
             "AGENT_MAX_ITERATIONS",
             low=1,
         )

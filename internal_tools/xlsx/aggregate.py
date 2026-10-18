@@ -9,10 +9,11 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from common.tools import ToolContext, ToolError, ToolInput, ToolOutput, tool
+from common.tools.refs import FileRefs, file_refs
 
 
 class Input(ToolInput):
-    inputs: Any = Field(description="Файлы .xlsx/.csv: путь, список путей или результат fs.list")
+    inputs: FileRefs
     sum_columns: list[str] = Field(default_factory=list, description="Колонки, которые нужно просуммировать")
     group_by: str | None = Field(default=None, description="Колонка для группировки (например, Клиент)")
     top_n: int | None = Field(default=None, ge=1, description="Оставить N групп с наибольшей суммой первой из sum_columns")
@@ -45,7 +46,7 @@ class Output(ToolOutput):
     capabilities=("fs.read:{inputs}",),
 )
 async def aggregate(inp: Input, ctx: ToolContext) -> Output:
-    paths = [ctx.read_path(ref) for ref in _refs(inp.inputs)]
+    paths = [ctx.read_path(ref) for ref in file_refs(inp.inputs)]
     if not paths:
         raise ToolError("Нет файлов для подсчёта")
 
@@ -81,22 +82,6 @@ async def aggregate(inp: Input, ctx: ToolContext) -> Output:
             groups = groups[: inp.top_n]
 
     return Output(files=len(paths), rows=len(rows), totals=totals, groups=groups)
-
-
-def _refs(value: Any) -> list[str]:
-    if isinstance(value, str):
-        return [value]
-
-    if isinstance(value, dict):
-        if isinstance(value.get("path"), str):
-            return [value["path"]]
-
-        return _refs(value.get("files", []))
-
-    if isinstance(value, list):
-        return [ref for item in value for ref in _refs(item)]
-
-    return []
 
 
 def _read_rows(path, sheet: str | None) -> list[dict[str, Any]]:

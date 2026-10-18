@@ -6,11 +6,12 @@ import jsonschema
 from pydantic import Field
 
 from common.tools import ToolContext, ToolError, ToolInput, ToolOutput, tool
+from common.tools.refs import FileRefs
 from internal_tools.llm.inputs import gather_text
 
 
 class ExtractInput(ToolInput):
-    inputs: Any = Field(description="Откуда извлекать: текст, путь к файлу, результат fs.list или список")
+    inputs: FileRefs = Field(description="Откуда извлекать: путь, список путей или результат fs.list; можно и обычный текст")
     instruction: str = Field(description="Что именно извлечь")
     output_schema: dict[str, Any] = Field(
         description="JSON Schema результата, например {'type':'object','properties':{'revenue':{'type':'number'}}}"
