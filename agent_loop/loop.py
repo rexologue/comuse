@@ -157,7 +157,11 @@ class AgentLoop:
 
         if output["status"] == "needs_approval":
             output["action_id"] = trace_id
-            output["next"] = "Опиши пользователю действие и спроси согласие. При «да» вызови action_confirm с этим action_id."
+            output["next"] = (
+                "Опиши пользователю действие и спроси согласие. При «да» вызови action_confirm с этим action_id. "
+                "Шаги, которые имеют смысл только после этого действия (пометить письмо прочитанным, переложить, "
+                "удалить), до ответа пользователя не делай — сделай их после action_confirm."
+            )
 
         return output
 
