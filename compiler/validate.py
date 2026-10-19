@@ -53,6 +53,7 @@ def validate_spec(data: Any, catalog: dict[str, dict[str, Any]]) -> TaskSpec:
 
     scope = templating.BUILTIN_NAMES | variable_names
     _check_steps(spec.steps, scope, {}, catalog, errors, path="steps")
+    _check_no_send_confirmation(spec, catalog, errors)
 
     if errors:
         raise SpecError(errors)
@@ -95,6 +96,23 @@ def _check_steps(
             outputs[step.id] = catalog.get(step.tool or "", {}).get("output_schema")
 
         visible.add(step.id)
+
+
+def _check_no_send_confirmation(spec: TaskSpec, catalog: dict[str, dict[str, Any]], errors: list[str]) -> None:
+    """A user.ask gating an external action duplicates the draft-and-approve the system
+    already does for every task run; the user would be asked twice."""
+    asks = {step.id for step in spec.all_steps() if step.tool == "user.ask"}
+
+    for step in spec.all_steps():
+        if not step.when or catalog.get(step.tool or "", {}).get("side_effect") != "external":
+            continue
+
+        gating = templating.expression_names(step.when) & asks
+        if gating:
+            errors.append(
+                f"шаг `{step.id}` ждёт ответа {sorted(gating)}: подтверждение отправки делает система "
+                "(черновик и одобрение пользователя) — убери этот user.ask и условие when"
+            )
 
 
 def _check_tool_step(

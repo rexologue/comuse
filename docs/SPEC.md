@@ -60,7 +60,7 @@ project/
 │   ├── main.py
 │   ├── loop.py            # цикл хода, повторы, «пинок» при пустом ответе
 │   ├── catalog.py         # отбор инструментов по эмбеддингам
-│   ├── meta_tools.py      # task_compile, task_patch, task_approve, approval_answer, action_confirm…
+│   ├── meta_tools.py      # task_compile, task_patch, approval_answer (только ask_user), action_confirm…
 │   ├── history.py, prompts.py
 │   └── api/chat.py        # /v1/chat/completions, /sessions
 ├── compiler/              # трейс чата → Task, правки → JSON Patch
@@ -416,8 +416,8 @@ tools:
 2. agent-loop → `POST main/compiler/compile {session_id}`.
 3. compiler читает трейс, собирает Task, валидирует, сохраняет версию `draft` и делает dry run через `main/runner/runs`.
 4. main создаёт approval `version_approve` и возвращает agent-loop карточки шагов и итог dry run.
-5. Агент показывает пользователю: «Вот задача, вот что получилось на пробном запуске. Сохранить?»
-6. «Да» → `POST main/tasks/{id}/versions/{v}/approve` → main вызывает compiler (статусы), затем scheduler `/reload`.
+5. Агент показывает пользователю: «Вот задача, вот что получилось на пробном запуске». Включить её агент не может: у него нет такого инструмента, а `approval_answer` отвечает только на вопросы `ask_user`.
+6. Пользователь сам одобряет черновик в списке задач → `POST main/approvals/{id}/answer` (или `POST main/tasks/{id}/versions/{v}/approve`) → main вызывает compiler (статусы), затем scheduler `/reload`.
 
 ### 3. Правка через чат
 

@@ -229,3 +229,17 @@ def test_domain_mask_reads_as_words_in_the_diff():
     lines = diff_specs(old, new, CATALOG)["lines"]
 
     assert "+ разрешено (адресаты писем): любой адрес в домене company.local" in lines
+
+
+def test_user_ask_before_sending_is_rejected():
+    asked = copy.deepcopy(AUTO_REPLY)
+    nested = asked["steps"][1]["steps"]
+    nested.insert(0, {"id": "confirm", "tool": "user.ask", "args": {"question": "Отправить?", "options": ["да", "нет"]}})
+    nested[1]["when"] = "{{ confirm.output.answer == 'да' }}"
+
+    with pytest.raises(SpecError, match="подтверждение отправки делает система"):
+        validate_spec(asked, CATALOG)
+
+
+def test_plain_auto_reply_needs_no_confirmation_step():
+    validate_spec(AUTO_REPLY, CATALOG)
