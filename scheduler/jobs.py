@@ -283,13 +283,8 @@ class TaskScheduler:
             log.warning("mail poll for %s failed: %s", task_id, response.get("error"))
             return
 
-        messages = response["output"]["messages"]
-        last_uid = (row.state or {}).get("last_uid")
-        newest = max((m["uid"] for m in messages), default=last_uid)
-
-        # The first poll only sets the cursor: old mail must not trigger a run.
-        fresh = [m for m in messages if last_uid is not None and m["uid"] > last_uid]
-        self._update_trigger(task_id, state={"last_uid": newest})
+        fresh, state = split_new_mail(row.state or {}, response["output"]["messages"])
+        self._update_trigger(task_id, state=state)
 
         if fresh:
             await self._fire(task_id, "new_email", {"messages": fresh})
@@ -353,3 +348,15 @@ class _FolderHandler(FileSystemEventHandler):
 
         if fnmatch.fnmatch(path.name, self.pattern):
             self.callback(path)
+
+
+def split_new_mail(state: dict[str, Any], messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """New messages since the cursor and the moved cursor. The first poll only sets the
+    cursor, so old mail does not trigger a run; an empty mailbox sets it to 0."""
+    uids = [m["uid"] for m in messages]
+    last_uid = state.get("last_uid")
+
+    if last_uid is None:
+        return [], {"last_uid": max(uids, default=0)}
+
+    return [m for m in messages if m["uid"] > last_uid], {"last_uid": max([last_uid, *uids])}
