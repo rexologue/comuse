@@ -95,6 +95,7 @@ uv run pytest
 | `POST /agent/v1/chat/completions` | Чат |
 | `GET /tasks`, `GET /tasks/{id}` | Задачи и их шаги |
 | `POST /tasks/{id}/versions/{v}/approve` | Включить версию задачи |
+| `PUT /tasks/{id}/send_mode` | `draft`: письма ждут одобрения в черновиках, `send`: задача отправляет сама |
 | `POST /runs` | Запустить задачу сейчас |
 | `GET /runs/{id}` | Ход запуска по шагам |
 | `GET /approvals`, `POST /approvals/{id}/answer` | Вопросы и подтверждения |

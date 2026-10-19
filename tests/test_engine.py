@@ -13,9 +13,9 @@ from runner.engine import RunEngine
 from tests.conftest import FakeMain
 
 
-def _make_run(spec: dict[str, Any], *, dry_run: bool = False) -> str:
+def _make_run(spec: dict[str, Any], *, dry_run: bool = False, send_mode: str = "draft") -> str:
     with session() as db:
-        db.add(Task(id="task_1", title=spec["title"], status="active", current_version_id="ver_1"))
+        db.add(Task(id="task_1", title=spec["title"], status="active", current_version_id="ver_1", send_mode=send_mode))
         db.add(TaskVersion(id="ver_1", task_id="task_1", version_no=1, spec=spec, status="approved"))
         db.add(Run(id="run_1", task_id="task_1", task_version_id="ver_1", status="queued", dry_run=dry_run, state={}))
         db.commit()
@@ -25,7 +25,6 @@ def _make_run(spec: dict[str, Any], *, dry_run: bool = False) -> str:
 
 SPEC = {
     "title": "Сортировка",
-    "approval": {"mode": "never"},
     "steps": [
         {"id": "files", "tool": "fs.list", "args": {"folder": "Входящие"}},
         {
@@ -136,7 +135,6 @@ async def test_error_with_retries_then_fail(settings, monkeypatch):
 AUTO_REPLY = {
     "title": "Ответ на заявки",
     "trigger": {"type": "new_email", "account": "work"},
-    "approval": {"mode": "never"},
     "steps": [
         {
             "id": "reply",
@@ -169,3 +167,10 @@ async def test_run_from_the_trigger_gets_its_messages(settings):
 
     assert run["status"] == "succeeded"
     assert [c["args"]["to"] for c in main.calls] == [["client@company.local"]]
+
+
+async def test_steps_carry_the_task_send_mode(settings):
+    main = FakeMain(_tools())
+    await RunEngine(main).execute(_make_run(SPEC, send_mode="send"))
+
+    assert {c["context"]["send_mode"] for c in main.calls} == {"send"}

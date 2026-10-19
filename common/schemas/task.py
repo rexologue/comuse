@@ -63,13 +63,9 @@ class Permissions(BaseModel):
         return [item.strip().lower() for item in value]
 
 
-class ApprovalPolicy(BaseModel):
-    """When to ask before external side effects (sending mail and alike)."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    mode: Literal["always", "draft_first_n", "never"] = "draft_first_n"
-    n: int = Field(default=3, ge=0)
+# Whether a task run sends mail itself or leaves a draft for the user to approve. It
+# belongs to the task, not to its spec: only the user switches it, never the compiler.
+SendMode = Literal["draft", "send"]
 
 
 class Step(BaseModel):
@@ -121,7 +117,6 @@ class TaskSpec(BaseModel):
     description: str = ""
     trigger: Trigger = Field(default_factory=Trigger)
     permissions: Permissions = Field(default_factory=Permissions)
-    approval: ApprovalPolicy = Field(default_factory=ApprovalPolicy)
     variables: dict[str, str] = Field(default_factory=dict)
     steps: list[Step] = Field(min_length=1)
 

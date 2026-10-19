@@ -190,6 +190,18 @@ _TRANSITIONS = {
 }
 
 
+def set_send_mode(task_id: str, mode: str) -> Task:
+    with session() as db:
+        task = db.get(Task, task_id)
+        if task is None:
+            raise ApiError(status_code=404, message=f"Task `{task_id}` not found")
+
+        task.send_mode = mode
+        db.commit()
+
+    return task
+
+
 def set_status(task_id: str, action: str) -> Task:
     allowed, target = _TRANSITIONS[action]
 

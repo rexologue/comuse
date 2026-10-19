@@ -136,6 +136,7 @@ project/
 | `GET /tasks/{id}/versions/{v}/diff` | compiler | Разница с предыдущей версией |
 | `POST /tasks/{id}/versions/{v}/approve` | compiler, затем scheduler | Сделать версию активной |
 | `POST /tasks/{id}/pause`, `/resume`, `/archive` | compiler, затем scheduler | Управление задачей |
+| `PUT /tasks/{id}/send_mode {mode}` | compiler | `draft` (по умолчанию): письма ждут одобрения в черновиках; `send`: задача отправляет сама |
 | `POST /runs` | runner | `{task_id, dry_run?}` → запуск вручную |
 | `GET /runs/{id}`, `GET /tasks/{id}/runs` | storage | Статус запуска и его шаги |
 | `GET /approvals`, `POST /approvals/{id}/answer` | main, затем runner | Вопросы и подтверждения; ответ продолжает запуск |
@@ -303,7 +304,6 @@ tools:
     "mail_accounts": ["work_mail"],
     "mail_send_to": ["boss@company.ru", "vasya@company.ru"]
   },
-  "approval": { "mode": "draft_first_n", "n": 3 },
   "variables": {
     "week_start": "{{ today | start_of_prev_week }}",
     "week_end": "{{ today | end_of_prev_week }}"
@@ -334,7 +334,6 @@ tools:
 | `schema_version` | Версия формата, сейчас 1 |
 | `trigger` | `cron`, `file_appeared`, `new_email` или `manual` с параметрами |
 | `permissions` | Всё, что задаче можно: папки, аккаунты, адресаты, домены. compiler выводит их из аргументов шагов |
-| `approval` | `always`, `draft_first_n` или `never`: когда спрашивать перед внешними действиями |
 | `variables` | Считаются один раз в начале запуска (даты, имена файлов) |
 | `steps[].tool`, `args` | Команда из каталога и её аргументы; `{{ step_id.output }}` ссылается на результат прошлого шага |
 | `steps[].when` | Условие выполнения шага |
@@ -380,7 +379,7 @@ tools:
 | `chat_sessions` | agent-loop | id, title, status, created\_at | compiler, main |
 | `chat_messages` | agent-loop | id, session\_id, role, content, tool\_call\_id, created\_at | compiler |
 | `trace_events` | agent-loop | id, session\_id, message\_id, tool, args\_json, result\_json, status, user\_feedback, created\_at | compiler |
-| `tasks` | compiler | id, title, status, current\_version\_id, source\_session\_id, created\_at, updated\_at | все |
+| `tasks` | compiler | id, title, status, send\_mode, current\_version\_id, source\_session\_id, created\_at, updated\_at | все |
 | `task_versions` | compiler | id, task\_id, version\_no, spec\_json, status, parent\_version\_id, patch\_json, summary, created\_by, created\_at, approved\_at | runner, scheduler, main |
 | `triggers` | scheduler | id, task\_id, type, config\_json, state\_json, next\_fire\_at, enabled | main |
 | `runs` | runner | id, task\_id, task\_version\_id, trigger, status, dry\_run, started\_at, finished\_at, error | main, agent-loop |
@@ -435,7 +434,7 @@ tools:
 
 ### 5. Вопрос пользователю и подтверждение отправки
 
-1. Шаг `mail.send`, политика `draft_first_n` ещё действует → executor создаёт черновик и возвращает `needs_approval`.
+1. Шаг `mail.send`, у задачи `send_mode = draft` → executor создаёт черновик и возвращает `needs_approval`.
 2. runner → `POST main/internal/approvals`, run переходит в `waiting`.
 3. Пользователь отвечает в чате или в UI → `POST main/approvals/{id}/answer`.
 4. main → `runner/runs/{id}/resume`: шаг выполняется по-настоящему или пропускается.
@@ -454,7 +453,7 @@ tools:
 | Доступ к файлам вне задачи | Команды `fs.*` работают только в разрешённых папках; пути нормализуются, `..` и симлинки наружу отклоняются |
 | Чужой процесс дёргает API | Наружу открыт только main. Токен на внешний API опционален (пустой API\_TOKEN — без проверки), внутренние маршруты закрыты INTERNAL\_TOKEN |
 | Шаблон в Task выполняет произвольный код | Jinja2 SandboxedEnvironment и StrictUndefined |
-| Письмо ушло не тому в первых запусках | Политика `draft_first_n`: первые n запусков создают черновики и спрашивают подтверждение |
+| Письмо ушло не тому | По умолчанию задача кладёт письмо в черновики и ждёт одобрения. Отправлять сразу её переключает только человек (`send_mode = send`), компилятор этого не умеет |
 
 Секреты аккаунтов и скиллов читает только executor, в момент вызова команды. Ключ к LLM, если он есть, задаётся через `LLM_API_KEY` и читается `common/clients/llm_client.py`; нашему серверу ключ не нужен. На Windows секреты лежат в Credential Manager, в Docker — в файле `data/secrets.enc`, зашифрованном Fernet с ключом из `KEYRING_PASSWORD` (scrypt).
 

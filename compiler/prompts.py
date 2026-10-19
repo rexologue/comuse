@@ -13,7 +13,6 @@ _EXAMPLE = {
     "description": "Посчитать расходы на командировки за прошлый месяц по сотрудникам и сделать сводку",
     "trigger": {"type": "cron", "expr": "0 9 1 * *"},
     "permissions": {"read_folders": ["Бухгалтерия/Командировки"]},
-    "approval": {"mode": "draft_first_n", "n": 3},
     "variables": {
         "month_start": "{{ today | start_of_prev_month }}",
         "month_end": "{{ today | end_of_prev_month }}",

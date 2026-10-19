@@ -1,10 +1,13 @@
-"""Executor side-effect policy: chat asks first, dry runs suppress effects, the first
-runs of a task produce drafts that wait for approval."""
+"""Executor side-effect policy: chat asks first, dry runs suppress effects, task runs
+leave drafts for approval unless the user switched the task to sending."""
 
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
 from common.schemas.execution import ExecContext
-from common.schemas.task import ApprovalPolicy
+from common.schemas.task import TaskSpec
 from common.tools import discover
 from executor.runtime import ExecutorRuntime
 
@@ -37,16 +40,16 @@ def test_dry_run_send_is_a_draft_and_move_is_skipped():
     assert _decide("fs.move", mode="run", dry_run=True).skip
 
 
-def test_first_runs_draft_then_real():
-    policy = ApprovalPolicy(mode="draft_first_n", n=2)
-
-    early = _decide("mail.send", mode="run", approval=policy, prior_runs=1)
-    assert early.ask_first and early.draft
-
-    later = _decide("mail.send", mode="run", approval=policy, prior_runs=2)
-    assert not later.ask_first
+def test_run_leaves_a_draft_by_default():
+    decision = _decide("mail.send", mode="run")
+    assert decision.ask_first and decision.draft
 
 
-def test_always_policy_keeps_asking():
-    decision = _decide("mail.send", mode="run", approval=ApprovalPolicy(mode="always"), prior_runs=50)
-    assert decision.ask_first
+def test_run_in_send_mode_sends():
+    decision = _decide("mail.send", mode="run", send_mode="send")
+    assert not decision.ask_first and not decision.draft
+
+
+def test_spec_cannot_carry_a_send_mode():
+    with pytest.raises(ValidationError):
+        TaskSpec.model_validate({"title": "x", "approval": {"mode": "never"}, "steps": [{"id": "a", "tool": "fs.list"}]})

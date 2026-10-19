@@ -15,7 +15,6 @@ from pydantic import BaseModel, ValidationError
 from common.clients.llm_client import LLMClient
 from common.clients.main_client import MainClient
 from common.schemas.execution import ExecContext, ExecuteRequest, ExecuteResponse
-from common.schemas.task import ApprovalPolicy
 from common.settings import Settings
 from common.storage.db import session
 from common.storage.models import Account, ToolCall
@@ -137,10 +136,7 @@ class ExecutorRuntime:
         if ctx.mode == "chat":
             return _Decision(ask_first=True, message=f"«{spec.title}» требует подтверждения пользователя")
 
-        policy = ctx.approval or ApprovalPolicy()
-        must_ask = policy.mode == "always" or (policy.mode == "draft_first_n" and ctx.prior_runs < policy.n)
-
-        if not must_ask:
+        if ctx.send_mode == "send":
             return _Decision()
 
         # Prepare a draft (when the tool can) so the user approves the real thing.

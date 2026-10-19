@@ -6,6 +6,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from common.errors import ApiError
+from common.schemas.task import SendMode
 from compiler import store
 from compiler.validate import SpecError, validate_spec
 
@@ -17,6 +18,10 @@ class CompileBody(BaseModel):
     session_id: str
     title: str | None = None
     hint: str | None = None
+
+
+class SendModeBody(BaseModel):
+    mode: SendMode
 
 
 class PatchBody(BaseModel):
@@ -65,6 +70,13 @@ async def reject(task_id: str, version_id: str):
     version = store.reject(task_id, version_id)
 
     return {"task_id": task_id, "version_id": version.id, "status": version.status}
+
+
+@router.put("/tasks/{task_id}/send_mode", summary="draft: leave drafts for approval | send: send by itself")
+async def set_send_mode(task_id: str, body: SendModeBody):
+    task = store.set_send_mode(task_id, body.mode)
+
+    return {"task_id": task.id, "send_mode": task.send_mode}
 
 
 @router.post("/tasks/{task_id}/{action}", summary="pause | resume | archive")

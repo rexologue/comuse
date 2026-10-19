@@ -107,6 +107,8 @@ class Task(Base):
     # draft | active | paused | archived
     status: Mapped[str] = mapped_column(String, default="draft", index=True)
     current_version_id: Mapped[str | None] = mapped_column(String)
+    # draft | send: see common.schemas.task.SendMode
+    send_mode: Mapped[str] = mapped_column(String, default="draft")
     source_session_id: Mapped[str | None] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

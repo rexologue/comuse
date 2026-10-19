@@ -84,7 +84,7 @@ class RunEngine:
             state.started = True
             await self.main.publish("run.started", {"run_id": run_id, "task_id": run.task_id, "title": task.title, "dry_run": run.dry_run})
 
-        walk = _Walk(self, run, spec, state)
+        walk = _Walk(self, run, spec, state, send_mode=task.send_mode)
 
         try:
             await walk.execute()
@@ -178,12 +178,13 @@ class _State:
 
 
 class _Walk:
-    def __init__(self, engine: RunEngine, run: Run, spec: TaskSpec, state: _State):
+    def __init__(self, engine: RunEngine, run: Run, spec: TaskSpec, state: _State, *, send_mode: str):
 
-        self.engine = engine
-        self.run    = run
-        self.spec   = spec
-        self.state  = state
+        self.engine    = engine
+        self.run       = run
+        self.spec      = spec
+        self.state     = state
+        self.send_mode = send_mode
 
         self.last_output: Any = None
 
@@ -389,8 +390,7 @@ class _Walk:
             "run_id": self.run.id,
             "step_key": key,
             "permissions": self.spec.permissions.model_dump(),
-            "approval": self.spec.approval.model_dump(),
-            "prior_runs": _prior_runs(self.run.task_id),
+            "send_mode": self.send_mode,
             "dry_run": self.run.dry_run,
             "confirmed": confirmed,
         }
@@ -466,15 +466,6 @@ class _Walk:
                 )
             )
             db.commit()
-
-
-def _prior_runs(task_id: str) -> int:
-    with session() as db:
-        return (
-            db.query(Run)
-            .filter(Run.task_id == task_id, Run.status == "succeeded", Run.dry_run.is_(False))
-            .count()
-        )
 
 
 def _is_empty(output: Any) -> bool:

@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from common.schemas.task import ApprovalPolicy, Permissions
+from common.schemas.task import Permissions, SendMode
 
 
 class ExecContext(BaseModel):
@@ -17,9 +17,8 @@ class ExecContext(BaseModel):
     step_key: str | None = None
     # None = the whole workspace (chat mode); a task run always passes its own.
     permissions: Permissions | None = None
-    approval: ApprovalPolicy | None = None
-    # Successful real runs of the task so far; drives the draft_first_n policy.
-    prior_runs: int = 0
+    # run: external actions become drafts waiting for the user unless the task sends.
+    send_mode: SendMode = "draft"
     dry_run: bool = False
     # The user already confirmed this exact external action.
     confirmed: bool = False
