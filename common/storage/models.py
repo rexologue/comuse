@@ -153,6 +153,9 @@ class Trigger(Base):
 # RUNNER
 # -----------------------------
 
+RUN_FINISHED = ("succeeded", "empty", "failed", "cancelled")
+
+
 class Run(Base):
     __tablename__ = "runs"
 
@@ -160,7 +163,8 @@ class Run(Base):
     task_id: Mapped[str] = mapped_column(String, index=True)
     task_version_id: Mapped[str] = mapped_column(String)
     trigger: Mapped[str] = mapped_column(String, default="manual")
-    # queued | running | waiting | succeeded | failed | cancelled
+    # queued | running | waiting | succeeded | empty | failed | cancelled
+    # empty: succeeded, but every step came back empty (a scheduled check found nothing)
     status: Mapped[str] = mapped_column(String, default="queued", index=True)
     dry_run: Mapped[bool] = mapped_column(Boolean, default=False)
     # Resumable engine state: completed step outputs, answers, the pending approval.

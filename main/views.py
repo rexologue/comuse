@@ -59,9 +59,13 @@ def version_detail(task_id: str, version_id: str) -> dict[str, Any] | None:
     return version_dict(version)
 
 
-def run_list(task_id: str, limit: int = 50) -> list[dict[str, Any]]:
+def run_list(task_id: str, *, include_empty: bool = False, limit: int = 50) -> list[dict[str, Any]]:
     with session() as db:
-        runs = db.query(Run).filter(Run.task_id == task_id).order_by(Run.started_at.desc()).limit(limit).all()
+        query = db.query(Run).filter(Run.task_id == task_id)
+        if not include_empty:
+            query = query.filter(Run.status != "empty")
+
+        runs = query.order_by(Run.started_at.desc()).limit(limit).all()
 
     return [run_dict(r) for r in runs]
 

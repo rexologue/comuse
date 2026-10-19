@@ -113,7 +113,7 @@ async def test_empty_result_with_skip_stops_quietly(settings):
 
     run = await RunEngine(main).execute(_make_run(spec))
 
-    assert run["status"] == "succeeded"
+    assert run["status"] == "empty"
     assert len(main.calls) == 1
 
 
@@ -137,3 +137,39 @@ async def test_steps_carry_the_task_send_mode(settings):
     await RunEngine(main).execute(_make_run(SPEC, send_mode="send"))
 
     assert {c["context"]["send_mode"] for c in main.calls} == {"send"}
+
+
+CHECK = {
+    "title": "Заявки",
+    "steps": [
+        {"id": "found", "tool": "mail.search", "args": {}},
+        {"id": "reply", "foreach": "{{ found.output.messages }}", "as": "msg", "steps": [{"id": "send", "tool": "mail.send", "args": {}}]},
+    ],
+}
+
+
+async def test_check_that_found_nothing_is_an_empty_run(settings):
+    main = FakeMain({"mail.search": lambda args, ctx: {"output": {"messages": []}}})
+
+    run = await RunEngine(main).execute(_make_run(CHECK))
+
+    assert run["status"] == "empty"
+
+
+async def test_check_that_found_something_succeeds(settings):
+    main = FakeMain({
+        "mail.search": lambda args, ctx: {"output": {"messages": [{"uid": 1}]}},
+        "mail.send": lambda args, ctx: {"output": {"mode": "sent"}},
+    })
+
+    run = await RunEngine(main).execute(_make_run(CHECK))
+
+    assert run["status"] == "succeeded"
+
+
+async def test_dry_run_is_never_empty(settings):
+    main = FakeMain({"mail.search": lambda args, ctx: {"output": {"messages": []}}})
+
+    run = await RunEngine(main).execute(_make_run(CHECK, dry_run=True))
+
+    assert run["status"] == "succeeded"

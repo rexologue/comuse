@@ -392,7 +392,7 @@ tools:
 
 Значения перечислений:
 
-- `runs.status`: queued, running, waiting, succeeded, failed, cancelled.
+- `runs.status`: queued, running, waiting, succeeded, empty, failed, cancelled. `empty` — все шаги вернули пустой результат (проверка по расписанию ничего не нашла); `GET /tasks/{id}/runs` их не показывает, `?include_empty=true` показывает.
 - `approvals.kind`: ask\_user, confirm\_action, version\_approve, skill\_permissions.
 - `tools.source`: internal, skill, mcp.
 - `accounts.kind`: imap\_smtp, outlook\_com, llm.

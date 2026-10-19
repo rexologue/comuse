@@ -18,7 +18,7 @@ from common.clients.main_client import MainClient
 from common.errors import ApiError
 from common.schemas.task import Step, TaskSpec
 from common.storage.db import session
-from common.storage.models import Run, StepRun, Task, TaskVersion
+from common.storage.models import RUN_FINISHED, Run, StepRun, Task, TaskVersion
 from common.storage.queries import run_detail
 from common.utils import truncate, utcnow
 
@@ -67,7 +67,7 @@ class RunEngine:
             task = db.get(Task, run.task_id)
 
         # A run cancelled while waiting has nothing left to do.
-        if run.status in ("succeeded", "failed", "cancelled"):
+        if run.status in RUN_FINISHED:
             return run_detail(run_id)
 
         spec = TaskSpec.model_validate(version.spec)
@@ -102,6 +102,9 @@ class RunEngine:
             log.exception("run %s crashed", run_id)
             status, error = "failed", f"Сбой исполнителя: {e!r}"
             state.result = {"artifacts": state.artifacts}
+
+        if status == "succeeded" and not run.dry_run and _found_nothing(state):
+            status = "empty"
 
         self.update(run_id, status=status, error=error, result=state.result, state=state.dump(), finished_at=utcnow())
         self._cancelled.discard(run_id)
@@ -457,6 +460,12 @@ class _Walk:
                 )
             )
             db.commit()
+
+
+def _found_nothing(state: _State) -> bool:
+    """Every step ran and came back empty: a scheduled check that had nothing to handle.
+    A skipped step (declined, failed with on_error=skip) is something worth seeing."""
+    return bool(state.done) and all(done["status"] == "ok" and _is_empty(done["output"]) for done in state.done.values())
 
 
 def _is_empty(output: Any) -> bool:

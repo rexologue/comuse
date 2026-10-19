@@ -77,9 +77,9 @@ async def task_action(task_id: str, action: str, request: Request):
     return await request.app.state.orchestrator.set_task_status(task_id, action)
 
 
-@router.get("/tasks/{task_id}/runs", summary="Run history of a task")
-async def task_runs(task_id: str):
-    return {"runs": views.run_list(task_id)}
+@router.get("/tasks/{task_id}/runs", summary="Run history of a task (?include_empty=true adds checks that found nothing)")
+async def task_runs(task_id: str, include_empty: bool = False):
+    return {"runs": views.run_list(task_id, include_empty=include_empty)}
 
 
 # -----------------------------

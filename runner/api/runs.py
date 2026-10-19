@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from common.errors import ApiError
 from common.storage.db import session
-from common.storage.models import Run, Task, TaskVersion
+from common.storage.models import RUN_FINISHED, Run, Task, TaskVersion
 from common.storage.queries import run_detail, run_dict
 from common.utils import new_id
 
@@ -85,7 +85,7 @@ async def cancel_run(run_id: str, request: Request):
         if run is None:
             raise ApiError(status_code=404, message=f"Run `{run_id}` not found")
 
-        if run.status in ("succeeded", "failed", "cancelled"):
+        if run.status in RUN_FINISHED:
             raise ApiError(status_code=409, message=f"Run `{run_id}` is already {run.status}")
 
         # A waiting run has no coroutine to interrupt; close it right away.
