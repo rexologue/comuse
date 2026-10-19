@@ -135,3 +135,45 @@ def test_mark_is_skipped_in_dry_runs():
 
     spec = discover()["mail.mark"]
     assert (spec.side_effect, spec.dry_run) == ("write", "skip")
+
+
+class FakeIMAP:
+    def __init__(self, capabilities):
+        self.capabilities = capabilities
+        self.commands: list[tuple] = []
+
+
+    def select(self, folder, readonly=False):
+        return "OK", [b"1"]
+
+
+    def list(self, *args):
+        return "OK", [b'(\\HasNoChildren) "/" "Archive"']
+
+
+    def uid(self, command, *args):
+        self.commands.append((command, *args))
+        return "OK", [b"done"]
+
+
+    def expunge(self):
+        self.commands.append(("EXPUNGE-ALL",))
+        return "OK", [None]
+
+
+@pytest.mark.parametrize(
+    ("capabilities", "commands"),
+    [
+        (("MOVE", "UIDPLUS"), ["MOVE"]),
+        (("UIDPLUS",), ["COPY", "STORE", "EXPUNGE"]),  # only this message is purged
+        ((), ["COPY", "STORE"]),                       # nothing purged: a plain EXPUNGE would take the user's deleted mail
+    ],
+)
+def test_move_never_purges_other_mail(monkeypatch, capabilities, commands):
+    fake = FakeIMAP(capabilities)
+    monkeypatch.setattr(imap_smtp._imap, "__enter__", lambda self: fake)
+    monkeypatch.setattr(imap_smtp._imap, "__exit__", lambda self, *exc: None)
+
+    assert imap_smtp.mark({}, "", folder="INBOX", uid=7, seen=None, move_to="Archive") == "Archive"
+    assert [c[0] for c in fake.commands] == commands
+    assert all(c[1] == "7" for c in fake.commands)

@@ -68,7 +68,8 @@ def search(
     unseen: bool,
     limit: int,
 ) -> list[dict[str, Any]]:
-    criteria: list[str] = []
+    # A message flagged \\Deleted is gone for the user even before the server purges it.
+    criteria: list[str] = ["UNDELETED"]
 
     if since:
         criteria += ["SINCE", since.strftime("%d-%b-%Y")]
@@ -79,7 +80,7 @@ def search(
     with _imap(config, secret) as imap:
         _select(imap, folder, readonly=True)
 
-        status, data = imap.uid("SEARCH", *(criteria or ["ALL"]))
+        status, data = imap.uid("SEARCH", *criteria)
         if status != "OK":
             raise ToolError(f"Поиск в почте не удался: {data}")
 
@@ -178,17 +179,23 @@ def mark(config: dict[str, Any], secret: str, *, folder: str, uid: int, seen: bo
 
         _ensure_folder(imap, move_to)
 
-        # MOVE is an extension (RFC 6851); without it: copy, flag deleted, expunge.
-        if "MOVE" in imap.capabilities:
+        if "MOVE" in imap.capabilities:  # RFC 6851
             status, data = imap.uid("MOVE", str(uid), _quote(move_to))
-        else:
-            status, data = imap.uid("COPY", str(uid), _quote(move_to))
-            if status == "OK":
-                imap.uid("STORE", str(uid), "+FLAGS", r"(\Deleted)")
-                imap.expunge()
+            if status != "OK":
+                raise ToolError(f"Не удалось переложить письмо {uid} в «{move_to}»: {data}")
 
+            return move_to
+
+        status, data = imap.uid("COPY", str(uid), _quote(move_to))
         if status != "OK":
             raise ToolError(f"Не удалось переложить письмо {uid} в «{move_to}»: {data}")
+
+        imap.uid("STORE", str(uid), "+FLAGS", r"(\Deleted)")
+
+        # A plain EXPUNGE would also purge everything else the user flagged \Deleted;
+        # without UIDPLUS (RFC 4315) the original just stays flagged, which search skips.
+        if "UIDPLUS" in imap.capabilities:
+            imap.uid("EXPUNGE", str(uid))
 
     return move_to
 
