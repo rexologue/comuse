@@ -196,6 +196,11 @@ class LLMClient:
         next one; the mode that worked is remembered per model. Falling back costs no
         attempt — `attempts` counts only replies the model got wrong."""
         mode = self._structured_mode.get(model, 0)
+
+        # Constrained decoders handle recursive schemas badly (slow, and nested items
+        # come out empty), so a recursive schema starts in json_object mode.
+        if mode == 0 and is_recursive(schema):
+            mode = 1
         conversation = list(messages)
         last_error = "no attempts made"
         attempt = 0
@@ -304,6 +309,59 @@ class LLMClient:
                 message=f"Cannot decode LLM response from {url}",
                 details={"text": truncate(response.text, 1000)},
             ) from e
+
+
+def is_recursive(schema: dict[str, Any]) -> bool:
+    """True when `$ref`s form a cycle (a definition reaches itself, or the root)."""
+    defs = schema.get("$defs") or schema.get("definitions") or {}
+
+    def refs(node: Any) -> set[str]:
+        found: set[str] = set()
+
+        if isinstance(node, dict):
+            ref = node.get("$ref")
+            if isinstance(ref, str):
+                found.add(ref)
+
+            for value in node.values():
+                found |= refs(value)
+
+        elif isinstance(node, list):
+            for value in node:
+                found |= refs(value)
+
+        return found
+
+    def target(ref: str) -> str | None:
+        if ref == "#":
+            return "#"
+
+        for prefix in ("#/$defs/", "#/definitions/"):
+            if ref.startswith(prefix):
+                return ref[len(prefix):]
+
+        return None
+
+    graph = {name: {target(r) for r in refs(body)} - {None} for name, body in defs.items()}
+    graph["#"] = {target(r) for r in refs({k: v for k, v in schema.items() if k not in ("$defs", "definitions")})} - {None}
+
+    def reaches_itself(start: str) -> bool:
+        stack, seen = list(graph.get(start, ())), set()
+
+        while stack:
+            node = stack.pop()
+            if node == start:
+                return True
+
+            if node in seen:
+                continue
+
+            seen.add(node)
+            stack.extend(graph.get(node, ()))
+
+        return False
+
+    return any(reaches_itself(name) for name in graph)
 
 
 def _response_format(mode: int, name: str, schema: dict[str, Any]) -> dict[str, Any] | None:

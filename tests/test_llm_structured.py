@@ -66,3 +66,23 @@ async def test_gives_up_after_attempts():
 
     with pytest.raises(ApiError):
         await llm.structured([], model="m", schema=SCHEMA, validate=_positive, attempts=2)
+
+
+def test_recursive_schema_detection():
+    from common.clients.llm_client import is_recursive
+    from common.schemas.task import TaskSpec
+
+    assert is_recursive(TaskSpec.model_json_schema(by_alias=True))
+    assert is_recursive({"type": "object", "properties": {"child": {"$ref": "#"}}})
+    assert not is_recursive(SCHEMA)
+    assert not is_recursive({"$defs": {"A": {"type": "object", "properties": {"b": {"$ref": "#/$defs/B"}}}, "B": {"type": "string"}}})
+
+
+async def test_recursive_schema_skips_json_schema_mode():
+    from common.schemas.task import TaskSpec
+
+    llm = ScriptedLLM({"json_object": ['{"n": 1}']})
+
+    await llm.structured([], model="m", schema={**TaskSpec.model_json_schema(by_alias=True)})
+
+    assert llm.modes == ["json_object"]
