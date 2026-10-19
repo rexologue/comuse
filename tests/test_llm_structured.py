@@ -16,11 +16,13 @@ class ScriptedLLM(LLMClient):
 
         self.replies = {key: list(values) for key, values in replies.items()}
         self.modes: list[str | None] = []
+        self.sent: list[list[dict]] = []
 
 
     async def chat(self, messages, *, model, response_format=None, **_):
         mode = response_format["type"] if response_format else None
         self.modes.append(mode)
+        self.sent.append(messages)
 
         return {"content": self.replies[mode].pop(0)}
 
@@ -86,3 +88,22 @@ async def test_recursive_schema_skips_json_schema_mode():
     await llm.structured([], model="m", schema={**TaskSpec.model_json_schema(by_alias=True)})
 
     assert llm.modes == ["json_object"]
+
+
+async def test_schema_hint_keeps_a_single_leading_system_message():
+    llm = ScriptedLLM({"json_schema": [""], "json_object": ['{"n": 1}']})
+    messages = [{"role": "system", "content": "Правила"}, {"role": "user", "content": "?"}]
+
+    await llm.structured(messages, model="m", schema=SCHEMA)
+
+    sent = llm.sent[-1]
+    assert [m["role"] for m in sent] == ["system", "user"]
+    assert sent[0]["content"].startswith("Правила") and "JSON Schema" in sent[0]["content"]
+
+
+async def test_schema_hint_adds_a_system_message_when_there_is_none():
+    llm = ScriptedLLM({"json_schema": [""], "json_object": ['{"n": 1}']})
+
+    await llm.structured([{"role": "user", "content": "?"}], model="m", schema=SCHEMA)
+
+    assert [m["role"] for m in llm.sent[-1]] == ["system", "user"]

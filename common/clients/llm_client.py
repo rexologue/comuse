@@ -379,4 +379,10 @@ def _with_schema_hint(messages: list[dict[str, Any]], schema: dict[str, Any]) ->
         "Отвечай строго одним JSON-объектом без пояснений, соответствующим JSON Schema:\n"
         + json.dumps(schema, ensure_ascii=False)
     )
+    # Many chat templates (Qwen on vLLM among them) accept a single system message,
+    # and only as the first one: extend it instead of adding another.
+    if messages and messages[0].get("role") == "system":
+        first = {**messages[0], "content": f"{messages[0]['content']}\n\n{hint}"}
+        return [first, *messages[1:]]
+
     return [{"role": "system", "content": hint}, *messages]
