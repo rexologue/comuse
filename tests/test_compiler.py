@@ -228,3 +228,17 @@ def test_domain_mask_reads_as_words_in_the_diff():
     lines = diff_specs(old, new, CATALOG)["lines"]
 
     assert "+ разрешено (адресаты писем): любой адрес в домене company.local" in lines
+
+
+def test_new_email_trigger_counts_as_the_mail_search_from_chat():
+    from compiler.compile import check_reflects_chat
+
+    # The chat looked at the mailbox; the task gets the same messages from its trigger.
+    check_reflects_chat(validate_spec(AUTO_REPLY, CATALOG), {"mail.search"})
+
+
+def test_trigger_does_not_cover_unrelated_chat_actions():
+    from compiler.compile import check_reflects_chat
+
+    with pytest.raises(SpecError):
+        check_reflects_chat(validate_spec(AUTO_REPLY, CATALOG), {"xlsx.aggregate"})

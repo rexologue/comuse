@@ -236,10 +236,19 @@ def successful_tools(session_id: str) -> set[str]:
     return {tool for (tool,) in rows if not tool.startswith("meta:")}
 
 
+# A trigger does the looking-around a chat did by hand: a new_email task receives
+# the messages mail.search found in chat, a file_appeared task the files fs.list found.
+_TRIGGER_COVERS = {
+    "new_email": {"mail.search", "mail.read"},
+    "file_appeared": {"fs.list"},
+}
+
+
 def check_reflects_chat(spec: TaskSpec, chat_tools: set[str]) -> None:
     """A compiled task must redo at least one thing the chat actually did; a spec of
     only notifications means the model lost the conversation."""
     used = {step.tool for step in spec.all_steps() if step.tool}
+    used |= _TRIGGER_COVERS.get(spec.trigger.type, set())
     substantive = chat_tools - {"user.notify", "user.ask"}
 
     if substantive and not used & substantive:
