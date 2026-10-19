@@ -131,3 +131,41 @@ async def test_error_with_retries_then_fail(settings, monkeypatch):
 
     with session() as db:
         assert db.query(StepRun).filter(StepRun.status == "error").count() == 3
+
+
+AUTO_REPLY = {
+    "title": "Ответ на заявки",
+    "trigger": {"type": "new_email", "account": "work"},
+    "approval": {"mode": "never"},
+    "steps": [
+        {
+            "id": "reply",
+            "foreach": "{{ trigger.messages }}",
+            "as": "msg",
+            "steps": [{"id": "send", "tool": "mail.send", "args": {"to": ["{{ msg.sender_email }}"]}}],
+        }
+    ],
+}
+
+
+async def test_run_without_trigger_data_sees_an_empty_list(settings):
+    main = FakeMain({"mail.send": lambda args, ctx: {"output": {"mode": "sent"}}})
+
+    run = await RunEngine(main).execute(_make_run(AUTO_REPLY, dry_run=True))
+
+    assert run["status"] == "succeeded"
+    assert main.calls == []
+
+
+async def test_run_from_the_trigger_gets_its_messages(settings):
+    main = FakeMain({"mail.send": lambda args, ctx: {"output": {"to": args["to"]}}})
+    run_id = _make_run(AUTO_REPLY)
+
+    with session() as db:
+        db.get(Run, run_id).state = {"trigger_data": {"messages": [{"sender_email": "client@company.local"}]}}
+        db.commit()
+
+    run = await RunEngine(main).execute(run_id)
+
+    assert run["status"] == "succeeded"
+    assert [c["args"]["to"] for c in main.calls] == [["client@company.local"]]
