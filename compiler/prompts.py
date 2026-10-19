@@ -95,6 +95,15 @@ RULES = f"""Ты превращаешь разговор пользовател�
    {json.dumps(_FOREACH_EXAMPLE, ensure_ascii=False)}
 8. Пути — только относительные (как в результатах fs.list) или data:…; никаких абсолютных путей.
 9. trigger: cron из 5 полей (дни недели MON..SUN), file_appeared, new_email или manual — по просьбе пользователя.
+   Что запуск получает в переменной trigger:
+   - new_email: trigger.messages — новые письма, у каждого uid, sender (заголовок From с именем),
+     sender_email (только адрес — для ответа), to, subject, date. Обычно шаги идут через
+     foreach по {{{{ trigger.messages }}}}; письмо целиком читай mail.read по uid.
+     Фильтр писем задаётся в trigger.mail_filter: {{"from": "...", "subject": "..."}} — подстрока.
+   - file_appeared: trigger.files — новые файлы, у каждого path и name.
+   - cron и manual: trigger пустой.
+   Если адресат письма берётся из письма-триггера (ответ отправителю), его адрес заранее неизвестен:
+   в permissions.mail_send_to укажи маску домена «*@домен» (например *@company.ru), а не конкретный адрес.
 10. permissions: перечисли папки, почтовые аккаунты и адресатов, которые использует задача.
 11. id шагов — латиницей snake_case, короткие и понятные.
 

@@ -191,3 +191,40 @@ def test_mapping_cards_name_their_fields():
     })
 
     assert build_cards(spec, CATALOG)[0]["text"] == "Подготовить строки с полями client, amount, не больше 5"
+
+
+AUTO_REPLY = {
+    "title": "Ответ на заявки",
+    "trigger": {"type": "new_email", "account": "work", "mail_filter": {"subject": "Заявка"}},
+    "permissions": {"mail_send_to": ["*@company.local"]},
+    "steps": [
+        {
+            "id": "reply",
+            "foreach": "{{ trigger.messages }}",
+            "as": "msg",
+            "steps": [
+                {
+                    "id": "send",
+                    "tool": "mail.send",
+                    "args": {"account": "work", "to": ["{{ msg.sender_email }}"], "subject": "Re: {{ msg.subject }}", "body": "Заявка принята."},
+                }
+            ],
+        }
+    ],
+}
+
+
+def test_templated_recipient_keeps_the_domain_mask():
+    permissions = derive_permissions(validate_spec(AUTO_REPLY, CATALOG), CATALOG)
+
+    assert permissions.mail_send_to == ["*@company.local"]
+    assert permissions.mail_accounts == ["work"]
+
+
+def test_domain_mask_reads_as_words_in_the_diff():
+    old = validate_spec({**AUTO_REPLY, "permissions": {}}, CATALOG)
+    new = validate_spec(AUTO_REPLY, CATALOG)
+
+    lines = diff_specs(old, new, CATALOG)["lines"]
+
+    assert "+ разрешено (адресаты писем): любой адрес в домене company.local" in lines

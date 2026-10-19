@@ -72,7 +72,8 @@ class ToolSpec:
             "dry_run": self.dry_run,
             "timeout": self.timeout,
             "input_schema": self.input_model.model_json_schema(),
-            "output_schema": self.output_model.model_json_schema(),
+            # Outputs are dumped by field name (not alias), so describe them the same way.
+            "output_schema": self.output_model.model_json_schema(by_alias=False),
             "source": "internal",
         }
 

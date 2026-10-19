@@ -17,6 +17,7 @@ class Input(ToolInput):
 class Output(ToolOutput):
     uid: int
     sender: str
+    sender_email: str
     to: str
     subject: str
     date: str | None
@@ -52,6 +53,7 @@ async def read(inp: Input, ctx: ToolContext) -> Output:
     return Output(
         uid=data["uid"],
         sender=data["from"],
+        sender_email=data["from_email"],
         to=data["to"],
         subject=data["subject"],
         date=data["date"],

@@ -168,12 +168,20 @@ def _permission_changes(old: Permissions, new: Permissions) -> list[dict[str, An
         before, after = set(getattr(old, field)), set(getattr(new, field))
 
         if after - before:
-            changes.append({"kind": "permission_added", "what": label, "items": sorted(after - before)})
+            changes.append({"kind": "permission_added", "what": label, "items": [_permission_item(i) for i in sorted(after - before)]})
 
         if before - after:
-            changes.append({"kind": "permission_removed", "what": label, "items": sorted(before - after)})
+            changes.append({"kind": "permission_removed", "what": label, "items": [_permission_item(i) for i in sorted(before - after)]})
 
     return changes
+
+
+def _permission_item(item: str) -> str:
+    """`*@company.local` reads as words, so the user sees how broad it is."""
+    if item.startswith("*@"):
+        return f"любой адрес в домене {item[2:]}"
+
+    return item
 
 
 def _line(change: dict[str, Any]) -> str:

@@ -21,7 +21,8 @@ class Input(ToolInput):
 
 class MailHeader(BaseModel):
     uid: int
-    sender: str = Field(alias="from")
+    sender: str = Field(alias="from", description="Заголовок From целиком, с именем")
+    sender_email: str = Field(alias="from_email", description="Только адрес отправителя — для ответа")
     to: str
     subject: str
     date: str | None
@@ -35,7 +36,7 @@ class Output(ToolOutput):
     name="mail.search",
     title="Найти письма",
     card="Найти письма в «{account}»: отправитель «{sender}», тема «{subject}»",
-    description="Search an IMAP mailbox; newest first. Returns uid, from, to, subject, date.",
+    description="Search an IMAP mailbox; newest first. Returns uid, sender, sender_email (bare address for replies), to, subject, date.",
     side_effect="read",
     capabilities=("mail.account:{account}",),
     secrets=("account",),

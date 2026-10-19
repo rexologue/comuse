@@ -42,3 +42,55 @@ def test_mail_rejects_malformed_addresses(address):
 
     with pytest.raises(ValidationError):
         Input(account="work", to=[address], subject="s", body="b")
+
+
+@pytest.mark.parametrize(
+    ("header", "address"),
+    [
+        ("Иван Петров <ivan@company.local>", "ivan@company.local"),
+        ('"Отдел продаж" <sales@corp.lan>', "sales@corp.lan"),
+        ("client@test.ru", "client@test.ru"),
+    ],
+)
+def test_sender_address_is_extracted(header, address):
+    assert imap_smtp.address_of(header) == address
+
+
+def test_search_output_describes_sender_email():
+    from common.tools import discover
+
+    fields = discover()["mail.search"].manifest()["output_schema"]["$defs"]["MailHeader"]["properties"]
+
+    assert {"sender", "sender_email"} <= set(fields)
+
+
+@pytest.mark.parametrize("entry", ["boss@company.ru", "*@company.local", " *@Corp.LAN "])
+def test_recipient_permissions_accept_addresses_and_domain_masks(entry):
+    from common.schemas.task import Permissions
+
+    assert Permissions(mail_send_to=[entry]).mail_send_to == [entry.strip().lower()]
+
+
+@pytest.mark.parametrize("entry", ["*", "*@*", "*@", "boss", "a@b@c"])
+def test_recipient_permissions_reject_too_broad_or_malformed(entry):
+    from pydantic import ValidationError
+
+    from common.schemas.task import Permissions
+
+    with pytest.raises(ValidationError):
+        Permissions(mail_send_to=[entry])
+
+
+def test_domain_mask_allows_only_that_domain():
+    from common.schemas.task import Permissions
+    from common.tools import PermissionDenied, ToolContext
+
+    ctx = ToolContext(
+        mode="run", settings=None, paths=None, llm=None, get_account=None, publish=None,
+        permissions=Permissions(mail_send_to=["*@company.local", "boss@other.ru"]),
+    )
+
+    ctx.check_recipients(["anyone@company.local", "Client@COMPANY.local", "boss@other.ru"])
+
+    with pytest.raises(PermissionDenied, match="stranger@other.ru"):
+        ctx.check_recipients(["anyone@company.local", "stranger@other.ru"])

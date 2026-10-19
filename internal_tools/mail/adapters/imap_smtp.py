@@ -11,7 +11,7 @@ from datetime import date
 from email import message_from_bytes, policy
 from email.header import decode_header, make_header
 from email.message import EmailMessage
-from email.utils import formatdate, make_msgid, parsedate_to_datetime
+from email.utils import formatdate, make_msgid, parseaddr, parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
@@ -107,6 +107,7 @@ def search(
             item = {
                 "uid": uid,
                 "from": _header(headers, "From"),
+                "from_email": address_of(_header(headers, "From")),
                 "to": _header(headers, "To"),
                 "subject": _header(headers, "Subject"),
                 "date": _iso_date(headers.get("Date")),
@@ -153,6 +154,7 @@ def read(config: dict[str, Any], secret: str, *, folder: str, uid: int, save_dir
     return {
         "uid": uid,
         "from": _header(message, "From"),
+        "from_email": address_of(_header(message, "From")),
         "to": _header(message, "To"),
         "subject": _header(message, "Subject"),
         "date": _iso_date(message.get("Date")),
@@ -316,6 +318,11 @@ def _drafts_folder(imap: imaplib.IMAP4) -> str:
 
 def _quote(folder: str) -> str:
     return folder if folder.startswith('"') else f'"{folder}"'
+
+
+def address_of(header: str) -> str:
+    """`Иван Петров <ivan@company.local>` → `ivan@company.local`; what a reply needs."""
+    return parseaddr(header)[1].strip()
 
 
 def _header(message, name: str) -> str:

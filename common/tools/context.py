@@ -106,8 +106,13 @@ class ToolContext:
         if self.permissions is None:
             return
 
-        allowed = {r.lower() for r in self.permissions.mail_send_to}
-        denied = [r for r in recipients if r.lower() not in allowed]
+        exact = {r.lower() for r in self.permissions.mail_send_to if not r.startswith("*@")}
+        domains = {r[2:].lower() for r in self.permissions.mail_send_to if r.startswith("*@")}
+
+        denied = [
+            r for r in recipients
+            if r.lower() not in exact and r.rsplit("@", 1)[-1].lower() not in domains
+        ]
 
         if denied:
             raise PermissionDenied(f"Адресаты не разрешены этой задаче: {', '.join(denied)}")
