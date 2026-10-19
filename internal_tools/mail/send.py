@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import asyncio
 
-from pydantic import EmailStr, Field
+from pydantic import Field
 
 from common.tools import ToolContext, ToolInput, ToolOutput, tool
+from common.tools.fields import EmailAddress
 from internal_tools.mail.adapters import imap_smtp
 
 
 class Input(ToolInput):
     account: str = Field(description="Имя почтового аккаунта отправителя")
-    to: list[EmailStr] = Field(min_length=1)
-    cc: list[EmailStr] = Field(default_factory=list)
+    to: list[EmailAddress] = Field(min_length=1)
+    cc: list[EmailAddress] = Field(default_factory=list)
     subject: str
     body: str
     attachments: list[str] = Field(default_factory=list, description="Пути файлов для вложения")
