@@ -6,6 +6,7 @@ import json
 import logging
 import time
 from datetime import date
+from difflib import SequenceMatcher
 from typing import Any
 
 import jsonpatch
@@ -17,6 +18,7 @@ from common.errors import ApiError
 from common.schemas.task import TaskSpec
 from common.settings import Settings
 from common.storage.db import session
+from common import templating
 from common.storage.models import ChatMessage, TraceEvent
 from common.utils import truncate
 from compiler import prompts, store
@@ -60,7 +62,8 @@ class Compiler:
         )
 
         chat_tools = successful_tools(session_id)
-        spec = await self._ask_spec(messages, catalog, chat_tools)
+        texts = chat_texts(session_id)
+        spec = await self._ask_spec(messages, catalog, chat_tools, texts)
         version = None
 
         # A spec that validates can still fail on real data; show the model what the
@@ -85,7 +88,7 @@ class Compiler:
                 {"role": "assistant", "content": json.dumps(spec.dump(), ensure_ascii=False)},
                 {"role": "user", "content": prompts.repair_request(dry_run)},
             ]
-            spec = await self._ask_spec(messages, catalog, chat_tools)
+            spec = await self._ask_spec(messages, catalog, chat_tools, texts)
 
         log.info("compiled task %s (%s) from session %s, dry run %s", version.task_id, spec.title, session_id, dry_run["status"])
 
@@ -106,10 +109,12 @@ class Compiler:
         messages: list[dict[str, Any]],
         catalog: dict[str, dict[str, Any]],
         chat_tools: set[str],
+        texts: list[str],
     ) -> TaskSpec:
         def validate(data: Any) -> TaskSpec:
             spec = validate_spec(data, catalog)
             check_reflects_chat(spec, chat_tools)
+            check_verbatim(spec, texts)
             return spec
 
         # Compiling is multi-step reasoning over the whole chat, so it uses the chat model.
@@ -247,6 +252,71 @@ def check_reflects_chat(spec: TaskSpec, chat_tools: set[str]) -> None:
             "задача не повторяет ни одного действия из разговора; "
             f"в разговоре успешно выполнялись: {sorted(substantive)}"
         ])
+
+
+# Shorter strings (names, folders, short subjects) are too close to each other by chance.
+_VERBATIM_MIN_LEN = 15
+# A literal sharing this much with a chat text but not equal to any part of it is a retyped copy.
+_NEAR_COPY = 0.9
+
+
+def chat_texts(session_id: str) -> list[str]:
+    """What the user wrote and what the chat's successful tool calls were given."""
+    with session() as db:
+        messages = db.query(ChatMessage.content).filter(ChatMessage.session_id == session_id, ChatMessage.role == "user").all()
+        events = (
+            db.query(TraceEvent.tool, TraceEvent.args)
+            .filter(TraceEvent.session_id == session_id, TraceEvent.status.in_(("ok", "needs_approval", "confirmed")))
+            .all()
+        )
+
+    texts = [content for (content,) in messages if content]
+    texts += [s for tool, args in events if not tool.startswith("meta:") for s in _literals(args)]
+
+    return texts
+
+
+def check_verbatim(spec: TaskSpec, texts: list[str]) -> None:
+    """Texts the user gave must be copied, not retyped: a near-copy with a slip (a lost
+    letter, a changed word) would go out in every run."""
+    errors: list[str] = []
+    values = [*spec.variables.values(), *(s for step in spec.all_steps() for s in _literals(step.args))]
+
+    for value in values:
+        if len(value) < _VERBATIM_MIN_LEN or templating.has_template(value) or any(value in text for text in texts):
+            continue
+
+        for text in texts:
+            original = _near_copy_of(value, text)
+            if original is not None:
+                errors.append(f"текст «{value}» переписан с ошибками; в разговоре было «{original}» — перенеси дословно")
+                break
+
+    if errors:
+        raise SpecError(errors)
+
+
+def _near_copy_of(value: str, text: str) -> str | None:
+    blocks = [b for b in SequenceMatcher(None, value, text, autojunk=False).get_matching_blocks() if b.size]
+    if not blocks or sum(b.size for b in blocks) < _NEAR_COPY * len(value):
+        return None
+
+    # Letters scattered over a long message are not a copy: the match must be one passage.
+    original = text[blocks[0].b : blocks[-1].b + blocks[-1].size]
+    return original if len(original) <= len(value) / _NEAR_COPY else None
+
+
+def _literals(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+
+    if isinstance(value, list):
+        return [s for item in value for s in _literals(item)]
+
+    if isinstance(value, dict):
+        return [s for item in value.values() for s in _literals(item)]
+
+    return []
 
 
 def build_transcript(session_id: str) -> str:

@@ -243,3 +243,29 @@ def test_user_ask_before_sending_is_rejected():
 
 def test_plain_auto_reply_needs_no_confirmation_step():
     validate_spec(AUTO_REPLY, CATALOG)
+
+
+CHAT = ["Каждому отправителю ответь: «Здравствуйте! Ваша заявка принята, мы свяжемся с вами в течение дня.» с темой «Re: <тема>»"]
+
+
+def _with_body(body):
+    spec = copy.deepcopy(AUTO_REPLY)
+    spec["steps"][1]["steps"][0]["args"]["body"] = body
+    return validate_spec(spec, CATALOG)
+
+
+def test_retyped_text_with_a_slip_is_rejected():
+    from compiler.compile import check_verbatim
+
+    with pytest.raises(SpecError, match="мы свяжемся с вами"):
+        check_verbatim(_with_body("Здравствуйте! Ваша заявка принята, мы свяжемс с вами в течение дня."), CHAT)
+
+
+@pytest.mark.parametrize("body", [
+    "Здравствуйте! Ваша заявка принята, мы свяжемся с вами в течение дня.",  # copied
+    "Спасибо, письмо получено. Ответим позже.",                               # a text of its own
+])
+def test_copied_or_own_texts_pass(body):
+    from compiler.compile import check_verbatim
+
+    check_verbatim(_with_body(body), CHAT)
