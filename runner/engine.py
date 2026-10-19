@@ -27,12 +27,6 @@ log = logging.getLogger("engine")
 
 _RETRY_BACKOFF_SEC = 2.0
 
-# What a run started without trigger data (a dry run, "run now") sees, so steps such
-# as `foreach: trigger.messages` iterate over nothing instead of failing.
-_EMPTY_TRIGGER: dict[str, dict[str, Any]] = {
-    "new_email": {"messages": []},
-    "file_appeared": {"files": []},
-}
 
 
 class _Pause(Exception):
@@ -157,7 +151,6 @@ class _State:
 
     def __init__(self, raw: dict[str, Any]):
         self.started: bool = raw.get("started", False)
-        self.trigger_data: dict[str, Any] = raw.get("trigger_data", {})
         self.done: dict[str, Any] = raw.get("done", {})
         self.answers: dict[str, Any] = raw.get("answers", {})
         self.pending: dict[str, Any] | None = raw.get("pending")
@@ -168,7 +161,6 @@ class _State:
     def dump(self) -> dict[str, Any]:
         return {
             "started": self.started,
-            "trigger_data": self.trigger_data,
             "done": self.done,
             "answers": self.answers,
             "pending": self.pending,
@@ -193,7 +185,6 @@ class _Walk:
         ctx: dict[str, Any] = {
             "today": date.today(),
             "now": datetime.now(),
-            "trigger": {**_EMPTY_TRIGGER.get(self.spec.trigger.type, {}), **self.state.trigger_data},
         }
 
         for name, expr in self.spec.variables.items():

@@ -193,7 +193,7 @@ project/
 Отдельный сервис, который решает только «когда запускать». Runner напрямую не вызывает, только через main, как и все остальные.
 
 - При старте и по `POST /reload {task_id?}` читает активные версии задач и пересобирает свою таблицу `triggers`. `GET /jobs` показывает, что и когда запустится.
-- **Типы триггеров:** `cron` (APScheduler), `file_appeared` (watchdog на папку, с задержкой на докачку файла), `new_email` (опрос через `mail.search` в executor, курсор в `triggers.state_json`), `manual` (без триггера).
+- **Типы триггеров:** `cron` (APScheduler) и `manual` (без расписания). Scheduler знает только время запуска: почту, папки и прочее он не читает. «Ответить на новые письма» или «разобрать новые файлы» — это шаги задачи (`mail.search`, `fs.list` и т. д.), запускаемой по cron.
 - Срабатывание → `POST main/runner/runs {task_id, trigger}`.
 
 ## Инструменты (команды)
@@ -332,7 +332,7 @@ tools:
 | Поле | Что это |
 | --- | --- |
 | `schema_version` | Версия формата, сейчас 1 |
-| `trigger` | `cron`, `file_appeared`, `new_email` или `manual` с параметрами |
+| `trigger` | `cron` (с `expr`) или `manual`: только когда запускать |
 | `permissions` | Всё, что задаче можно: папки, аккаунты, адресаты, домены. compiler выводит их из аргументов шагов |
 | `variables` | Считаются один раз в начале запуска (даты, имена файлов) |
 | `steps[].tool`, `args` | Команда из каталога и её аргументы; `{{ step_id.output }}` ссылается на результат прошлого шага |
@@ -381,7 +381,7 @@ tools:
 | `trace_events` | agent-loop | id, session\_id, message\_id, tool, args\_json, result\_json, status, user\_feedback, created\_at | compiler |
 | `tasks` | compiler | id, title, status, send\_mode, current\_version\_id, source\_session\_id, created\_at, updated\_at | все |
 | `task_versions` | compiler | id, task\_id, version\_no, spec\_json, status, parent\_version\_id, patch\_json, summary, created\_by, created\_at, approved\_at | runner, scheduler, main |
-| `triggers` | scheduler | id, task\_id, type, config\_json, state\_json, next\_fire\_at, enabled | main |
+| `triggers` | scheduler | id, task\_id, type, config\_json, next\_fire\_at, enabled | main |
 | `runs` | runner | id, task\_id, task\_version\_id, trigger, status, dry\_run, started\_at, finished\_at, error | main, agent-loop |
 | `step_runs` | runner | id, run\_id, step\_id, iteration, status, input\_json, output\_json, error, started\_at, finished\_at | main |
 | `tools` | executor | name, source, version, manifest\_json, enabled | agent-loop, compiler |
@@ -483,7 +483,6 @@ tools:
 | `INTERNAL_TOKEN` | генерирует launcher.py | задаётся в `deploy/.env` | Защита внутренних маршрутов |
 | `KEYRING_BACKEND` | `system` | `file` | Где хранить пароли почты |
 | `KEYRING_PASSWORD` | не нужен | задаётся | Ключ к `secrets.enc` |
-| `WATCH_POLLING` | `false` | `true` | Опрос папок вместо событий ФС |
 | `AGENT_*`, `COMPILER_*`, `TOOL_TIMEOUT_SEC`, `LLM_TIMEOUT_SEC`… | | | Лимиты и таймауты с разумными умолчаниями |
 
 Порты заданы умолчаниями (8000–8005) и переопределяются `PORT`. Каждый сервис сам сообщает main свой `SELF_URL`, поэтому список адресов поддерживать не нужно.
@@ -496,12 +495,11 @@ tools:
 
 ### В Docker
 
-`Dockerfile`: python:3.12-slim, non-root пользователь, зависимости из `pyproject.toml` через `tomllib`. `deploy/docker-compose.yaml`: один образ, по контейнеру на сервис (`command: python launcher.py <service>`), наружу опубликован только main, остальные в сети compose. Отличия от локального запуска заданы в `environment` compose: адреса, `/data`, `/workspace`, `KEYRING_BACKEND=file`, `WATCH_POLLING=true`. Шаблон настроек — `deploy/.env.example` (блок DEPLOY SETTINGS + настройки приложения, `TZ` для cron).
+`Dockerfile`: python:3.12-slim, non-root пользователь, зависимости из `pyproject.toml` через `tomllib`. `deploy/docker-compose.yaml`: один образ, по контейнеру на сервис (`command: python launcher.py <service>`), наружу опубликован только main, остальные в сети compose. Отличия от локального запуска заданы в `environment` compose: адреса, `/data`, `/workspace`, `KEYRING_BACKEND=file`. Шаблон настроек — `deploy/.env.example` (блок DEPLOY SETTINGS + настройки приложения, `TZ` для cron).
 
 Нюансы Docker Desktop на Windows:
 
 - **app.db лежит в именованном томе `agent-data`, а не в папке Windows** — блокировки SQLite в режиме WAL ненадёжны через bind mount из Windows. Папка пользователя монтируется обычно.
-- **События ФС из смонтированной папки Windows до контейнера не доходят** — поэтому `WATCH_POLLING=true`.
 
 ## Требования к LLM
 
@@ -532,7 +530,7 @@ tools:
 | БД | SQLite (WAL), SQLAlchemy 2 (`create_all`, миграций пока нет) |
 | LLM | httpx напрямую к OpenAI-совместимому API |
 | Шаблоны и правки Task | Jinja2 (sandbox), jsonpatch, jsonschema |
-| Расписание и события | APScheduler 3, watchdog |
+| Расписание | APScheduler 3 |
 | Документы | python-docx, docxtpl, openpyxl, pdfplumber, matplotlib |
 | Почта | stdlib imaplib/smtplib |
 | Секреты | keyring, cryptography (Fernet + scrypt) |

@@ -15,28 +15,18 @@ _RECIPIENT = re.compile(r"^(?:[^@\s*<>,;]+|\*)@[^@\s*<>,;]+$")
 
 
 class Trigger(BaseModel):
+    """Only *when* the task runs; what to look at (mail, folders) is up to its steps."""
+
     model_config = ConfigDict(extra="forbid")
 
-    type: Literal["manual", "cron", "file_appeared", "new_email"] = "manual"
+    type: Literal["manual", "cron"] = "manual"
     # cron: five-field crontab, e.g. "0 10 * * MON".
     expr: str | None = None
-    # file_appeared: folder relative to the workspace + glob pattern.
-    folder: str | None = None
-    pattern: str = "*"
-    # new_email: account name + IMAP filter (from, subject).
-    account: str | None = None
-    mail_filter: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _check_fields(self) -> Trigger:
         if self.type == "cron" and not self.expr:
             raise ValueError("cron trigger requires `expr`")
-
-        if self.type == "file_appeared" and self.folder is None:
-            raise ValueError("file_appeared trigger requires `folder`")
-
-        if self.type == "new_email" and not self.account:
-            raise ValueError("new_email trigger requires `account`")
 
         return self
 

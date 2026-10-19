@@ -19,7 +19,6 @@ dependencies = [
     "jsonpatch>=1.33",
     "jsonschema>=4.23",
     "apscheduler>=3.10,<4",
-    "watchdog>=5.0",
     "keyring>=25.0",
     "cryptography>=43.0",
     "python-docx>=1.1",

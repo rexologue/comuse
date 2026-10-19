@@ -195,12 +195,13 @@ def test_mapping_cards_name_their_fields():
 
 AUTO_REPLY = {
     "title": "Ответ на заявки",
-    "trigger": {"type": "new_email", "account": "work", "mail_filter": {"subject": "Заявка"}},
+    "trigger": {"type": "cron", "expr": "*/5 * * * *"},
     "permissions": {"mail_send_to": ["*@company.local"]},
     "steps": [
+        {"id": "found", "tool": "mail.search", "args": {"account": "work", "subject": "Заявка", "unseen": True}, "on_empty": "skip"},
         {
             "id": "reply",
-            "foreach": "{{ trigger.messages }}",
+            "foreach": "{{ found.output.messages }}",
             "as": "msg",
             "steps": [
                 {
@@ -228,17 +229,3 @@ def test_domain_mask_reads_as_words_in_the_diff():
     lines = diff_specs(old, new, CATALOG)["lines"]
 
     assert "+ разрешено (адресаты писем): любой адрес в домене company.local" in lines
-
-
-def test_new_email_trigger_counts_as_the_mail_search_from_chat():
-    from compiler.compile import check_reflects_chat
-
-    # The chat looked at the mailbox; the task gets the same messages from its trigger.
-    check_reflects_chat(validate_spec(AUTO_REPLY, CATALOG), {"mail.search"})
-
-
-def test_trigger_does_not_cover_unrelated_chat_actions():
-    from compiler.compile import check_reflects_chat
-
-    with pytest.raises(SpecError):
-        check_reflects_chat(validate_spec(AUTO_REPLY, CATALOG), {"xlsx.aggregate"})

@@ -16,8 +16,6 @@ x-service: &service
     SERVICE_HOST: 0.0.0.0
     DATA_DIR: /data
     WORKSPACE_DIR: /workspace
-    # Docker Desktop does not forward file events from Windows folders.
-    WATCH_POLLING: "true"
     KEYRING_BACKEND: file
   volumes:
     # SQLite WAL locking is unreliable on Windows bind mounts: keep app data in a volume.

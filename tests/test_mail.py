@@ -95,29 +95,3 @@ def test_domain_mask_allows_only_that_domain():
     with pytest.raises(PermissionDenied, match="stranger@other.ru"):
         ctx.check_recipients(["anyone@company.local", "stranger@other.ru"])
 
-
-def _mail(*uids):
-    return [{"uid": uid} for uid in uids]
-
-
-def test_first_poll_only_sets_the_cursor():
-    from scheduler.jobs import split_new_mail
-
-    assert split_new_mail({}, _mail(5, 7)) == ([], {"last_uid": 7})
-
-
-def test_first_mail_in_an_empty_mailbox_triggers():
-    from scheduler.jobs import split_new_mail
-
-    fresh, state = split_new_mail({}, [])
-    assert (fresh, state) == ([], {"last_uid": 0})
-
-    fresh, state = split_new_mail(state, _mail(1))
-    assert (fresh, state) == (_mail(1), {"last_uid": 1})
-
-
-def test_only_mail_after_the_cursor_triggers():
-    from scheduler.jobs import split_new_mail
-
-    assert split_new_mail({"last_uid": 7}, _mail(9, 8, 7, 3)) == (_mail(9, 8), {"last_uid": 9})
-    assert split_new_mail({"last_uid": 7}, []) == ([], {"last_uid": 7})

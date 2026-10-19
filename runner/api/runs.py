@@ -4,7 +4,7 @@ import asyncio
 from typing import Any
 
 from fastapi import APIRouter, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from common.errors import ApiError
 from common.storage.db import session
@@ -23,7 +23,6 @@ class RunBody(BaseModel):
     task_id: str | None = None
     task_version_id: str | None = None
     trigger: str = "manual"
-    trigger_data: dict[str, Any] = Field(default_factory=dict)
     dry_run: bool = False
     wait: bool = False
 
@@ -49,7 +48,7 @@ async def start_run(body: RunBody, request: Request):
             trigger=body.trigger,
             dry_run=body.dry_run,
             status="queued",
-            state={"trigger_data": body.trigger_data},
+            state={},
         )
         db.add(run)
         db.commit()

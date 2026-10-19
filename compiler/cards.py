@@ -27,13 +27,6 @@ def describe_trigger(trigger: Trigger) -> str:
     if trigger.type == "cron":
         return _describe_cron(trigger.expr or "")
 
-    if trigger.type == "file_appeared":
-        return f"когда в папке «{trigger.folder or 'рабочая папка'}» появляется файл «{trigger.pattern}»"
-
-    if trigger.type == "new_email":
-        filters = ", ".join(f"{k}: {v}" for k, v in trigger.mail_filter.items())
-        return f"при новом письме в «{trigger.account}»" + (f" ({filters})" if filters else "")
-
     return "только вручную"
 
 

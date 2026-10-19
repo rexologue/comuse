@@ -145,7 +145,6 @@ class Trigger(Base):
     task_id: Mapped[str] = mapped_column(String, index=True)
     type: Mapped[str] = mapped_column(String)
     config: Mapped[Any] = mapped_column(JSON, default=dict)
-    state: Mapped[Any] = mapped_column(JSON, default=dict)
     next_fire_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 

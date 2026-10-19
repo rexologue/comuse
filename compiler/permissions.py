@@ -58,13 +58,6 @@ def derive_permissions(spec: TaskSpec, catalog: dict[str, dict[str, Any]]) -> Pe
         # data: areas need no permission, so the model listing them is just noise.
         found[field] += [v for v in getattr(spec.permissions, field) if not v.startswith(DATA_PREFIX)]
 
-    trigger = spec.trigger
-    if trigger.type == "file_appeared" and trigger.folder is not None:
-        found["read_folders"].append(normalize_folder(trigger.folder))
-
-    if trigger.type == "new_email" and trigger.account:
-        found["mail_accounts"].append(trigger.account)
-
     return Permissions(
         read_folders=_collapse(found["read_folders"]),
         write_folders=_collapse(found["write_folders"]),

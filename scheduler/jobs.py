@@ -2,22 +2,14 @@
 
 from __future__ import annotations
 
-import asyncio
-import fnmatch
 import logging
-from pathlib import Path
 from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.interval import IntervalTrigger
-from watchdog.events import FileSystemEvent, FileSystemEventHandler
-from watchdog.observers import Observer
-from watchdog.observers.polling import PollingObserver
 
 from common.clients.main_client import MainClient
 from common.errors import ApiError
-from common.pathrefs import normalize_folder
 from common.schemas.task import TaskSpec
 from common.settings import Settings
 from common.storage.db import session
@@ -25,11 +17,6 @@ from common.storage.models import Task, TaskVersion, Trigger
 
 
 log = logging.getLogger("scheduler")
-
-# A file is considered complete once nothing new appeared in the folder for this long.
-_FILE_DEBOUNCE_SEC = 5
-# When the task is still busy with the previous run, try the fire again after this.
-_BUSY_RETRY_SEC = 60
 
 
 class TaskScheduler:
@@ -39,23 +26,14 @@ class TaskScheduler:
         self.main     = main
 
         self._scheduler = AsyncIOScheduler()
-        self._observer = PollingObserver() if settings.scheduler.watch_polling else Observer()
-        self._watches: dict[str, Any] = {}
-        self._pending_files: dict[str, list[str]] = {}
-        self._debounce: dict[str, asyncio.TimerHandle] = {}
-        self._loop: asyncio.AbstractEventLoop | None = None
 
 
     def start(self) -> None:
-        self._loop = asyncio.get_running_loop()
         self._scheduler.start()
-        self._observer.start()
 
 
     def shutdown(self) -> None:
         self._scheduler.shutdown(wait=False)
-        self._observer.stop()
-        self._observer.join(timeout=5)
 
 
     def reload(self, task_id: str | None = None) -> dict[str, Any]:
@@ -105,7 +83,6 @@ class TaskScheduler:
                     "type": trigger.type,
                     "config": trigger.config,
                     "next_run_time": job.next_run_time.isoformat() if job and job.next_run_time else None,
-                    "watching": task_id in self._watches,
                 }
             )
 
@@ -125,25 +102,10 @@ class TaskScheduler:
                 self._fire,
                 CronTrigger.from_crontab(trigger.expr),
                 id=task_id,
-                args=[task_id, "cron", {}],
-                replace_existing=True,
-                coalesce=True,
-                misfire_grace_time=3600,
-            )
-            self._save_trigger(task_id, trigger.type, trigger.model_dump(), next_fire=job.next_run_time)
-
-        elif trigger.type == "file_appeared":
-            self._watch(task_id, trigger.folder or "", trigger.pattern)
-            self._save_trigger(task_id, trigger.type, trigger.model_dump())
-
-        elif trigger.type == "new_email":
-            job = self._scheduler.add_job(
-                self._poll_mail,
-                IntervalTrigger(minutes=self.settings.scheduler.mail_poll_minutes),
-                id=task_id,
                 args=[task_id],
                 replace_existing=True,
                 coalesce=True,
+                misfire_grace_time=3600,
             )
             self._save_trigger(task_id, trigger.type, trigger.model_dump(), next_fire=job.next_run_time)
 
@@ -167,127 +129,28 @@ class TaskScheduler:
 
 
     def _unschedule(self, task_id: str) -> bool:
-        removed = False
+        if self._scheduler.get_job(task_id) is None:
+            return False
 
-        if self._scheduler.get_job(task_id):
-            self._scheduler.remove_job(task_id)
-            removed = True
-
-        watch = self._watches.pop(task_id, None)
-        if watch is not None:
-            self._observer.unschedule(watch)
-            removed = True
-
-        return removed
+        self._scheduler.remove_job(task_id)
+        return True
 
 
     def _job_ids(self) -> set[str]:
-        return {job.id for job in self._scheduler.get_jobs()} | set(self._watches)
+        return {job.id for job in self._scheduler.get_jobs()}
 
 
-    async def _fire(self, task_id: str, trigger: str, data: dict[str, Any]) -> None:
+    async def _fire(self, task_id: str) -> None:
         try:
-            run = await self.main.post(
-                "/runner/runs",
-                json={"task_id": task_id, "trigger": trigger, "trigger_data": data},
-            )
-            log.info("fired %s (%s): run %s", task_id, trigger, run["id"])
+            run = await self.main.post("/runner/runs", json={"task_id": task_id, "trigger": "cron"})
+            log.info("fired %s: run %s", task_id, run["id"])
 
         except ApiError as e:
-            if e.status_code == 409 and trigger == "file_appeared":
-                # New files must not be lost while the previous run is still going.
-                log.info("task %s busy, retrying file trigger in %ds", task_id, _BUSY_RETRY_SEC)
-                self._loop.call_later(_BUSY_RETRY_SEC, lambda: asyncio.ensure_future(self._fire(task_id, trigger, data)))
-                return
-
-            log.warning("cannot fire %s (%s): %s", task_id, trigger, e.message)
+            log.warning("cannot fire %s: %s", task_id, e.message)
 
         job = self._scheduler.get_job(task_id)
         if job is not None:
             self._update_trigger(task_id, next_fire=job.next_run_time)
-
-
-    # -----------------------------
-    # FILE TRIGGER
-    # -----------------------------
-
-    def _watch(self, task_id: str, folder: str, pattern: str) -> None:
-        path = (self.settings.storage.workspace_dir / normalize_folder(folder)).resolve()
-        path.mkdir(parents=True, exist_ok=True)
-
-        handler = _FolderHandler(lambda p: self._on_file(task_id, p), pattern)
-        self._watches[task_id] = self._observer.schedule(handler, str(path), recursive=False)
-
-
-    def _on_file(self, task_id: str, path: Path) -> None:
-        """Called from the watchdog thread; batches files into one run per quiet period."""
-        ref = path.resolve().relative_to(self.settings.storage.workspace_dir.resolve()).as_posix()
-
-        def schedule() -> None:
-            files = self._pending_files.setdefault(task_id, [])
-            if ref not in files:
-                files.append(ref)
-
-            if task_id in self._debounce:
-                self._debounce[task_id].cancel()
-
-            self._debounce[task_id] = self._loop.call_later(_FILE_DEBOUNCE_SEC, lambda: asyncio.ensure_future(self._flush_files(task_id)))
-
-        self._loop.call_soon_threadsafe(schedule)
-
-
-    async def _flush_files(self, task_id: str) -> None:
-        self._debounce.pop(task_id, None)
-        files = self._pending_files.pop(task_id, [])
-
-        if files:
-            await self._fire(task_id, "file_appeared", {"files": [{"path": f, "name": Path(f).name} for f in files]})
-
-
-    # -----------------------------
-    # MAIL TRIGGER
-    # -----------------------------
-
-    async def _poll_mail(self, task_id: str) -> None:
-        with session() as db:
-            task = db.get(Task, task_id)
-            version = db.get(TaskVersion, task.current_version_id) if task else None
-            row = db.get(Trigger, task_id)
-
-        if version is None or row is None:
-            return
-
-        spec = TaskSpec.model_validate(version.spec)
-        trigger = spec.trigger
-
-        try:
-            response = await self.main.post(
-                "/executor/execute",
-                json={
-                    "tool": "mail.search",
-                    "args": {
-                        "account": trigger.account,
-                        "sender": trigger.mail_filter.get("from"),
-                        "subject": trigger.mail_filter.get("subject"),
-                        "limit": 50,
-                    },
-                    "context": {"mode": "run", "permissions": spec.permissions.model_dump()},
-                },
-            )
-
-        except ApiError as e:
-            log.warning("mail poll for %s failed: %s", task_id, e.message)
-            return
-
-        if response["status"] != "ok":
-            log.warning("mail poll for %s failed: %s", task_id, response.get("error"))
-            return
-
-        fresh, state = split_new_mail(row.state or {}, response["output"]["messages"])
-        self._update_trigger(task_id, state=state)
-
-        if fresh:
-            await self._fire(task_id, "new_email", {"messages": fresh})
 
 
     # -----------------------------
@@ -296,12 +159,7 @@ class TaskScheduler:
 
     def _save_trigger(self, task_id: str, kind: str, config: dict[str, Any], next_fire=None) -> None:
         with session() as db:
-            row = db.get(Trigger, task_id) or Trigger(id=task_id, task_id=task_id, state={})
-
-            # A changed trigger restarts its cursor (e.g. a different mailbox).
-            if row.type != kind or row.config != config:
-                row.state = {}
-
+            row = db.get(Trigger, task_id) or Trigger(id=task_id, task_id=task_id)
             row.type = kind
             row.config = config
             row.enabled = True
@@ -310,7 +168,7 @@ class TaskScheduler:
             db.commit()
 
 
-    def _update_trigger(self, task_id: str, *, next_fire=None, state: dict[str, Any] | None = None) -> None:
+    def _update_trigger(self, task_id: str, *, next_fire=None) -> None:
         with session() as db:
             row = db.get(Trigger, task_id)
             if row is None:
@@ -319,44 +177,4 @@ class TaskScheduler:
             if next_fire is not None:
                 row.next_fire_at = next_fire
 
-            if state is not None:
-                row.state = state
-
             db.commit()
-
-
-class _FolderHandler(FileSystemEventHandler):
-    def __init__(self, callback, pattern: str):
-        self.callback = callback
-        self.pattern  = pattern
-
-
-    def on_created(self, event: FileSystemEvent) -> None:
-        self._maybe(event.src_path, event.is_directory)
-
-
-    def on_moved(self, event: FileSystemEvent) -> None:
-        self._maybe(event.dest_path, event.is_directory)
-
-
-    def _maybe(self, raw_path, is_directory: bool) -> None:
-        path = Path(raw_path if isinstance(raw_path, str) else raw_path.decode())
-
-        # Office lock files (~$report.docx) and temp files are not new documents.
-        if is_directory or path.name.startswith(("~$", ".")) or path.suffix.lower() in (".tmp", ".part", ".crdownload"):
-            return
-
-        if fnmatch.fnmatch(path.name, self.pattern):
-            self.callback(path)
-
-
-def split_new_mail(state: dict[str, Any], messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """New messages since the cursor and the moved cursor. The first poll only sets the
-    cursor, so old mail does not trigger a run; an empty mailbox sets it to 0."""
-    uids = [m["uid"] for m in messages]
-    last_uid = state.get("last_uid")
-
-    if last_uid is None:
-        return [], {"last_uid": max(uids, default=0)}
-
-    return [m for m in messages if m["uid"] > last_uid], {"last_uid": max([last_uid, *uids])}

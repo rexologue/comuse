@@ -92,12 +92,6 @@ class ExecutorSettings:
 
 
 @dataclass(slots=True, frozen=True)
-class SchedulerSettings:
-    watch_polling: bool
-    mail_poll_minutes: int
-
-
-@dataclass(slots=True, frozen=True)
 class Settings:
     service: ServiceSettings
     storage: StorageSettings
@@ -105,7 +99,6 @@ class Settings:
     agent: AgentSettings
     compiler: CompilerSettings
     executor: ExecutorSettings
-    scheduler: SchedulerSettings
 
     @classmethod
     def from_env(cls, service_name: str | None = None) -> Settings:
@@ -256,22 +249,6 @@ class Settings:
 
         keyring_password = os.environ.get("KEYRING_PASSWORD", "")
 
-        # -----------------------------
-        # SCHEDULER
-        # -----------------------------
-
-        # Docker Desktop does not forward inotify events from Windows bind mounts,
-        # so containers fall back to polling the watched folders.
-        watch_polling = bool_coercion(
-            os.environ.get("WATCH_POLLING", "false"),
-            "WATCH_POLLING",
-        )
-
-        mail_poll_minutes = int_coercion(
-            os.environ.get("MAIL_POLL_MINUTES", "5"),
-            "MAIL_POLL_MINUTES",
-            low=1,
-        )
 
         return cls(
             service=ServiceSettings(
@@ -313,10 +290,6 @@ class Settings:
                 tool_timeout=executor_tool_timeout,
                 keyring_backend=keyring_backend,
                 keyring_password=keyring_password,
-            ),
-            scheduler=SchedulerSettings(
-                watch_polling=watch_polling,
-                mail_poll_minutes=mail_poll_minutes,
             ),
         )
 
