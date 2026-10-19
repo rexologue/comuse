@@ -260,7 +260,7 @@ class _smtp:
                 if security == "starttls":
                     self.conn.starttls(context=context)
 
-            # A server that does not offer AUTH (local test servers) takes mail as is.
+            # A relay that does not offer AUTH takes mail without a login.
             self.conn.ehlo_or_helo_if_needed()
             if self.conn.has_extn("auth"):
                 self.conn.login(self.config.get("username") or self.config["email"], self.secret)
@@ -287,7 +287,7 @@ def _select(imap: imaplib.IMAP4, folder: str, *, readonly: bool) -> None:
 
 def _drafts_folder(imap: imaplib.IMAP4) -> str:
     """The folder flagged \\Drafts, else one named Drafts — created if missing
-    (minimal servers, e.g. test ones, start with INBOX only)."""
+    (some servers start with INBOX only)."""
     names: list[str] = []
 
     status, rows = imap.list()

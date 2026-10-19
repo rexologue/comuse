@@ -88,15 +88,6 @@ docker compose -f deploy/docker-compose.yaml up -d --build
 uv run pytest
 ```
 
-Живые тесты почты идут против локального GreenMail (SMTP 3025, IMAP 3143, без TLS, любой пароль)
-и пропускаются, если он не запущен:
-
-```bash
-docker run -d --name fintech2026-greenmail -p 127.0.0.1:3025:3025 -p 127.0.0.1:3143:3143 -e GREENMAIL_OPTS='-Dgreenmail.setup.test.smtp -Dgreenmail.setup.test.imap -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.auth.disabled' greenmail/standalone:2.1.3
-```
-
-Аккаунт для него заводится пресетом `greenmail`: `POST /accounts {"name": "test", "email": "agent@test.local", "preset": "greenmail", "secret": "x"}`.
-
 ## Основные эндпоинты
 
 | Путь | Что делает |
