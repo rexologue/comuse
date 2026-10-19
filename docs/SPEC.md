@@ -13,6 +13,8 @@
 - **Любое действие на компьютере идёт через executor.** Там проверяются права, подставляются секреты и пишется лог.
 - **Секреты не попадают в LLM.** Агент и задачи знают только имя аккаунта.
 - **Изменения только через версии.** Каждая правка задачи создаёт новую версию, а активной она становится только после подтверждения.
+- **Одно одобрение — задачи целиком.** Пользователь одобряет собранную задачу (шаги, права, пробный запуск). Запуски на действиях не останавливаются; как ведёт себя внешнее действие (например, письмо в черновики или сразу), решает команда по настройкам своей группы, которые меняет только пользователь.
+- **Каждая сущность знает только своё.** Scheduler знает «когда», runner — «в каком порядке», executor — «чем», а смысл почты, файлов и прочего — только их группы команд в `internal_tools/`.
 
 **Вне рамок v1:** фронтенд, несколько пользователей, OAuth-интеграции (MS Graph, Gmail API), управление GUI (computer use), облачный деплой.
 
@@ -33,10 +35,10 @@
    ▼             ▼              ▼              ▼              ▼
 agent-loop    compiler        runner        executor      scheduler
   :8001         :8002          :8003          :8004          :8005
-чат и трейс  чат → Task    исполняет Task  права, секреты  cron, события
+чат и трейс  чат → Task    исполняет Task  команды, секреты    cron
    │             │              ┆              │
    ▼             ▼              ┆              ▼
- LLM-провайдер (OpenAI API)     ┆        internal_tools, skills (Deno + MCP)
+ LLM-провайдер (OpenAI API)     ┆        internal_tools (скиллы Deno + MCP — план)
                                 ┆
         SQLite · data/app.db · common.storage (у каждой таблицы один владелец)
 ```
@@ -67,6 +69,7 @@ project/
 │   ├── main.py, compile.py
 │   ├── validate.py        # проверка по каталогу, включая ссылки шаг.output.поле
 │   ├── permissions.py     # права из capabilities команд
+│   ├── task_settings.py   # настройки групп команд для задачи (из каталога)
 │   ├── cards.py           # карточки шагов, расписание словами, diff
 │   ├── store.py, prompts.py
 │   └── api/tasks.py
@@ -79,14 +82,15 @@ project/
 │   ├── paths.py           # песочница путей и права на папки
 │   ├── secrets.py         # keyring или зашифрованный файл
 │   └── api/               # execute (+ /tools), accounts
-├── scheduler/             # cron, папки, почта
+├── scheduler/             # cron: когда запускать задачи
 │   ├── main.py, jobs.py
 │   └── api/jobs.py
 ├── internal_tools/        # встроенные команды: файл = команда (или пара с общим входом)
 │   ├── fs/                # list, transfer (copy/move), write
 │   ├── docs/              # read, fill_template, make_template, readers
 │   ├── xlsx/              # read_table, write_table, aggregate
-│   ├── mail/              # search, read, mark, send, create_draft, adapters/
+│   ├── mail/              # search, read, mark, send, create_draft, settings, adapters/
+│   ├── data/              # map_rows
 │   ├── charts/            # charts (bar/line)
 │   ├── llm/               # extract, classify, write, inputs
 │   └── user/              # ask, notify
@@ -99,7 +103,7 @@ project/
 │   ├── clients/           # llm_client, main_client
 │   ├── schemas/           # task, execution
 │   ├── storage/           # db, models, queries
-│   └── tools/             # @tool, ToolContext, ошибки
+│   └── tools/             # @tool, ToolContext, DomainSettings, ошибки
 ├── deploy/                # docker-compose.yaml, .env.example
 ├── docs/SPEC.md
 ├── misc/make_demo_data.py # демо-папка для сценария еженедельного отчёта
@@ -110,7 +114,7 @@ project/
 └── pyproject.toml
 ```
 
-Отдельного сервиса storage нет: это пакет `common/storage`, который импортирует каждый сервис. Правила записи — в разделе «База данных». Скиллы от агента (`skills/`, Deno) пока не реализованы.
+Отдельного сервиса storage нет: это пакет `common/storage`, который импортирует каждый сервис. Правила записи — в разделе «База данных». Скиллы от агента (`skills/`, Deno) пока не реализованы: в БД есть заготовка таблицы `skills`, кода нет.
 
 ## Сервисы
 
@@ -130,7 +134,7 @@ project/
 | --- | --- | --- |
 | `POST /agent/v1/chat/completions` | agent-loop | Чат в OpenAI-совместимом формате, `session_id` в `metadata` |
 | `GET /agent/sessions`, `GET /agent/sessions/{id}` | agent-loop | Список сессий, история и трейс |
-| `POST /compiler/compile` | compiler | `{session_id}` → черновик задачи |
+| `POST /compiler/compile` | compiler | `{session_id, title?, hint?}` → черновик задачи и approval `version_approve` |
 | `POST /compiler/patch` | compiler | `{task_id, instruction}` → черновик новой версии и diff |
 | `GET /tasks`, `GET /tasks/{id}` | storage | Задачи, текущая версия, карточки шагов |
 | `GET /tasks/{id}/versions/{v}/diff` | compiler | Разница с предыдущей версией |
@@ -138,13 +142,13 @@ project/
 | `POST /tasks/{id}/pause`, `/resume`, `/archive` | compiler, затем scheduler | Управление задачей |
 | `GET`, `PUT /tasks/{id}/settings` | compiler | Настройки доменов задачи с подписями; `PUT {домен: {поле: значение}}` меняет значения, ключи добавить или удалить нельзя |
 | `POST /runs` | runner | `{task_id, dry_run?}` → запуск вручную |
-| `GET /runs/{id}`, `GET /tasks/{id}/runs` | storage | Статус запуска и его шаги |
-| `GET /approvals`, `POST /approvals/{id}/answer` | main, затем runner | Вопросы и подтверждения; ответ продолжает запуск |
+| `GET /runs/{id}`, `GET /tasks/{id}/runs` | storage | Статус запуска и его шаги; запуски `empty` в истории только с `?include_empty=true` |
+| `POST /runs/{id}/cancel` | runner | Отменить запуск |
+| `GET /approvals`, `POST /approvals/{id}/answer` | main, затем compiler или runner | Одобрение версий задач (`version_approve`) и вопросы запусков (`ask_user`) |
 | `GET /tools`, `GET /tools/{name}` | executor | Каталог инструментов со схемами |
-| `GET /skills`, `POST /skills/{id}/approve` | executor | Скиллы от агента и их права |
-| `GET /accounts`, `POST /accounts` | executor | Аккаунты почты и LLM; секрет сразу уходит в keyring |
-| `GET /settings`, `PUT /settings` | main | Провайдер LLM, модель, разрешённые папки |
-| `GET /events` | main | Поток событий (SSE) |
+| `GET /accounts`, `POST /accounts`, `GET /accounts/presets`, `POST /accounts/{name}/check`, `DELETE /accounts/{name}` | executor | Почтовые аккаунты; пароль сразу уходит в keyring |
+| `GET /settings`, `PUT /settings` | main | Хранилище «ключ → значение» для будущего UI; сервисы его пока не читают |
+| `GET /events`, `GET /events/recent` | main | Поток событий (SSE) и последние события JSON |
 
 Внутренние маршруты (нужен internal-токен): `POST /internal/register`, `POST /internal/events`, `POST /internal/approvals`, `POST /executor/execute` (вызывают agent-loop и runner), `POST /runner/runs` (вызывает scheduler).
 
@@ -155,37 +159,41 @@ project/
 Ведёт диалог: собирает контекст, отбирает инструменты, вызывает LLM, исполняет tool calls через executor и пишет трейс.
 
 - **API:** `POST /v1/chat/completions` (со стримингом), `GET /sessions`, `GET /sessions/{id}`.
-- **Цикл:** история сессии → отбор 5–10 инструментов → LLM → tool calls → `POST main/executor/execute` с `context.mode = "chat"` → результат в историю и в `trace_events` → снова LLM. Остановка, когда ответ пришёл без tool calls, или после 10 итераций.
-- **Мета-инструменты** (`task.compile`, `task.patch`, `task.run_now`, `task.list`, `skill.create`) управляют самой системой, а не компьютером. Их обрабатывает agent-loop через main, в executor они не идут.
-- **Внешние действия в чате** (`side_effect: external`) executor возвращает со статусом `needs_approval`, и агент спрашивает пользователя прямо в диалоге.
+- **Цикл:** история сессии → отбор инструментов (топ-`AGENT_TOOLS_TOP_K`=24 по эмбеддингам плюс уже использованные в сессии и `fs.list`, `docs.read`; без эмбеддингов — все) → LLM → tool calls → `POST main/executor/execute` с `context.mode = "chat"` → результат в историю и в `trace_events` → снова LLM. Остановка, когда ответ пришёл без tool calls, или после `AGENT_MAX_ITERATIONS`=16 итераций.
+- **Мета-инструменты** управляют самой системой, а не компьютером: `task_compile`, `task_patch`, `task_reject`, `task_list`, `task_run_now`, `task_control` (пауза, возобновление, архив), `run_status`, `approvals_list`, `approval_answer`, `action_confirm`. Их обрабатывает agent-loop через main, в executor они не идут. Включить задачу агент не может: такого инструмента нет, а `approval_answer` передаёт только ответы на вопросы `ask_user`.
+- **Внешние действия в чате** (`side_effect: external`) executor возвращает со статусом `needs_approval`, агент спрашивает пользователя прямо в диалоге и после «да» вызывает `action_confirm`. Зависимые шаги (пометить письмо прочитанным и т. п.) он делает только после подтверждения.
 
 ### compiler :8002
 
 Превращает чат в Task и единственный пишет в `tasks` и `task_versions`.
 
-- `POST /compile {session_id}`: читает `chat_messages` и `trace_events`, просит LLM собрать Task JSON, валидирует, сохраняет версию со статусом `draft`, делает dry run. Ответ: `{task_id, version_id, summary, cards, dry_run_result}`.
+- `POST /compile {session_id, title?, hint?}`: читает `chat_messages` и `trace_events`, просит LLM собрать Task JSON, проверяет, выводит права из capabilities команд, сохраняет версию `draft` с настройками групп по умолчанию и делает dry run; если пробный запуск упал, показывает LLM ошибку и чинит задачу (до 2 раз). Ответ: `{task_id, version_id, title, summary, trigger, permissions, settings, cards, dry_run}`.
+- **Проверки собранной задачи:** схема pydantic; команды и их аргументы есть в каталоге; cron разбирается; переменные и ссылки `шаг.output.поле` существуют в output-схемах; фильтры Jinja известны; задача повторяет хотя бы одно действие из чата; перед внешним действием нет `user.ask` («отправить?» — это настройки задачи, а не вопрос в запуске); тексты из чата перенесены дословно (почти совпадающая строка с опечаткой отклоняется с оригиналом). Ошибки уходят LLM обратно, до `COMPILER_MAX_ATTEMPTS`=3 попыток.
 - `POST /patch {task_id, instruction}`: LLM выдаёт JSON Patch к текущей версии → новая версия `draft` и diff.
-- `POST /validate {spec}`: схема pydantic, все инструменты есть в каталоге, аргументы проходят input-схемы, права покрывают все шаги.
-- `POST /tasks/{id}/versions/{v}/approve`, `/pause`, `/resume`, `/archive`: меняет статусы.
-- Если LLM вернул невалидный JSON, ошибки валидации уходят ему обратно, до 3 попыток.
+- `POST /validate {spec}`: проверки схемы и каталога (без проверок по чату), без LLM.
+- `POST /tasks/{id}/versions/{v}/approve`, `/reject`, `/pause`, `/resume`, `/archive`: меняет статусы; при одобрении версии настройки задачи приводятся к её командам.
+- `GET`, `PUT /tasks/{id}/settings`: настройки групп команд (см. «Настройки группы»).
 
 ### runner :8003
 
 Исполняет активную версию задачи по шагам, сам ничего не планирует.
 
-- `POST /runs {task_id или task_version_id, trigger, dry_run}`: создаёт запись в `runs`, исполняет в фоне и сразу отвечает `run_id`.
+- `POST /runs {task_id или task_version_id, trigger, dry_run, wait}`: создаёт запись в `runs`, исполняет в фоне и сразу отвечает `run_id` (с `wait` — ждёт конца; так делает dry run компилятора).
 - `POST /runs/{id}/resume {approval_id}` продолжает после ответа пользователя, `POST /runs/{id}/cancel` отменяет.
 - **Движок:** берёт `current_version_id` → считает `variables` → для каждого шага рендерит `args` (Jinja2, StrictUndefined) → `POST main/executor/execute` → пишет `step_runs` → обрабатывает `on_error`.
 - Шаг `user.ask` (и `on_error` / `on_empty: ask_user`): runner создаёт approval `ask_user` в main, запуск переходит в `waiting`. После ответа main вызывает `resume`. Других пауз нет: одобрения действий в запусках не бывает.
-- Один запуск задачи за раз: если предыдущий ещё идёт, новый пропускается с записью в лог.
+- Один запуск задачи за раз: если предыдущий ещё идёт, runner отвечает 409, scheduler пишет это в лог и ждёт следующего срабатывания.
+- Если все шаги вернули пустой результат (проверка по расписанию ничего не нашла), запуск получает статус `empty`.
+- В каждый вызов executor runner передаёт права задачи и её настройки (`task_settings`).
 
 ### executor :8004
 
 Единственное место, где выполняются инструменты. И чат, и runner зовут его одним форматом.
 
 - `POST /execute {tool, args, context}` → `{status, output, artifacts}`, где status: `ok`, `error`, `needs_input` или (только в чате) `needs_approval`. В `context`: режим (`chat` или `run`), `session_id` или `run_id` + `step_id`, permissions и настройки задачи (`task_settings`), `dry_run`.
-- `GET /tools`, `GET /tools/{name}`, `POST /tools/reload`; `POST /skills/{id}/install`; `POST /accounts`, `DELETE /accounts/{id}`.
-- **Конвейер вызова:** найти инструмент → проверить args по input-схеме → проверить права (capabilities инструмента против permissions задачи) → применить политику для внешних действий (в чате спросить; в пробном запуске пропустить или черновик; в запуске задачи — ничего, инструмент сам смотрит настройки своего домена) → подставить секреты из keyring → вызвать с таймаутом → проверить output → записать в `tool_calls` без секретов.
+- `GET /tools`, `GET /tools/{name}`, `POST /tools/reload`; аккаунты: `GET`, `POST /accounts`, `GET /accounts/presets`, `POST /accounts/{name}/check`, `DELETE /accounts/{name}`.
+- **Конвейер вызова:** найти инструмент → проверить args по input-схеме → политика внешних действий (в чате — спросить; в пробном запуске — пропустить или черновик по `dry_run` команды; в запуске задачи — ничего, команда сама смотрит настройки своей группы) → вызвать с таймаутом и `ToolContext` → проверить output → записать в `tool_calls` без секретов.
+- **Права и секреты** проверяются в `ToolContext`, когда команда к ним обращается: `read_path` / `write_path` сверяют путь с папками задачи (`executor/paths.py`), `account()` — аккаунт с `mail_accounts` и достаёт пароль из keyring, `check_recipients()` — адресатов с `mail_send_to`. Capabilities из `@tool` executor не проверяет: по ним compiler выводит permissions (см. «Известные проблемы»).
 - **Регистрация команд.** executor при старте сам сканирует `internal_tools/`, обновляет таблицу `tools` и регистрируется в main. main не знает кода инструментов, источник правды один — папка с командами.
 
 ### scheduler :8005
@@ -198,41 +206,45 @@ project/
 
 ## Инструменты (команды)
 
-Одна команда = один Python-файл с декоратором `@tool`. Схемы, описание для LLM, текст для карточки и нужные права лежат в этом же файле, отдельной регистрации нет. Посмотреть все команды: `python -m executor.tools list` или `GET /tools`.
+Одна команда = один Python-файл с декоратором `@tool` (или пара команд с общим входом). Схемы, описание для LLM, текст для карточки и нужные права лежат в этом же файле, отдельной регистрации нет. Посмотреть все команды: `GET /tools`.
 
 ```python
-# internal_tools/mail/send.py
-from pydantic import BaseModel, EmailStr
-from common.tools import tool, ToolContext
-
-class Input(BaseModel):
-    account: str                  # имя аккаунта, не пароль
-    to: list[EmailStr]
-    cc: list[EmailStr] = []
+# internal_tools/mail/send.py (сокращённо)
+class Input(ToolInput):
+    account: str = Field(description="Имя почтового аккаунта отправителя")
+    to: list[EmailAddress] = Field(min_length=1)
+    cc: list[EmailAddress] = Field(default_factory=list)
     subject: str
     body: str
-    attachments: list[str] = []   # пути внутри разрешённых папок
+    attachments: list[str] = Field(default_factory=list, description="Пути файлов для вложения")
 
-class Output(BaseModel):
+class Output(ToolOutput):
     message_id: str
     mode: str                     # "sent" или "draft"
+    folder: str | None = None
 
 @tool(
     name="mail.send",
     title="Отправить письмо",
     card="Отправить письмо {to} с темой «{subject}»",
-    description="Send an email from a configured account.",
+    description="Send an email ... In a task it saves a draft ... unless the task's mail settings say to send directly.",
     side_effect="external",
-    capabilities=["mail.send:{to}", "mail.send:{cc}", "fs.read:{attachments}"],
-    secrets=["account"],
+    capabilities=("mail.account:{account}", "mail.send:{to}", "mail.send:{cc}", "fs.read:{attachments}"),
+    secrets=("account",),
     dry_run="draft",
-    timeout=30,
+    timeout=120,
 )
 async def send(inp: Input, ctx: ToolContext) -> Output:
-    adapter = ctx.mail_adapter(inp.account)   # IMAP/SMTP или Outlook COM
-    if ctx.mode == "draft":
-        return Output(message_id=await adapter.create_draft(inp), mode="draft")
-    return Output(message_id=await adapter.send(inp), mode="sent")
+    account = ctx.account(inp.account)              # право на аккаунт + пароль из keyring
+    ctx.check_recipients([*inp.to, *inp.cc])        # адресаты из permissions задачи
+    message = imap_smtp.build_message(...)
+
+    if ctx.draft or (ctx.mode == "run" and not ctx.domain_settings(MailSettings).send_directly):
+        folder = await asyncio.to_thread(imap_smtp.append_draft, account.config, account.secret, message)
+        return Output(message_id=message["Message-ID"], mode="draft", folder=folder)
+
+    await asyncio.to_thread(imap_smtp.send, account.config, account.secret, message)
+    return Output(message_id=message["Message-ID"], mode="sent")
 ```
 
 | Поле | Зачем |
@@ -242,8 +254,8 @@ async def send(inp: Input, ctx: ToolContext) -> Output:
 | `description` | Описание для LLM |
 | `Input`, `Output` | Pydantic-модели, из них строятся JSON-схемы для LLM и для валидации |
 | `side_effect` | `none`, `read`, `write` или `external`; `external` в чате требует подтверждения |
-| `capabilities` | Нужные права; `{to}` берётся из аргументов и сверяется с permissions задачи |
-| `secrets` | Какие аргументы ссылаются на аккаунты; executor подставит секрет сам |
+| `capabilities` | Нужные права; `{to}` берётся из аргументов. По ним compiler выводит permissions задачи; проверяет их сама команда через `ToolContext` |
+| `secrets` | Какие аргументы ссылаются на аккаунты; сейчас только описание в манифесте, пароль достаёт `ctx.account()` |
 | `dry_run` | Что делать в пробном запуске: `skip`, `draft` или `real` |
 | `timeout` | Секунды до отмены |
 
@@ -252,6 +264,7 @@ async def send(inp: Input, ctx: ToolContext) -> Output:
 | Группа | Команды | side\_effect | На чём |
 | --- | --- | --- | --- |
 | `fs` | list, copy, move, write | read, write | pathlib, только внутри разрешённых папок |
+| `data` | map\_rows | none | готовит строки таблиц шаблона выражениями над `row` |
 | `docs` | read, fill\_template, make\_template | read, write | python-docx, docxtpl, openpyxl, pdfplumber |
 | `xlsx` | read\_table, write\_table, aggregate | read, write | openpyxl; `aggregate` считает суммы, группы и топ-N кодом — числа в отчётах никогда не считает LLM |
 | `mail` | search, read, mark, create\_draft, send | read, write, external | stdlib imaplib/smtplib |
@@ -259,13 +272,18 @@ async def send(inp: Input, ctx: ToolContext) -> Output:
 | `llm` | extract, classify, write | none | common.llm, structured output |
 | `user` | ask, notify | none | approvals и events в main |
 
-**Настройки домена.** Группа может объявить одну плоскую pydantic-модель `DomainSettings` (`@domain_settings`): тип, ограничения, подпись и описание каждого поля, значение по умолчанию. Схема попадает в манифест команд группы (`settings_schema`, LLM её не видит). Задача, в шагах которой есть команды группы, получает раздел `tasks.settings[группа]` со значениями по умолчанию; при новой версии значения пользователя сохраняются, раздел ненужной группы убирается. Менять значения может только пользователь (`PUT /tasks/{id}/settings`); команда читает свой раздел через `ctx.domain_settings(Модель)`. Пример — `mail.send_directly` (по умолчанию `false`): `mail.send` в запуске задачи кладёт письмо в черновики, отправляет его человек из своего почтового клиента.
+**Настройки группы.** Группа может объявить одну плоскую pydantic-модель `DomainSettings` (`@domain_settings`): тип, ограничения, подпись и описание каждого поля, значение по умолчанию. Схема попадает в манифест команд группы (`settings_schema`, LLM её не видит). Задача, в шагах которой есть команды группы, получает раздел `tasks.settings[группа]` со значениями по умолчанию; при новой версии значения пользователя сохраняются, раздел ненужной группы убирается. Менять значения может только пользователь (`PUT /tasks/{id}/settings`); команда читает свой раздел через `ctx.domain_settings(Модель)`. Пример — `mail.send_directly` (по умолчанию `false`): `mail.send` в запуске задачи кладёт письмо в черновики, отправляет его человек из своего почтового клиента.
 
-**Почта.** Агент видит один набор команд `mail.*`, адаптер выбирается по `accounts.kind`. `imap_smtp` покрывает Gmail, Яндекс, Mail.ru, Outlook.com и корпоративные серверы; адреса серверов лежат в `adapters/presets.py`. `outlook_com` появится позже, в v1 на Windows тоже работаем через IMAP/SMTP. Черновик через IMAP — это `APPEND` в папку «Черновики».
+**Почта.** Один набор команд `mail.*` поверх stdlib imaplib/smtplib (`adapters/imap_smtp.py`), единственный вид аккаунта — `imap_smtp`. Пресеты Gmail, Яндекса, Mail.ru и Outlook.com лежат в `adapters/presets.py`; корпоративный сервер задаётся `config` аккаунта. Режим соединения — `security` (или отдельно `imap_security` / `smtp_security`): `ssl`, `starttls` или `none`; SMTP логинится, только если сервер предлагает AUTH. Детали:
 
-**Мета-инструменты** агента (`task.*`, `skill.create`) не лежат в `internal_tools`: они управляют системой и живут в `agent_loop/meta_tools.py`.
+- черновик — это `APPEND` в папку с флагом `\Drafts` (или «Drafts»; создаётся, если её нет);
+- `mail.search` фильтрует отправителя и тему у себя по раскодированным заголовкам — серверы ищут по-разному; письма с флагом `\Deleted` не показывает;
+- `mail.mark` ставит или снимает «прочитано» и перекладывает письмо (MOVE, а без него COPY + `\Deleted` + `UID EXPUNGE` только этого письма; общий EXPUNGE не делается, чтобы не стереть чужие удалённые письма);
+- имена папок кодируются в modified UTF-7, так что кириллические папки работают.
 
-### Скиллы, которые пишет агент
+**Мета-инструменты** агента не лежат в `internal_tools`: они управляют системой и живут в `agent_loop/meta_tools.py`.
+
+### Скиллы, которые пишет агент (план, не реализовано)
 
 1. Агент вызывает `skill.create` с кодом и манифестом.
 2. executor сохраняет `skills/<name>/` со статусом `draft`.
@@ -293,7 +311,7 @@ tools:
 
 ## Модель задачи
 
-Задача и её версии хранятся отдельно. `tasks` — это имя, статус и ссылка на активную версию; `task_versions` — неизменяемые снимки сценария в JSON. Схема описана в `common/schemas/task.py` (pydantic), её же compiler отдаёт LLM как JSON-схему.
+Задача и её версии хранятся отдельно. `tasks` — это имя, статус, ссылка на активную версию и настройки групп команд (`settings`, их меняет только пользователь); `task_versions` — неизменяемые снимки сценария в JSON. Схема описана в `common/schemas/task.py` (pydantic), её же compiler отдаёт LLM как JSON-схему.
 
 ```json
 {
@@ -302,31 +320,35 @@ tools:
   "trigger": { "type": "cron", "expr": "0 10 * * MON" },
   "permissions": {
     "read_folders": ["Отчёты/Продажи"],
-    "write_folders": ["Отчёты/Готовые"],
     "mail_accounts": ["work_mail"],
-    "mail_send_to": ["boss@company.ru", "vasya@company.ru"]
+    "mail_send_to": ["boss@company.ru"]
   },
   "variables": {
     "week_start": "{{ today | start_of_prev_week }}",
     "week_end": "{{ today | end_of_prev_week }}"
   },
   "steps": [
-    { "id": "files", "tool": "fs.list",
+    { "id": "sales_files", "tool": "fs.list",
       "args": { "folder": "Отчёты/Продажи", "pattern": "*.xlsx",
-                "modified_between": ["{{ week_start }}", "{{ week_end }}"] },
-      "on_empty": "ask_user" },
-    { "id": "data", "tool": "llm.extract",
-      "args": { "inputs": "{{ files.output }}", "schema_ref": "sales_summary" } },
-    { "id": "chart", "tool": "charts.bar",
-      "args": { "data": "{{ data.output.top_clients }}" } },
-    { "id": "doc", "tool": "docs.fill_template",
-      "args": { "template": "templates/weekly.docx", "context": "{{ data.output }}",
-                "images": { "chart": "{{ chart.output.path }}" } } },
-    { "id": "send", "tool": "mail.send",
-      "args": { "account": "work_mail", "to": ["boss@company.ru"], "cc": ["vasya@company.ru"],
-                "subject": "Отчёт за {{ week_start }}–{{ week_end }}",
-                "body": "Отчёт во вложении.", "attachments": ["{{ doc.output.path }}"] },
-      "on_error": "retry", "retries": 2 }
+                "modified_from": "{{ week_start }}", "modified_to": "{{ week_end }}" },
+      "on_empty": "skip" },
+    { "id": "totals", "tool": "xlsx.aggregate",
+      "args": { "inputs": "{{ sales_files.output.files }}", "sum_columns": ["Сумма, руб."],
+                "group_by": "Клиент", "top_n": 5 } },
+    { "id": "top_clients", "tool": "data.map_rows",
+      "args": { "rows": "{{ totals.output.groups }}", "limit": 5,
+                "fields": { "client": "row.key", "amount": "row.sums['Сумма, руб.'] | format_number" } } },
+    { "id": "report", "tool": "docs.fill_template",
+      "args": { "template": "data:templates/weekly_sales.docx",
+                "context": { "weekly_revenue": "{{ totals.output.totals['Сумма, руб.'] | format_number }} руб.",
+                             "order_count": "{{ totals.output.rows }}",
+                             "top_clients": "{{ top_clients.output.rows }}" },
+                "output_name": "Отчёт {{ week_start | format_date('%d.%m.%Y') }}.docx" } },
+    { "id": "send_report", "tool": "mail.send",
+      "args": { "account": "work_mail", "to": ["boss@company.ru"],
+                "subject": "Отчёт по продажам за неделю",
+                "body": "Выручка: {{ totals.output.totals['Сумма, руб.'] | format_number }} руб.",
+                "attachments": ["{{ report.output.path }}"] } }
   ]
 }
 ```
@@ -335,17 +357,20 @@ tools:
 | --- | --- |
 | `schema_version` | Версия формата, сейчас 1 |
 | `trigger` | `cron` (с `expr`) или `manual`: только когда запускать |
-| `permissions` | Всё, что задаче можно: папки, аккаунты, адресаты, домены. compiler выводит их из аргументов шагов |
+| `permissions` | Всё, что задаче можно: папки на чтение и запись, почтовые аккаунты, адресаты (адрес или `*@домен`). compiler выводит их из аргументов шагов; поле `net_domains` есть в схеме, но ни одна команда его не использует |
 | `variables` | Считаются один раз в начале запуска (даты, имена файлов) |
 | `steps[].tool`, `args` | Команда из каталога и её аргументы; `{{ step_id.output }}` ссылается на результат прошлого шага |
 | `steps[].when` | Условие выполнения шага |
 | `steps[].foreach` | Повторить шаг для каждого элемента списка; нужно для сортировки документов |
-| `steps[].on_error`, `on_empty` | `fail`, `retry`, `skip` или `ask_user` |
+| `steps[].on_error` | `fail`, `retry` (с `retries`), `skip` или `ask_user` |
+| `steps[].on_empty` | `continue`, `fail`, `skip` или `ask_user` |
+
+Настроек групп (`mail.send_directly` и т. п.) в сценарии нет: они хранятся в `tasks.settings`, LLM их не видит и не задаёт.
 
 Сортировка документов с `foreach` выглядит так:
 
 ```json
-{ "id": "sort", "foreach": "{{ files.output }}", "as": "file", "steps": [
+{ "id": "sort", "foreach": "{{ files.output.files }}", "as": "file", "steps": [
     { "id": "kind", "tool": "llm.classify",
       "args": { "input": "{{ file.path }}", "labels": ["договор", "счёт", "акт", "другое"] } },
     { "id": "move", "tool": "fs.move",
@@ -365,41 +390,41 @@ tools:
 | Версия | `approved` | Стала `current_version_id`; предыдущая стала `superseded` |
 | Версия | `rejected` | Пользователь отказался |
 
-«Пометка как используемый» из исходной схемы — это approve версии. Runner всегда исполняет `current_version_id` и записывает id версии в `runs`, поэтому история запусков показывает, какой именно сценарий отработал. По желанию активную версию можно дублировать в `data/tasks/<id>.yaml`, чтобы читать глазами и хранить в git.
+«Пометка как используемый» из исходной схемы — это approve версии. Runner всегда исполняет `current_version_id` и записывает id версии в `runs`, поэтому история запусков показывает, какой именно сценарий отработал. Дублировать активную версию в `data/tasks/<id>.yaml` для чтения глазами и git можно, но это не сделано.
 
 ## База данных
 
-Один файл `data/app.db` (SQLite), доступ через `common/storage` на SQLAlchemy 2, миграции через Alembic. Включаем `journal_mode=WAL` и `busy_timeout=5000`, чтобы несколько процессов читали параллельно.
+Один файл `data/app.db` (SQLite), доступ через `common/storage` на SQLAlchemy 2. Таблицы создаёт `create_all`; миграций пока нет, поэтому новую колонку в существующей базе нужно добавить вручную. Включаем `journal_mode=WAL` и `busy_timeout=5000`, чтобы несколько процессов читали параллельно.
 
 **Главное правило: у каждой таблицы ровно один сервис-владелец.** Только он пишет в таблицу, остальные читают напрямую или просят владельца через API. Так нет конфликтов записи и понятно, кто отвечает за данные.
 
 | Таблица | Владелец | Основные поля | Кто читает |
 | --- | --- | --- | --- |
-| `settings` | main | key, value\_json | все |
-| `approvals` | main | id, kind, run\_id, task\_version\_id, payload\_json, status, answer\_json, created\_at, resolved\_at | runner, compiler, agent-loop |
+| `settings` | main | key, value\_json | пока никто |
+| `approvals` | main | id, kind, status, run\_id, task\_id, task\_version\_id, session\_id, payload\_json, answer\_json, created\_at, resolved\_at | runner, compiler, agent-loop |
 | `events` | main | id, type, payload\_json, created\_at, read\_at | — |
 | `chat_sessions` | agent-loop | id, title, status, created\_at | compiler, main |
-| `chat_messages` | agent-loop | id, session\_id, role, content, tool\_call\_id, created\_at | compiler |
+| `chat_messages` | agent-loop | id, session\_id, role, content, tool\_calls\_json, tool\_call\_id, name, created\_at | compiler |
 | `trace_events` | agent-loop | id, session\_id, message\_id, tool, args\_json, result\_json, status, user\_feedback, created\_at | compiler |
 | `tasks` | compiler | id, title, status, settings\_json, current\_version\_id, source\_session\_id, created\_at, updated\_at | все |
 | `task_versions` | compiler | id, task\_id, version\_no, spec\_json, status, parent\_version\_id, patch\_json, summary, created\_by, created\_at, approved\_at | runner, scheduler, main |
 | `triggers` | scheduler | id, task\_id, type, config\_json, next\_fire\_at, enabled | main |
-| `runs` | runner | id, task\_id, task\_version\_id, trigger, status, dry\_run, started\_at, finished\_at, error | main, agent-loop |
-| `step_runs` | runner | id, run\_id, step\_id, iteration, status, input\_json, output\_json, error, started\_at, finished\_at | main |
+| `runs` | runner | id, task\_id, task\_version\_id, trigger, status, dry\_run, state\_json (продолжение после паузы), result\_json, error, started\_at, finished\_at | main, agent-loop, compiler |
+| `step_runs` | runner | id, run\_id, step\_key (`sort[2].move`), step\_id, tool, attempt, status, input\_json, output\_json, error, started\_at, finished\_at | main |
 | `tools` | executor | name, source, version, manifest\_json, enabled | agent-loop, compiler |
-| `skills` | executor | id, name, status, manifest\_json, path, source\_session\_id, approved\_at | main |
+| `skills` | executor | заготовка под скиллы, не используется | — |
 | `accounts` | executor | id, kind, name, config\_json, secret\_ref, created\_at | main (без секретов) |
-| `tool_calls` | executor | id, tool, session\_id, run\_id, step\_run\_id, args\_redacted\_json, status, duration\_ms, error, created\_at | main |
-| `artifacts` | executor | id, run\_id, path, mime, created\_at | main |
+| `tool_calls` | executor | id, tool, mode, session\_id, run\_id, step\_key, args\_json (обрезанные, без секретов), status, duration\_ms, error, created\_at | main |
+| `artifacts` | executor | заготовка, не используется: файлы запуска лежат в `runs.state` и `result` | — |
 
 Значения перечислений:
 
 - `runs.status`: queued, running, waiting, succeeded, empty, failed, cancelled. `empty` — все шаги вернули пустой результат (проверка по расписанию ничего не нашла); `GET /tasks/{id}/runs` их не показывает, `?include_empty=true` показывает.
 - `approvals.kind`: ask\_user, version\_approve, skill\_permissions.
-- `tools.source`: internal, skill, mcp.
-- `accounts.kind`: imap\_smtp, outlook\_com, llm.
+- `tools.source`: internal (skill и mcp — план).
+- `accounts.kind`: imap\_smtp.
 
-`trace_events.user_feedback` — правки пользователя к результату вызова («нет, возьми другую колонку»). Именно они подсказывают compiler'у, какие вызовы попадут в итоговую задачу, а какие были неудачными попытками. Если конкуренция за SQLite станет проблемой, storage можно вынести в отдельный сервис или перейти на Postgres; для хакатона это не нужно.
+`trace_events.user_feedback` задумано для правок пользователя к результату вызова («нет, возьми другую колонку»), но сейчас не заполняется: compiler отличает удачные вызовы от неудачных по статусу и по самому разговору. Если конкуренция за SQLite станет проблемой, storage можно вынести в отдельный сервис или перейти на Postgres; для хакатона это не нужно.
 
 ## Ключевые сценарии
 
@@ -414,16 +439,16 @@ tools:
 
 ### 2. «Формируй задачу раз в неделю»
 
-1. LLM вызывает мета-инструмент `task.compile`.
-2. agent-loop → `POST main/compiler/compile {session_id}`.
-3. compiler читает трейс, собирает Task, валидирует, сохраняет версию `draft` и делает dry run через `main/runner/runs`.
-4. main создаёт approval `version_approve` и возвращает agent-loop карточки шагов и итог dry run.
-5. Агент показывает пользователю: «Вот задача, вот что получилось на пробном запуске». Включить её агент не может: у него нет такого инструмента, а `approval_answer` отвечает только на вопросы `ask_user`.
+1. LLM вызывает мета-инструмент `task_compile` с расписанием и пожеланиями в `hint`.
+2. agent-loop → `POST main/compiler/compile {session_id, title, hint}`.
+3. compiler читает трейс, собирает Task, проверяет, выводит права, сохраняет версию `draft` с настройками групп по умолчанию и делает dry run через `main/runner/runs`.
+4. main создаёт approval `version_approve` и возвращает agent-loop карточки шагов, настройки и итог dry run.
+5. Агент показывает пользователю: «Вот задача, вот что получилось на пробном запуске, письма будут сохраняться в черновики». Включить её агент не может: у него нет такого инструмента, а `approval_answer` отвечает только на вопросы `ask_user`.
 6. Пользователь сам одобряет черновик в списке задач → `POST main/approvals/{id}/answer` (или `POST main/tasks/{id}/versions/{v}/approve`) → main вызывает compiler (статусы), затем scheduler `/reload`.
 
 ### 3. Правка через чат
 
-1. «Добавь Васю в копию» → мета-инструмент `task.patch {task_id, instruction}`.
+1. «Добавь Васю в копию» → мета-инструмент `task_patch {task_id, instruction}`.
 2. compiler строит JSON Patch, сохраняет новую версию `draft` и считает diff по карточкам.
 3. Агент показывает «было → стало», дальше как шаг 6 предыдущего сценария.
 
@@ -431,7 +456,7 @@ tools:
 
 1. scheduler: сработал cron → `POST main/runner/runs {task_id, trigger: "cron"}`.
 2. runner создаёт run и по шагам вызывает `main/executor/execute`.
-3. executor проверяет права, подставляет секреты, выполняет и пишет `tool_calls`.
+3. executor выполняет команду с правами и настройками задачи (права и пароли — через `ToolContext`) и пишет `tool_calls`.
 4. runner пишет `step_runs`, в конце шлёт событие `run.finished` в main, тот отдаёт его клиенту по SSE.
 
 ### 5. Вопрос пользователю и отправка писем
@@ -453,14 +478,15 @@ tools:
 | Риск | Мера |
 | --- | --- |
 | Секрет утёк в лог, промпт или git | Секреты только в keyring (Windows Credential Manager, macOS Keychain, Secret Service). В БД лежит `secret_ref`, в `tool_calls` аргументы с вырезанными секретами |
-| Prompt injection из письма или документа | Права проверяет executor: адресат не из `mail_send_to` или папка не из `read_folders` — отказ |
-| Агент написал опасный код | Скиллы запускаются только в Deno с явными `--allow-*` и только после одобрения прав пользователем |
-| Доступ к файлам вне задачи | Команды `fs.*` работают только в разрешённых папках; пути нормализуются, `..` и симлинки наружу отклоняются |
+| Prompt injection из письма или документа | Права проверяются в executor кодом (`ToolContext`): адресат не из `mail_send_to` или папка не из `read_folders` — отказ |
+| Агент написал опасный код | (план) Скиллы будут запускаться только в Deno с явными `--allow-*` и только после одобрения прав пользователем |
+| Доступ к файлам вне задачи | Все пути команд проходят `executor/paths.py`: только рабочая папка и `data:templates` / `data:outputs`, только разрешённые задаче папки; `..` и симлинки наружу отклоняются |
+| Агент сам включил задачу или отправил черновик | Не может: у агента нет `task_approve`, а `approval_answer` принимает только ответы на вопросы `ask_user` |
 | Чужой процесс дёргает API | Наружу открыт только main. Токен на внешний API опционален (пустой API\_TOKEN — без проверки), внутренние маршруты закрыты INTERNAL\_TOKEN |
 | Шаблон в Task выполняет произвольный код | Jinja2 SandboxedEnvironment и StrictUndefined |
 | Письмо ушло не тому | Адресаты ограничены правами задачи; по умолчанию задача кладёт письма в черновики, отправляет их человек. Разрешить отправку сразу (`mail.send_directly`) может только он сам, компилятор настроек не видит |
 
-Секреты аккаунтов и скиллов читает только executor, в момент вызова команды. Ключ к LLM, если он есть, задаётся через `LLM_API_KEY` и читается `common/clients/llm_client.py`; нашему серверу ключ не нужен. На Windows секреты лежат в Credential Manager, в Docker — в файле `data/secrets.enc`, зашифрованном Fernet с ключом из `KEYRING_PASSWORD` (scrypt).
+Секреты аккаунтов читает только executor, в момент вызова команды. Ключ к LLM, если он есть, задаётся через `LLM_API_KEY` и читается `common/clients/llm_client.py`; нашему серверу ключ не нужен. На Windows секреты лежат в Credential Manager, в Docker — в файле `data/secrets.enc`, зашифрованном Fernet с ключом из `KEYRING_PASSWORD` (scrypt).
 
 ## Конфигурация и развёртывание
 
@@ -475,7 +501,7 @@ tools:
 | `SELF_URL` | `http://127.0.0.1:<порт>` (умолчание) | `http://<имя сервиса>:<порт>` | Адрес, который сервис сообщает main при регистрации |
 | `DATA_DIR` | `data` | `/data` (том) | app.db, шаблоны, готовые файлы, secrets.enc |
 | `WORKSPACE_DIR` | `workspace` или `C:/Users/<имя>/Documents` | `/workspace` | Корень папок пользователя |
-| `LLM_BASE_URL` | `http://llm-host:8000/v1` | то же | Любой OpenAI-совместимый `/v1` с вызовом инструментов |
+| `LLM_BASE_URL` | `http://127.0.0.1:11434/v1` (умолчание) | то же | Любой OpenAI-совместимый `/v1` с вызовом инструментов |
 | `LLM_API_KEY` | пусто | пусто | Пусто — без заголовка Authorization |
 | `LLM_NO_PROXY` | `true` | `true` | Не брать прокси из окружения, как `--noproxy` в b.sh |
 | `LLM_MODEL` | обязательна | обязательна | Одна модель на всё |
@@ -488,7 +514,9 @@ tools:
 | `INTERNAL_TOKEN` | генерирует launcher.py | задаётся в `deploy/.env` | Защита внутренних маршрутов |
 | `KEYRING_BACKEND` | `system` | `file` | Где хранить пароли почты |
 | `KEYRING_PASSWORD` | не нужен | задаётся | Ключ к `secrets.enc` |
-| `AGENT_*`, `COMPILER_*`, `TOOL_TIMEOUT_SEC`, `LLM_TIMEOUT_SEC`… | | | Лимиты и таймауты с разумными умолчаниями |
+| `AGENT_MAX_ITERATIONS`, `AGENT_TOOLS_TOP_K`, `AGENT_HISTORY_MESSAGES` | 16, 24, 40 | то же | Шаги агента за ход, сколько инструментов видит модель, длина истории |
+| `COMPILER_MAX_ATTEMPTS`, `COMPILER_DRY_RUN_TIMEOUT_SEC` | 3, 300 | то же | Попытки собрать задачу, таймаут пробного запуска |
+| `TOOL_TIMEOUT_SEC`, `LLM_TIMEOUT_SEC` | 300, 300 | то же | Таймауты команды и запроса к LLM |
 
 Порты заданы умолчаниями (8000–8005) и переопределяются `PORT`. Каждый сервис сам сообщает main свой `SELF_URL`, поэтому список адресов поддерживать не нужно.
 
@@ -510,8 +538,8 @@ tools:
 
 Код не привязан к конкретным моделям. Нужен OpenAI-совместимый `/v1/chat/completions` с вызовом инструментов; всё остальное — с фолбэками:
 
-- **Structured output.** `LLMClient.structured` перебирает `json_schema` → `json_object` → обычный текст со схемой в промпте и запоминает, какой режим сработал для модели. Переход между режимами не тратит попыток; попытки (3) тратят только ответы, не прошедшие валидацию, — ошибки возвращаются модели.
-- **Эмбеддинги** необязательны: без них агент видит все инструменты.
+- **Structured output.** `LLMClient.structured` перебирает `json_schema` → `json_object` → обычный текст со схемой в промпте и запоминает, какой режим сработал для модели. Для рекурсивных схем (Task с вложенными шагами) `json_schema` пропускается. Подсказка со схемой дописывается в единственное системное сообщение. Переход между режимами не тратит попыток; попытки (3) тратят только ответы, не прошедшие валидацию, — ошибки возвращаются модели.
+- **Эмбеддинги** необязательны: без них агент видит все инструменты. Если сервер эмбеддингов не отвечает, отбор отключается на 5 минут.
 - **`reasoning_effort`** отправляется, только если задан.
 - **Сбои сервера** (500 на кривом вызове инструмента) — ход модели повторяется до 3 раз; пустой ответ без вызовов получает один «пинок» продолжить.
 - **Даты.** Модели плохо считают календарь, поэтому прошлая/текущая неделя и прошлый месяц подставляются в системный промпт готовыми.
@@ -525,6 +553,7 @@ tools:
 | `llama3.3:70b` | Путается в путях, останавливается на полпути | не используем |
 | `deepseek-r1:70b` | Сервер не поддерживает для неё вызов инструментов | не используем |
 | `bge-m3` | Эмбеддинги | `LLM_MODEL_EMBED` |
+| `qwen3.8-27b-fp8` (vLLM) | Проходит сквозные сценарии отчёта и почты одной моделью, задачу собирает с первой попытки | `LLM_MODEL`: всё |
 
 ## Стек
 
@@ -544,14 +573,16 @@ tools:
 
 ## Состояние и план
 
-- [x] `common`, main, executor и 22 встроенные команды (включая `data.map_rows`)
+- [x] `common`, main, executor и 23 встроенные команды (включая `data.map_rows` и `mail.mark`)
 - [x] agent-loop: цикл, трейс, мета-инструменты, события прогресса
 - [x] compiler: compile с пробным запуском и починкой, validate, patch, diff
-- [x] runner (пауза/продолжение) и scheduler (cron, папка, почта)
+- [x] runner (пауза только на вопросах, статус `empty`) и scheduler (только cron)
+- [x] Настройки групп команд у задачи (`mail.send_directly`), одно одобрение — задачи
 - [x] launcher, Docker, тесты
 - [x] Сквозной сценарий «пример отчёта → такой же отчёт за прошлую неделю» на сервере команды
 - [x] Сквозной сценарий целиком на `qwen3.8-27b-fp8` (vLLM): отчёт по примеру → «формируй задачу» (с первой попытки, пробный запуск верный) → одобрение в чате → запуск по кнопке за ~0,1 с без LLM → правка «топ-5, по пятницам» с diff → новая версия в расписании
-- [ ] Почта в сценарии (нужен тестовый ящик)
+- [x] Почта в сценарии: автоответчик на заявки (cron → `mail.search` → `mail.send` в черновики → `mail.mark`) на локальном GreenMail
+- [ ] Права задачи и аккаунты как часть групп команд (см. «Известные проблемы»)
 - [ ] Фронтенд
 - [ ] Скиллы от агента (Deno + MCP)
 - [ ] Alembic-миграции
@@ -565,3 +596,18 @@ tools:
 - **Токен на внешний API опционален**, internal-токен защищает внутренние маршруты.
 - **Docker опционален**, код один и тот же.
 - **Числа в отчётах считает код** (`xlsx.aggregate`), LLM только размечает и извлекает текст.
+- **Scheduler знает только время.** «Новые письма» и «новые файлы» — это шаги задачи по cron, а не особые триггеры.
+- **Одно одобрение — задачи целиком.** Запуски не ждут подтверждений действий; поведение действия задают настройки группы команд, их меняет только пользователь.
+- **Настройки группы объявляет сама группа** (`DomainSettings`), задача только хранит значения; compiler узнаёт схемы из каталога, LLM их не видит.
+
+## Известные проблемы
+
+Нарушения правила «каждая сущность знает только своё», найденные при ревью; пока не исправлены.
+
+1. **Права задачи — фиксированный набор полей конкретных групп.** `Permissions` в общей схеме Task содержит `mail_accounts`, `mail_send_to`, `net_domains`; `compiler/permissions.py` жёстко сопоставляет capability → поле (`_FIELDS`), `compiler/cards.py` знает подписи, `common/schemas/task.py` — формат адресов, `ToolContext` — проверку адресатов. Новая группа с правами потребует правки общих частей.
+2. **Capabilities не проверяются централизованно.** executor не сверяет аргументы с permissions по capabilities из `@tool`; проверку делает сама команда, вызывая `read_path`, `account()`, `check_recipients()`. Команда, которая объявит право, но забудет вызов, обойдёт проверку.
+3. **`net_domains` не используется.** Ни одна команда не объявляет такое право, а compiler копирует список из ответа LLM в права без проверки.
+4. **Почтовые аккаунты зашиты в executor.** `executor/api/accounts.py` импортирует почтовый адаптер и пресеты, проверяет IMAP/SMTP-поля и логин; `ToolContext` содержит `MailAccount` и `account()`.
+5. **Знания групп в общих промптах.** Правила компилятора и системный промпт агента называют конкретные команды (`docs.make_template`, `xlsx.aggregate`, `data.map_rows`, `mail.send`, `sender_email`…); `CORE_TOOLS` агента — список имён.
+6. **`secrets` в `@tool` ничего не делает** — executor это поле не читает.
+7. **Группа `llm` импортирует `internal_tools.docs.readers`** — зависимость одной группы от внутренностей другой.
