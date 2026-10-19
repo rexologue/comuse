@@ -23,6 +23,14 @@ PRESETS: dict[str, dict[str, object]] = {
         "smtp_host": "smtp.mail.ru",
         "smtp_port": 465,
     },
+    # Local GreenMail for tests (see README): no TLS, any password.
+    "greenmail": {
+        "imap_host": "127.0.0.1",
+        "imap_port": 3143,
+        "smtp_host": "127.0.0.1",
+        "smtp_port": 3025,
+        "security": "none",
+    },
     "outlook": {
         "imap_host": "outlook.office365.com",
         "imap_port": 993,

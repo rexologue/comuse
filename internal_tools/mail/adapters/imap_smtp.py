@@ -19,7 +19,32 @@ from common.tools import ToolError
 
 
 _TIMEOUT_SEC = 30
+
+_SECURITY = ("ssl", "starttls", "none")
+
+_DEFAULT_PORTS = {
+    "imap": {"ssl": 993, "starttls": 143, "none": 143},
+    "smtp": {"ssl": 465, "starttls": 587, "none": 25},
+}
 _LIST_RE = re.compile(r'\((?P<flags>[^)]*)\) "(?P<sep>[^"]*)" (?P<name>.+)')
+
+
+def connection_security(config: dict[str, Any], protocol: str) -> str:
+    """`imap_security` / `smtp_security`, else the shared `security`, else what the
+    port implies (IMAP: SSL; SMTP: SSL on 465, STARTTLS otherwise) — the behaviour
+    before these settings existed, so old accounts keep working."""
+    value = config.get(f"{protocol}_security") or config.get("security")
+
+    if value is None:
+        if protocol == "smtp" and int(config.get("smtp_port") or 465) != 465:
+            value = "starttls"
+        else:
+            value = "ssl"
+
+    if value not in _SECURITY:
+        raise ToolError(f"`{protocol}_security` должен быть одним из {list(_SECURITY)}, получено {value!r}")
+
+    return value
 
 
 def check(config: dict[str, Any], secret: str) -> None:
@@ -186,18 +211,23 @@ class _imap:
         self.secret = secret
 
 
-    def __enter__(self) -> imaplib.IMAP4_SSL:
+    def __enter__(self) -> imaplib.IMAP4:
+        host = self.config["imap_host"]
+        security = connection_security(self.config, "imap")
+        port = int(self.config.get("imap_port") or _DEFAULT_PORTS["imap"][security])
+
         try:
-            self.conn = imaplib.IMAP4_SSL(
-                self.config["imap_host"],
-                int(self.config.get("imap_port", 993)),
-                ssl_context=ssl.create_default_context(),
-                timeout=_TIMEOUT_SEC,
-            )
+            if security == "ssl":
+                self.conn = imaplib.IMAP4_SSL(host, port, ssl_context=ssl.create_default_context(), timeout=_TIMEOUT_SEC)
+            else:
+                self.conn = imaplib.IMAP4(host, port, timeout=_TIMEOUT_SEC)
+                if security == "starttls":
+                    self.conn.starttls(ssl_context=ssl.create_default_context())
+
             self.conn.login(self.config.get("username") or self.config["email"], self.secret)
 
         except (imaplib.IMAP4.error, OSError) as e:
-            raise ToolError(f"Не удалось войти в IMAP {self.config['imap_host']}: {e}") from e
+            raise ToolError(f"Не удалось войти в IMAP {host}:{port} ({security}): {e}") from e
 
         return self.conn
 
@@ -217,20 +247,26 @@ class _smtp:
 
 
     def __enter__(self) -> smtplib.SMTP:
-        host, port = self.config["smtp_host"], int(self.config.get("smtp_port", 465))
+        host = self.config["smtp_host"]
+        security = connection_security(self.config, "smtp")
+        port = int(self.config.get("smtp_port") or _DEFAULT_PORTS["smtp"][security])
         context = ssl.create_default_context()
 
         try:
-            if port == 465:
+            if security == "ssl":
                 self.conn = smtplib.SMTP_SSL(host, port, context=context, timeout=_TIMEOUT_SEC)
             else:
                 self.conn = smtplib.SMTP(host, port, timeout=_TIMEOUT_SEC)
-                self.conn.starttls(context=context)
+                if security == "starttls":
+                    self.conn.starttls(context=context)
 
-            self.conn.login(self.config.get("username") or self.config["email"], self.secret)
+            # A server that does not offer AUTH (local test servers) takes mail as is.
+            self.conn.ehlo_or_helo_if_needed()
+            if self.conn.has_extn("auth"):
+                self.conn.login(self.config.get("username") or self.config["email"], self.secret)
 
         except (smtplib.SMTPException, OSError) as e:
-            raise ToolError(f"Не удалось войти в SMTP {host}: {e}") from e
+            raise ToolError(f"Не удалось войти в SMTP {host}:{port} ({security}): {e}") from e
 
         return self.conn
 
@@ -243,19 +279,37 @@ class _smtp:
             pass
 
 
-def _select(imap: imaplib.IMAP4_SSL, folder: str, *, readonly: bool) -> None:
+def _select(imap: imaplib.IMAP4, folder: str, *, readonly: bool) -> None:
     status, data = imap.select(_quote(folder), readonly=readonly)
     if status != "OK":
         raise ToolError(f"Папка почты «{folder}» не найдена: {data}")
 
 
-def _drafts_folder(imap: imaplib.IMAP4_SSL) -> str:
+def _drafts_folder(imap: imaplib.IMAP4) -> str:
+    """The folder flagged \\Drafts, else one named Drafts — created if missing
+    (minimal servers, e.g. test ones, start with INBOX only)."""
+    names: list[str] = []
+
     status, rows = imap.list()
     if status == "OK":
-        for row in rows:
+        for row in rows or []:
+            if row is None:
+                continue
+
             match = _LIST_RE.match(row.decode(errors="replace"))
-            if match and "\\Drafts" in match.group("flags"):
-                return match.group("name").strip('"')
+            if not match:
+                continue
+
+            name = match.group("name").strip('"')
+            if "\\Drafts" in match.group("flags"):
+                return name
+
+            names.append(name)
+
+    if "Drafts" not in names:
+        status, data = imap.create(_quote("Drafts"))
+        if status != "OK":
+            raise ToolError(f"Нет папки черновиков и не удалось её создать: {data}")
 
     return "Drafts"
 
