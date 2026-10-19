@@ -16,7 +16,7 @@ from main.registry import ServiceRegistry
 
 log = logging.getLogger("orchestrator")
 
-_RUN_KINDS = ("ask_user", "confirm_action")
+_RUN_KINDS = ("ask_user",)
 
 
 class Orchestrator:

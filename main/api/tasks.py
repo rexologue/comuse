@@ -64,9 +64,9 @@ async def reject(task_id: str, version_id: str, request: Request):
     return await request.app.state.orchestrator.reject_version(task_id, version_id)
 
 
-@router.put("/tasks/{task_id}/send_mode", summary="draft: leave drafts for approval | send: send by itself")
-async def set_send_mode(task_id: str, request: Request):
-    return await reverse_proxy(request, "compiler", f"tasks/{task_id}/send_mode")
+@router.api_route("/tasks/{task_id}/settings", methods=["GET", "PUT"], summary="Task settings: GET with descriptions, PUT {domain: {field: value}}")
+async def task_settings(task_id: str, request: Request):
+    return await reverse_proxy(request, "compiler", f"tasks/{task_id}/settings")
 
 
 @router.post("/tasks/{task_id}/{action}", summary="pause | resume | archive")

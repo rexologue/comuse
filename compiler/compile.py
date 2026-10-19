@@ -21,7 +21,7 @@ from common.storage.db import session
 from common import templating
 from common.storage.models import ChatMessage, TraceEvent
 from common.utils import truncate
-from compiler import prompts, store
+from compiler import prompts, store, task_settings
 from compiler.cards import build_cards, describe_trigger, diff_specs, summarize
 from compiler.permissions import derive_permissions
 from compiler.validate import SpecError, validate_spec
@@ -73,7 +73,8 @@ class Compiler:
             cards = build_cards(spec, catalog)
 
             if version is None:
-                version = store.create_task(spec, session_id=session_id, cards=cards, summary=summarize(spec))
+                settings = task_settings.sync({}, spec, catalog)
+                version = store.create_task(spec, session_id=session_id, cards=cards, summary=summarize(spec), settings=settings)
             else:
                 store.replace_draft(version.id, spec, cards=cards, summary=summarize(spec))
 
@@ -99,6 +100,7 @@ class Compiler:
             "summary": summarize(spec),
             "trigger": describe_trigger(spec.trigger),
             "permissions": spec.permissions.model_dump(),
+            "settings": task_settings.describe(task_settings.sync({}, spec, catalog), catalog),
             "cards": cards,
             "dry_run": dry_run,
         }

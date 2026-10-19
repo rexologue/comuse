@@ -6,8 +6,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from common.errors import ApiError
-from common.schemas.task import SendMode
-from compiler import store
+from compiler import store, task_settings
 from compiler.validate import SpecError, validate_spec
 
 
@@ -18,10 +17,6 @@ class CompileBody(BaseModel):
     session_id: str
     title: str | None = None
     hint: str | None = None
-
-
-class SendModeBody(BaseModel):
-    mode: SendMode
 
 
 class PatchBody(BaseModel):
@@ -59,8 +54,8 @@ async def diff(task_id: str, version_id: str, request: Request):
 
 
 @router.post("/tasks/{task_id}/versions/{version_id}/approve", summary="Activate a draft version")
-async def approve(task_id: str, version_id: str):
-    task = store.approve(task_id, version_id)
+async def approve(task_id: str, version_id: str, request: Request):
+    task = store.approve(task_id, version_id, await request.app.state.compiler.catalog())
 
     return {"task_id": task.id, "status": task.status, "current_version_id": task.current_version_id}
 
@@ -72,11 +67,20 @@ async def reject(task_id: str, version_id: str):
     return {"task_id": task_id, "version_id": version.id, "status": version.status}
 
 
-@router.put("/tasks/{task_id}/send_mode", summary="draft: leave drafts for approval | send: send by itself")
-async def set_send_mode(task_id: str, body: SendModeBody):
-    task = store.set_send_mode(task_id, body.mode)
+@router.get("/tasks/{task_id}/settings", summary="The task's domain settings with titles and descriptions")
+async def get_settings(task_id: str, request: Request):
+    task = store.get_task(task_id)
 
-    return {"task_id": task.id, "send_mode": task.send_mode}
+    return {"task_id": task.id, "settings": task_settings.describe(task.settings or {}, await request.app.state.compiler.catalog())}
+
+
+@router.put("/tasks/{task_id}/settings", summary="Change values (not keys): {domain: {field: value}}")
+async def put_settings(task_id: str, changes: dict[str, Any], request: Request):
+    catalog = await request.app.state.compiler.catalog()
+    task = store.get_task(task_id)
+    task = store.set_settings(task_id, task_settings.update(task.settings or {}, changes, catalog))
+
+    return {"task_id": task.id, "settings": task_settings.describe(task.settings, catalog)}
 
 
 @router.post("/tasks/{task_id}/{action}", summary="pause | resume | archive")

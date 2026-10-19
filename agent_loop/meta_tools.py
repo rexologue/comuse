@@ -89,10 +89,17 @@ async def _compile(main: MainClient, session_id: str, args: dict[str, Any]) -> A
         "summary": result.get("summary"),
         "steps": result.get("cards"),
         "trigger": result.get("trigger"),
+        "settings": {
+            f"{domain}.{key}": {"title": item["title"], "value": item["value"], "description": item["description"]}
+            for domain, items in (result.get("settings") or {}).items()
+            for key, item in items.items()
+        },
         "dry_run": result.get("dry_run"),
         "next": (
-            "Покажи пользователю шаги и результат пробного запуска простыми словами. Задача сохранена "
-            "черновиком; включает её только сам пользователь — в списке задач. Сам ты её не включаешь."
+            "Покажи пользователю шаги и результат пробного запуска простыми словами. Если есть настройки "
+            "(settings), скажи, как задача будет себя вести с ними сейчас, и что поменять их можно в "
+            "настройках задачи. Задача сохранена черновиком; включает её только сам пользователь — "
+            "в списке задач. Сам ты её не включаешь."
         ),
     }
 

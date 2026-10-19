@@ -9,9 +9,17 @@ from common.schemas.task import TaskSpec
 from common.storage.db import session
 from common.storage.models import Task, TaskVersion
 from common.utils import new_id, utcnow
+from compiler import task_settings
 
 
-def create_task(spec: TaskSpec, *, session_id: str | None, cards: list[dict[str, Any]], summary: str) -> TaskVersion:
+def create_task(
+    spec: TaskSpec,
+    *,
+    session_id: str | None,
+    cards: list[dict[str, Any]],
+    summary: str,
+    settings: dict[str, Any],
+) -> TaskVersion:
     with session() as db:
         task = Task(
             id=new_id("task_"),
@@ -19,6 +27,7 @@ def create_task(spec: TaskSpec, *, session_id: str | None, cards: list[dict[str,
             description=spec.description,
             status="draft",
             source_session_id=session_id,
+            settings=settings,
         )
         version = TaskVersion(
             id=new_id("ver_"),
@@ -137,7 +146,7 @@ def base_version(task_id: str) -> TaskVersion:
     return version
 
 
-def approve(task_id: str, version_id: str) -> Task:
+def approve(task_id: str, version_id: str, catalog: dict[str, dict[str, Any]]) -> Task:
     with session() as db:
         task = db.get(Task, task_id)
         version = db.get(TaskVersion, version_id)
@@ -157,6 +166,8 @@ def approve(task_id: str, version_id: str) -> Task:
         version.approved_at = utcnow()
 
         task.current_version_id = version.id
+        # The new version may use other tools: settings follow, the user's values stay.
+        task.settings = task_settings.sync(task.settings or {}, TaskSpec.model_validate(version.spec), catalog)
         task.title = version.spec.get("title", task.title)
         task.description = version.spec.get("description", task.description)
         if task.status in ("draft", "archived"):
@@ -190,13 +201,23 @@ _TRANSITIONS = {
 }
 
 
-def set_send_mode(task_id: str, mode: str) -> Task:
+def get_task(task_id: str) -> Task:
+    with session() as db:
+        task = db.get(Task, task_id)
+
+    if task is None:
+        raise ApiError(status_code=404, message=f"Task `{task_id}` not found")
+
+    return task
+
+
+def set_settings(task_id: str, settings: dict[str, Any]) -> Task:
     with session() as db:
         task = db.get(Task, task_id)
         if task is None:
             raise ApiError(status_code=404, message=f"Task `{task_id}` not found")
 
-        task.send_mode = mode
+        task.settings = settings
         db.commit()
 
     return task

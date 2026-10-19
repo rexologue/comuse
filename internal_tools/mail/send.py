@@ -7,6 +7,7 @@ from pydantic import Field
 from common.tools import ToolContext, ToolInput, ToolOutput, tool
 from common.tools.fields import EmailAddress
 from internal_tools.mail.adapters import imap_smtp
+from internal_tools.mail.settings import MailSettings
 
 
 class Input(ToolInput):
@@ -29,7 +30,10 @@ class Output(ToolOutput):
     name="mail.send",
     title="Отправить письмо",
     card="Отправить письмо {to} с темой «{subject}»",
-    description="Send an email with attachments from a configured account.",
+    description=(
+        "Send an email with attachments from a configured account. In a task it saves a draft "
+        "for the user to send instead, unless the task's mail settings say to send directly."
+    ),
     side_effect="external",
     capabilities=("mail.account:{account}", "mail.send:{to}", "mail.send:{cc}", "fs.read:{attachments}"),
     secrets=("account",),
@@ -50,9 +54,9 @@ async def send(inp: Input, ctx: ToolContext) -> Output:
         attachments=attachments,
     )
 
-    # Draft mode (dry run, first runs of a task): the user finds it in their own
-    # mail client's Drafts and can review it there.
-    if ctx.draft:
+    # A dry run, or a task the user has not let send by itself: the letter waits in the
+    # account's Drafts, where the user reviews and sends it from their own mail client.
+    if ctx.draft or (ctx.mode == "run" and not ctx.domain_settings(MailSettings).send_directly):
         folder = await asyncio.to_thread(imap_smtp.append_draft, account.config, account.secret, message)
         return Output(message_id=message["Message-ID"], mode="draft", folder=folder)
 

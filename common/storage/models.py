@@ -27,7 +27,7 @@ class Approval(Base):
     __tablename__ = "approvals"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    # ask_user | confirm_action | version_approve | skill_permissions
+    # ask_user | version_approve | skill_permissions
     kind: Mapped[str] = mapped_column(String, index=True)
     # pending | approved | rejected | answered | cancelled
     status: Mapped[str] = mapped_column(String, default="pending", index=True)
@@ -107,8 +107,8 @@ class Task(Base):
     # draft | active | paused | archived
     status: Mapped[str] = mapped_column(String, default="draft", index=True)
     current_version_id: Mapped[str | None] = mapped_column(String)
-    # draft | send: see common.schemas.task.SendMode
-    send_mode: Mapped[str] = mapped_column(String, default="draft")
+    # Domain settings sections ({"mail": {"send_directly": false}}); see compiler/task_settings.py
+    settings: Mapped[Any] = mapped_column(JSON, default=dict)
     source_session_id: Mapped[str | None] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

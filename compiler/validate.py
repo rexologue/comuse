@@ -99,8 +99,8 @@ def _check_steps(
 
 
 def _check_no_send_confirmation(spec: TaskSpec, catalog: dict[str, dict[str, Any]], errors: list[str]) -> None:
-    """A user.ask gating an external action duplicates the draft-and-approve the system
-    already does for every task run; the user would be asked twice."""
+    """A user.ask gating an external action second-guesses the user, who approved the
+    task and chose in its settings whether the tool drafts or acts."""
     asks = {step.id for step in spec.all_steps() if step.tool == "user.ask"}
 
     for step in spec.all_steps():
@@ -110,8 +110,8 @@ def _check_no_send_confirmation(spec: TaskSpec, catalog: dict[str, dict[str, Any
         gating = templating.expression_names(step.when) & asks
         if gating:
             errors.append(
-                f"шаг `{step.id}` ждёт ответа {sorted(gating)}: подтверждение отправки делает система "
-                "(черновик и одобрение пользователя) — убери этот user.ask и условие when"
+                f"шаг `{step.id}` ждёт ответа {sorted(gating)}: отправлять ли сразу или в черновик, решают "
+                "настройки задачи, а не вопрос в запуске — убери этот user.ask и условие when"
             )
 
 

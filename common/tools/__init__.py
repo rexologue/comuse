@@ -12,9 +12,11 @@ from typing import Any, Awaitable, Callable, Literal
 from pydantic import BaseModel, ConfigDict
 
 from common.tools.context import NeedsInput, PermissionDenied, ToolContext, ToolError
+from common.tools.domain import DomainSettings, domain_settings, settings_schema
 
 
 __all__ = [
+    "DomainSettings",
     "NeedsInput",
     "PermissionDenied",
     "ToolContext",
@@ -23,6 +25,7 @@ __all__ = [
     "ToolOutput",
     "ToolSpec",
     "discover",
+    "domain_settings",
     "function_name",
     "tool",
     "tool_name",
@@ -74,6 +77,8 @@ class ToolSpec:
             "input_schema": self.input_model.model_json_schema(),
             # Outputs are dumped by field name (not alias), so describe them the same way.
             "output_schema": self.output_model.model_json_schema(by_alias=False),
+            # Settings of the tool's domain a task using it gets (None: the domain has none).
+            "settings_schema": settings_schema(self.name),
             "source": "internal",
         }
 

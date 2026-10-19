@@ -13,9 +13,9 @@ from runner.engine import RunEngine
 from tests.conftest import FakeMain
 
 
-def _make_run(spec: dict[str, Any], *, dry_run: bool = False, send_mode: str = "draft") -> str:
+def _make_run(spec: dict[str, Any], *, dry_run: bool = False, task_settings: dict[str, Any] | None = None) -> str:
     with session() as db:
-        db.add(Task(id="task_1", title=spec["title"], status="active", current_version_id="ver_1", send_mode=send_mode))
+        db.add(Task(id="task_1", title=spec["title"], status="active", current_version_id="ver_1", settings=task_settings or {}))
         db.add(TaskVersion(id="ver_1", task_id="task_1", version_no=1, spec=spec, status="approved"))
         db.add(Run(id="run_1", task_id="task_1", task_version_id="ver_1", status="queued", dry_run=dry_run, state={}))
         db.commit()
@@ -62,49 +62,51 @@ async def test_foreach_passes_outputs_between_steps(settings):
     assert [e[0] for e in main.events] == ["run.started", "run.finished"]
 
 
-async def test_pause_for_approval_and_resume(settings):
+async def test_pause_for_a_question_and_resume(settings):
     spec = {
-        "title": "Письмо",
+        "title": "Отчёт",
         "steps": [
-            {"id": "note", "tool": "llm.write", "args": {"instruction": "x"}},
-            {"id": "send", "tool": "mail.send", "args": {"body": "{{ note.output.text }}"}},
+            {"id": "month", "tool": "user.ask", "args": {"question": "За какой месяц?"}},
+            {"id": "note", "tool": "llm.write", "args": {"instruction": "Отчёт за {{ month.output.answer }}"}},
         ],
     }
 
-    def send(args, ctx):
-        if ctx["confirmed"]:
-            return {"output": {"mode": "sent", "body": args["body"]}}
-
-        return {"status": "needs_approval", "output": {"mode": "draft"}, "message": "нужно подтверждение"}
-
-    main = FakeMain({"llm.write": lambda args, ctx: {"output": {"text": "Привет"}}, "mail.send": send})
+    main = FakeMain({
+        "user.ask": lambda args, ctx: {"status": "needs_input", "message": args["question"]},
+        "llm.write": lambda args, ctx: {"output": {"text": args["instruction"]}},
+    })
     engine = RunEngine(main)
 
     paused = await engine.execute(_make_run(spec))
     assert paused["status"] == "waiting"
-    assert main.approvals[0]["kind"] == "confirm_action"
+    assert main.approvals[0]["kind"] == "ask_user"
 
-    engine.resume("run_1", main.approvals[0]["id"], approve=True, answer=None)
+    engine.resume("run_1", main.approvals[0]["id"], approve=True, answer="сентябрь")
     finished = await engine.execute("run_1")
 
     assert finished["status"] == "succeeded"
-    assert finished["result"]["outputs"] == {"mode": "sent", "body": "Привет"}
-
-    # The completed first step is not executed again after the resume.
-    assert [c["tool"] for c in main.calls].count("llm.write") == 1
+    assert finished["result"]["outputs"] == {"text": "Отчёт за сентябрь"}
 
 
-async def test_declined_action_skips_the_step(settings):
-    spec = {"title": "Письмо", "steps": [{"id": "send", "tool": "mail.send", "args": {}}]}
-    main = FakeMain({"mail.send": lambda args, ctx: {"status": "needs_approval"}})
+async def test_unanswered_question_cancels_the_run(settings):
+    spec = {"title": "Отчёт", "steps": [{"id": "month", "tool": "user.ask", "args": {"question": "?"}}]}
+    main = FakeMain({"user.ask": lambda args, ctx: {"status": "needs_input", "message": "?"}})
     engine = RunEngine(main)
 
     await engine.execute(_make_run(spec))
     engine.resume("run_1", main.approvals[0]["id"], approve=False, answer=None)
-    finished = await engine.execute("run_1")
 
-    assert finished["status"] == "succeeded"
-    assert [s["status"] for s in finished["steps"]][-1] == "skipped"
+    assert (await engine.execute("run_1"))["status"] == "cancelled"
+
+
+async def test_external_actions_never_pause_a_run(settings):
+    spec = {"title": "Письмо", "steps": [{"id": "send", "tool": "mail.send", "args": {}}]}
+    main = FakeMain({"mail.send": lambda args, ctx: {"output": {"mode": "draft"}}})
+
+    run = await RunEngine(main).execute(_make_run(spec))
+
+    assert run["status"] == "succeeded"
+    assert main.approvals == []
 
 
 async def test_empty_result_with_skip_stops_quietly(settings):
@@ -132,11 +134,11 @@ async def test_error_with_retries_then_fail(settings, monkeypatch):
         assert db.query(StepRun).filter(StepRun.status == "error").count() == 3
 
 
-async def test_steps_carry_the_task_send_mode(settings):
+async def test_steps_carry_the_task_settings(settings):
     main = FakeMain(_tools())
-    await RunEngine(main).execute(_make_run(SPEC, send_mode="send"))
+    await RunEngine(main).execute(_make_run(SPEC, task_settings={"mail": {"send_directly": True}}))
 
-    assert {c["context"]["send_mode"] for c in main.calls} == {"send"}
+    assert all(c["context"]["task_settings"] == {"mail": {"send_directly": True}} for c in main.calls)
 
 
 CHECK = {

@@ -71,8 +71,7 @@ class ExecutorRuntime:
         if decision.skip:
             return ExecuteResponse(status="ok", mode="skipped", message=decision.message)
 
-        if decision.ask_first and not decision.draft:
-            # Nothing can be prepared in advance: ask before doing anything.
+        if decision.ask_first:
             return ExecuteResponse(
                 status="needs_approval",
                 message=decision.message,
@@ -109,42 +108,23 @@ class ExecutorRuntime:
 
         mode = "draft" if decision.draft else "real"
 
-        if decision.ask_first:
-            return ExecuteResponse(
-                status="needs_approval",
-                output=output,
-                mode=mode,
-                message=decision.message,
-                preview={"tool": spec.name, "title": spec.title, "args": req.args, "draft": output},
-                artifacts=ctx.artifacts,
-            )
-
         return ExecuteResponse(status="ok", output=output, mode=mode, artifacts=ctx.artifacts)
 
 
     def _decide(self, spec: ToolSpec, ctx: ExecContext) -> _Decision:
-        """How a side effect is allowed to happen for this call."""
+        """How a side effect is allowed to happen for this call. A task run never waits
+        here: the user approved the task itself, and how its external actions behave
+        (draft or real) is up to each tool and its domain settings."""
         if ctx.dry_run:
             if spec.side_effect in ("write", "external") and spec.dry_run == "skip":
                 return _Decision(skip=True, message="Пропущено в пробном запуске")
 
             return _Decision(draft=spec.dry_run == "draft")
 
-        if spec.side_effect != "external" or ctx.confirmed:
-            return _Decision()
-
-        if ctx.mode == "chat":
+        if ctx.mode == "chat" and spec.side_effect == "external" and not ctx.confirmed:
             return _Decision(ask_first=True, message=f"«{spec.title}» требует подтверждения пользователя")
 
-        if ctx.send_mode == "send":
-            return _Decision()
-
-        # Prepare a draft (when the tool can) so the user approves the real thing.
-        return _Decision(
-            ask_first=True,
-            draft=spec.dry_run == "draft",
-            message=f"«{spec.title}»: подготовлен черновик, нужно подтверждение",
-        )
+        return _Decision()
 
 
     def _tool_context(self, ctx: ExecContext, *, draft: bool) -> ToolContext:
@@ -167,6 +147,7 @@ class ExecutorRuntime:
             step_key=ctx.step_key,
             dry_run=ctx.dry_run,
             draft=draft,
+            task_settings=ctx.task_settings,
         )
 
 

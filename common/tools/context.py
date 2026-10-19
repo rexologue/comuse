@@ -4,12 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Protocol, TypeVar
 
 if TYPE_CHECKING:
     from common.clients.llm_client import LLMClient
     from common.schemas.task import Permissions
     from common.settings import Settings
+    from common.tools.domain import DomainSettings
+
+
+SettingsT = TypeVar("SettingsT", bound="DomainSettings")
 
 
 class ToolError(Exception):
@@ -56,9 +60,16 @@ class ToolContext:
     run_id: str | None = None
     step_key: str | None = None
     dry_run: bool = False
-    # External actions create drafts instead of real effects (dry run, first runs).
+    # Dry run: external actions create drafts instead of real effects.
     draft: bool = False
+    # The task's domain settings sections ({"mail": {...}}); empty in chat.
+    task_settings: dict[str, dict[str, Any]] = field(default_factory=dict)
     artifacts: list[str] = field(default_factory=list)
+
+    def domain_settings(self, model: type[SettingsT]) -> SettingsT:
+        """The task's values for this domain; defaults in chat and for anything unset."""
+        return model.model_validate(self.task_settings.get(model.domain, {}))
+
 
     def read_path(self, ref: str) -> Path:
         return self.paths.read_path(ref)

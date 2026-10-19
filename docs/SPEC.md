@@ -136,7 +136,7 @@ project/
 | `GET /tasks/{id}/versions/{v}/diff` | compiler | Разница с предыдущей версией |
 | `POST /tasks/{id}/versions/{v}/approve` | compiler, затем scheduler | Сделать версию активной |
 | `POST /tasks/{id}/pause`, `/resume`, `/archive` | compiler, затем scheduler | Управление задачей |
-| `PUT /tasks/{id}/send_mode {mode}` | compiler | `draft` (по умолчанию): письма ждут одобрения в черновиках; `send`: задача отправляет сама |
+| `GET`, `PUT /tasks/{id}/settings` | compiler | Настройки доменов задачи с подписями; `PUT {домен: {поле: значение}}` меняет значения, ключи добавить или удалить нельзя |
 | `POST /runs` | runner | `{task_id, dry_run?}` → запуск вручную |
 | `GET /runs/{id}`, `GET /tasks/{id}/runs` | storage | Статус запуска и его шаги |
 | `GET /approvals`, `POST /approvals/{id}/answer` | main, затем runner | Вопросы и подтверждения; ответ продолжает запуск |
@@ -176,16 +176,16 @@ project/
 - `POST /runs {task_id или task_version_id, trigger, dry_run}`: создаёт запись в `runs`, исполняет в фоне и сразу отвечает `run_id`.
 - `POST /runs/{id}/resume {approval_id}` продолжает после ответа пользователя, `POST /runs/{id}/cancel` отменяет.
 - **Движок:** берёт `current_version_id` → считает `variables` → для каждого шага рендерит `args` (Jinja2, StrictUndefined) → `POST main/executor/execute` → пишет `step_runs` → обрабатывает `on_error`.
-- Шаг `user.ask` или ответ `needs_approval` от executor: runner создаёт approval в main, запуск переходит в `waiting`. После ответа main вызывает `resume`.
+- Шаг `user.ask` (и `on_error` / `on_empty: ask_user`): runner создаёт approval `ask_user` в main, запуск переходит в `waiting`. После ответа main вызывает `resume`. Других пауз нет: одобрения действий в запусках не бывает.
 - Один запуск задачи за раз: если предыдущий ещё идёт, новый пропускается с записью в лог.
 
 ### executor :8004
 
 Единственное место, где выполняются инструменты. И чат, и runner зовут его одним форматом.
 
-- `POST /execute {tool, args, context}` → `{status, output, artifacts}`, где status: `ok`, `error` или `needs_approval`. В `context`: режим (`chat` или `run`), `session_id` или `run_id` + `step_id`, permissions задачи, `dry_run`.
+- `POST /execute {tool, args, context}` → `{status, output, artifacts}`, где status: `ok`, `error`, `needs_input` или (только в чате) `needs_approval`. В `context`: режим (`chat` или `run`), `session_id` или `run_id` + `step_id`, permissions и настройки задачи (`task_settings`), `dry_run`.
 - `GET /tools`, `GET /tools/{name}`, `POST /tools/reload`; `POST /skills/{id}/install`; `POST /accounts`, `DELETE /accounts/{id}`.
-- **Конвейер вызова:** найти инструмент → проверить args по input-схеме → проверить права (capabilities инструмента против permissions задачи) → применить политику для внешних действий (dry run, черновик) → подставить секреты из keyring → вызвать с таймаутом → проверить output → записать в `tool_calls` без секретов.
+- **Конвейер вызова:** найти инструмент → проверить args по input-схеме → проверить права (capabilities инструмента против permissions задачи) → применить политику для внешних действий (в чате спросить; в пробном запуске пропустить или черновик; в запуске задачи — ничего, инструмент сам смотрит настройки своего домена) → подставить секреты из keyring → вызвать с таймаутом → проверить output → записать в `tool_calls` без секретов.
 - **Регистрация команд.** executor при старте сам сканирует `internal_tools/`, обновляет таблицу `tools` и регистрируется в main. main не знает кода инструментов, источник правды один — папка с командами.
 
 ### scheduler :8005
@@ -241,7 +241,7 @@ async def send(inp: Input, ctx: ToolContext) -> Output:
 | `title`, `card` | Название и шаблон фразы для карточки шага |
 | `description` | Описание для LLM |
 | `Input`, `Output` | Pydantic-модели, из них строятся JSON-схемы для LLM и для валидации |
-| `side_effect` | `none`, `read`, `write` или `external`; по нему решается, нужно ли подтверждение |
+| `side_effect` | `none`, `read`, `write` или `external`; `external` в чате требует подтверждения |
 | `capabilities` | Нужные права; `{to}` берётся из аргументов и сверяется с permissions задачи |
 | `secrets` | Какие аргументы ссылаются на аккаунты; executor подставит секрет сам |
 | `dry_run` | Что делать в пробном запуске: `skip`, `draft` или `real` |
@@ -258,6 +258,8 @@ async def send(inp: Input, ctx: ToolContext) -> Output:
 | `charts` | bar, line | write | matplotlib → PNG |
 | `llm` | extract, classify, write | none | common.llm, structured output |
 | `user` | ask, notify | none | approvals и events в main |
+
+**Настройки домена.** Группа может объявить одну плоскую pydantic-модель `DomainSettings` (`@domain_settings`): тип, ограничения, подпись и описание каждого поля, значение по умолчанию. Схема попадает в манифест команд группы (`settings_schema`, LLM её не видит). Задача, в шагах которой есть команды группы, получает раздел `tasks.settings[группа]` со значениями по умолчанию; при новой версии значения пользователя сохраняются, раздел ненужной группы убирается. Менять значения может только пользователь (`PUT /tasks/{id}/settings`); команда читает свой раздел через `ctx.domain_settings(Модель)`. Пример — `mail.send_directly` (по умолчанию `false`): `mail.send` в запуске задачи кладёт письмо в черновики, отправляет его человек из своего почтового клиента.
 
 **Почта.** Агент видит один набор команд `mail.*`, адаптер выбирается по `accounts.kind`. `imap_smtp` покрывает Gmail, Яндекс, Mail.ru, Outlook.com и корпоративные серверы; адреса серверов лежат в `adapters/presets.py`. `outlook_com` появится позже, в v1 на Windows тоже работаем через IMAP/SMTP. Черновик через IMAP — это `APPEND` в папку «Черновики».
 
@@ -379,7 +381,7 @@ tools:
 | `chat_sessions` | agent-loop | id, title, status, created\_at | compiler, main |
 | `chat_messages` | agent-loop | id, session\_id, role, content, tool\_call\_id, created\_at | compiler |
 | `trace_events` | agent-loop | id, session\_id, message\_id, tool, args\_json, result\_json, status, user\_feedback, created\_at | compiler |
-| `tasks` | compiler | id, title, status, send\_mode, current\_version\_id, source\_session\_id, created\_at, updated\_at | все |
+| `tasks` | compiler | id, title, status, settings\_json, current\_version\_id, source\_session\_id, created\_at, updated\_at | все |
 | `task_versions` | compiler | id, task\_id, version\_no, spec\_json, status, parent\_version\_id, patch\_json, summary, created\_by, created\_at, approved\_at | runner, scheduler, main |
 | `triggers` | scheduler | id, task\_id, type, config\_json, next\_fire\_at, enabled | main |
 | `runs` | runner | id, task\_id, task\_version\_id, trigger, status, dry\_run, started\_at, finished\_at, error | main, agent-loop |
@@ -393,7 +395,7 @@ tools:
 Значения перечислений:
 
 - `runs.status`: queued, running, waiting, succeeded, empty, failed, cancelled. `empty` — все шаги вернули пустой результат (проверка по расписанию ничего не нашла); `GET /tasks/{id}/runs` их не показывает, `?include_empty=true` показывает.
-- `approvals.kind`: ask\_user, confirm\_action, version\_approve, skill\_permissions.
+- `approvals.kind`: ask\_user, version\_approve, skill\_permissions.
 - `tools.source`: internal, skill, mcp.
 - `accounts.kind`: imap\_smtp, outlook\_com, llm.
 
@@ -432,12 +434,15 @@ tools:
 3. executor проверяет права, подставляет секреты, выполняет и пишет `tool_calls`.
 4. runner пишет `step_runs`, в конце шлёт событие `run.finished` в main, тот отдаёт его клиенту по SSE.
 
-### 5. Вопрос пользователю и подтверждение отправки
+### 5. Вопрос пользователю и отправка писем
 
-1. Шаг `mail.send`, у задачи `send_mode = draft` → executor создаёт черновик и возвращает `needs_approval`.
-2. runner → `POST main/internal/approvals`, run переходит в `waiting`.
-3. Пользователь отвечает в чате или в UI → `POST main/approvals/{id}/answer`.
-4. main → `runner/runs/{id}/resume`: шаг выполняется по-настоящему или пропускается.
+Одобрение одно — задачи целиком, после компиляции. Запуск на внешних действиях не останавливается: `mail.send` по умолчанию (`mail.send_directly = false`) кладёт письмо в черновики и завершает шаг, человек проверяет и отправляет его сам.
+
+Пауза бывает только на вопросе — шаг `user.ask`:
+
+1. executor возвращает `needs_input`, runner → `POST main/internal/approvals` (`ask_user`), run переходит в `waiting`.
+2. Пользователь отвечает в чате или в UI → `POST main/approvals/{id}/answer`.
+3. main → `runner/runs/{id}/resume`: запуск продолжается с ответом или отменяется.
 
 Так же работает `on_empty: ask_user`: не нашлось файлов за неделю → вопрос в чат → ответ продолжает или отменяет запуск.
 
@@ -453,7 +458,7 @@ tools:
 | Доступ к файлам вне задачи | Команды `fs.*` работают только в разрешённых папках; пути нормализуются, `..` и симлинки наружу отклоняются |
 | Чужой процесс дёргает API | Наружу открыт только main. Токен на внешний API опционален (пустой API\_TOKEN — без проверки), внутренние маршруты закрыты INTERNAL\_TOKEN |
 | Шаблон в Task выполняет произвольный код | Jinja2 SandboxedEnvironment и StrictUndefined |
-| Письмо ушло не тому | По умолчанию задача кладёт письмо в черновики и ждёт одобрения. Отправлять сразу её переключает только человек (`send_mode = send`), компилятор этого не умеет |
+| Письмо ушло не тому | Адресаты ограничены правами задачи; по умолчанию задача кладёт письма в черновики, отправляет их человек. Разрешить отправку сразу (`mail.send_directly`) может только он сам, компилятор настроек не видит |
 
 Секреты аккаунтов и скиллов читает только executor, в момент вызова команды. Ключ к LLM, если он есть, задаётся через `LLM_API_KEY` и читается `common/clients/llm_client.py`; нашему серверу ключ не нужен. На Windows секреты лежат в Credential Manager, в Docker — в файле `data/secrets.enc`, зашифрованном Fernet с ключом из `KEYRING_PASSWORD` (scrypt).
 

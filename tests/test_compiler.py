@@ -237,7 +237,7 @@ def test_user_ask_before_sending_is_rejected():
     nested.insert(0, {"id": "confirm", "tool": "user.ask", "args": {"question": "Отправить?", "options": ["да", "нет"]}})
     nested[1]["when"] = "{{ confirm.output.answer == 'да' }}"
 
-    with pytest.raises(SpecError, match="подтверждение отправки делает система"):
+    with pytest.raises(SpecError, match="решают настройки задачи"):
         validate_spec(asked, CATALOG)
 
 

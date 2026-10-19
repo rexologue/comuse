@@ -96,7 +96,7 @@ def _task_summary(task: Task, current: TaskVersion | None) -> dict[str, Any]:
         "title": task.title,
         "description": task.description,
         "status": task.status,
-        "send_mode": task.send_mode,
+        "settings": task.settings or {},
         "current_version_id": task.current_version_id,
         "trigger": spec.get("trigger"),
         "cards": current.cards if current else [],

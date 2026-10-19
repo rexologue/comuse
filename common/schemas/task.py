@@ -53,11 +53,6 @@ class Permissions(BaseModel):
         return [item.strip().lower() for item in value]
 
 
-# Whether a task run sends mail itself or leaves a draft for the user to approve. It
-# belongs to the task, not to its spec: only the user switches it, never the compiler.
-SendMode = Literal["draft", "send"]
-
-
 class Step(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 

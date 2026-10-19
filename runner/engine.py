@@ -78,7 +78,7 @@ class RunEngine:
             state.started = True
             await self.main.publish("run.started", {"run_id": run_id, "task_id": run.task_id, "title": task.title, "dry_run": run.dry_run})
 
-        walk = _Walk(self, run, spec, state, send_mode=task.send_mode)
+        walk = _Walk(self, run, spec, state, task_settings=task.settings or {})
 
         try:
             await walk.execute()
@@ -173,13 +173,13 @@ class _State:
 
 
 class _Walk:
-    def __init__(self, engine: RunEngine, run: Run, spec: TaskSpec, state: _State, *, send_mode: str):
+    def __init__(self, engine: RunEngine, run: Run, spec: TaskSpec, state: _State, *, task_settings: dict[str, Any]):
 
-        self.engine    = engine
-        self.run       = run
-        self.spec      = spec
-        self.state     = state
-        self.send_mode = send_mode
+        self.engine        = engine
+        self.run           = run
+        self.spec          = spec
+        self.state         = state
+        self.task_settings = task_settings
 
         self.last_output: Any = None
 
@@ -255,29 +255,15 @@ class _Walk:
             if resolved:
                 return self._finish(key, step, output, status=status, inputs=args)
 
-        confirmed = bool(answer and answer["reason"] == "confirm" and answer["approve"])
         attempts = 1 + (step.retries if step.on_error == "retry" else 0)
 
         for attempt in range(1, attempts + 1):
-            response = await self._call(step, key, args, confirmed=confirmed, attempt=attempt)
+            response = await self._call(step, key, args, attempt=attempt)
             status = response["status"]
             self.state.artifacts += [a for a in response.get("artifacts", []) if a not in self.state.artifacts]
 
             if status == "ok":
                 return await self._check_empty(step, key, args, response["output"])
-
-            if status == "needs_approval":
-                await self._ask(
-                    key,
-                    reason="confirm",
-                    kind="confirm_action",
-                    payload={
-                        "step": key,
-                        "tool": step.tool,
-                        "message": response.get("message"),
-                        "preview": response.get("preview"),
-                    },
-                )
 
             if status == "needs_input":
                 await self._ask(
@@ -297,10 +283,6 @@ class _Walk:
     def _apply_answer(self, answer: dict[str, Any]) -> tuple[bool, Any, str]:
         """(resolved, output, step status) for a step that already has the user's answer."""
         reason, approve = answer["reason"], answer["approve"]
-
-        if reason == "confirm":
-            # Approved: run for real below. Declined: the step is skipped.
-            return (False, None, "ok") if approve else (True, None, "skipped")
 
         if reason == "input":
             if not approve:
@@ -378,15 +360,14 @@ class _Walk:
         raise _Pause()
 
 
-    async def _call(self, step: Step, key: str, args: dict[str, Any], *, confirmed: bool, attempt: int) -> dict[str, Any]:
+    async def _call(self, step: Step, key: str, args: dict[str, Any], *, attempt: int) -> dict[str, Any]:
         context = {
             "mode": "run",
             "run_id": self.run.id,
             "step_key": key,
             "permissions": self.spec.permissions.model_dump(),
-            "send_mode": self.send_mode,
+            "task_settings": self.task_settings,
             "dry_run": self.run.dry_run,
-            "confirmed": confirmed,
         }
 
         try:
@@ -401,7 +382,7 @@ class _Walk:
         self._record(
             key,
             step,
-            status={"ok": "ok", "needs_approval": "waiting", "needs_input": "waiting"}.get(response["status"], "error"),
+            status={"ok": "ok", "needs_input": "waiting"}.get(response["status"], "error"),
             inputs=args,
             output=response.get("output"),
             error=response.get("error"),

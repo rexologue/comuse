@@ -22,7 +22,6 @@ class FakeMain:
 
 PENDING = [
     {"id": "apr_task", "kind": "version_approve", "payload": {}},
-    {"id": "apr_send", "kind": "confirm_action", "payload": {}},
     {"id": "apr_ask", "kind": "ask_user", "payload": {"question": "За какой месяц?"}},
 ]
 
@@ -37,12 +36,11 @@ async def test_agent_sees_only_questions():
     assert [a["approval_id"] for a in result["output"]] == ["apr_ask"]
 
 
-async def test_agent_cannot_approve_a_task_or_a_draft():
+async def test_agent_cannot_approve_a_task():
     main = FakeMain(PENDING)
 
-    for approval_id in ("apr_task", "apr_send"):
-        result = await meta_tools.call(main, "ses", "approval_answer", {"approval_id": approval_id, "approve": True})
-        assert result["status"] == "error"
+    result = await meta_tools.call(main, "ses", "approval_answer", {"approval_id": "apr_task", "approve": True})
+    assert result["status"] == "error"
 
     assert main.posted == []
 

@@ -177,3 +177,35 @@ def test_move_never_purges_other_mail(monkeypatch, capabilities, commands):
     assert imap_smtp.mark({}, "", folder="INBOX", uid=7, seen=None, move_to="Archive") == "Archive"
     assert [c[0] for c in fake.commands] == commands
     assert all(c[1] == "7" for c in fake.commands)
+
+
+def _send_context(mode, task_settings, *, draft=False):
+    from common.tools import ToolContext
+    from common.tools.context import MailAccount
+
+    return ToolContext(
+        mode=mode, settings=None, paths=None, llm=None, permissions=None,
+        get_account=lambda name: MailAccount(name=name, config={"email": "agent@company.local"}, secret=""),
+        publish=None, draft=draft, task_settings=task_settings,
+    )
+
+
+@pytest.mark.parametrize(
+    ("mode", "task_settings", "draft", "expected"),
+    [
+        ("run", {}, False, "draft"),                                     # a task drafts by default
+        ("run", {"mail": {"send_directly": False}}, False, "draft"),
+        ("run", {"mail": {"send_directly": True}}, False, "sent"),       # the user let it send
+        ("run", {"mail": {"send_directly": True}}, True, "draft"),       # a dry run never sends
+        ("chat", {}, False, "sent"),                                     # chat: the user just confirmed
+    ],
+)
+async def test_send_follows_the_task_mail_settings(monkeypatch, mode, task_settings, draft, expected):
+    from internal_tools.mail.send import Input, send
+
+    monkeypatch.setattr(imap_smtp, "append_draft", lambda *a: "Drafts")
+    monkeypatch.setattr(imap_smtp, "send", lambda *a: None)
+
+    out = await send(Input(account="work", to=["boss@company.local"], subject="s", body="b"), _send_context(mode, task_settings, draft=draft))
+
+    assert out.mode == expected
