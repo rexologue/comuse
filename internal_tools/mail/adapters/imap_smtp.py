@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import imaplib
 import mimetypes
 import re
@@ -27,6 +28,7 @@ _DEFAULT_PORTS = {
     "smtp": {"ssl": 465, "starttls": 587, "none": 25},
 }
 _LIST_RE = re.compile(r'\((?P<flags>[^)]*)\) "(?P<sep>[^"]*)" (?P<name>.+)')
+_UTF7_RE = re.compile(r"&([^-]*)-")
 
 
 def connection_security(config: dict[str, Any], protocol: str) -> str:
@@ -65,7 +67,6 @@ def search(
     since: date | None,
     unseen: bool,
     limit: int,
-    after_uid: int | None = None,
 ) -> list[dict[str, Any]]:
     criteria: list[str] = []
 
@@ -75,12 +76,6 @@ def search(
     if unseen:
         criteria.append("UNSEEN")
 
-    if sender and sender.isascii():
-        criteria += ["FROM", f'"{sender}"']
-
-    if after_uid is not None:
-        criteria += ["UID", f"{after_uid + 1}:*"]
-
     with _imap(config, secret) as imap:
         _select(imap, folder, readonly=True)
 
@@ -89,12 +84,10 @@ def search(
             raise ToolError(f"Поиск в почте не удался: {data}")
 
         uids = [int(u) for u in data[0].split()]
-        if after_uid is not None:
-            uids = [u for u in uids if u > after_uid]
-
         found: list[dict[str, Any]] = []
 
-        # Newest first; non-ASCII filters are applied client-side after decoding.
+        # Newest first. Sender and subject are matched here, on decoded headers: servers
+        # disagree on FROM/SUBJECT search (substring or not, non-ASCII or not).
         for uid in reversed(uids):
             if len(found) >= limit:
                 break
@@ -113,15 +106,22 @@ def search(
                 "date": _iso_date(headers.get("Date")),
             }
 
-            if subject and subject.lower() not in item["subject"].lower():
-                continue
-
-            if sender and not sender.isascii() and sender.lower() not in item["from"].lower():
-                continue
-
-            found.append(item)
+            if matches(item, sender=sender, subject=subject):
+                found.append(item)
 
     return found
+
+
+def matches(item: dict[str, Any], *, sender: str | None, subject: str | None) -> bool:
+    """Case-insensitive substring filters; the sender is matched against the whole
+    From header, so a name, an address or just its domain all work."""
+    if subject and subject.lower() not in item["subject"].lower():
+        return False
+
+    if sender and sender.lower() not in item["from"].lower():
+        return False
+
+    return True
 
 
 def read(config: dict[str, Any], secret: str, *, folder: str, uid: int, save_dir: Path) -> dict[str, Any]:
@@ -161,6 +161,36 @@ def read(config: dict[str, Any], secret: str, *, folder: str, uid: int, save_dir
         "text": text,
         "attachments": attachments,
     }
+
+
+def mark(config: dict[str, Any], secret: str, *, folder: str, uid: int, seen: bool | None, move_to: str | None) -> str:
+    """Set or clear \\Seen and/or move the message; returns the folder it ends up in."""
+    with _imap(config, secret) as imap:
+        _select(imap, folder, readonly=False)
+
+        if seen is not None:
+            status, data = imap.uid("STORE", str(uid), "+FLAGS" if seen else "-FLAGS", r"(\Seen)")
+            if status != "OK" or not data or data[0] is None:
+                raise ToolError(f"Письмо {uid} в «{folder}» не найдено")
+
+        if not move_to or move_to == folder:
+            return folder
+
+        _ensure_folder(imap, move_to)
+
+        # MOVE is an extension (RFC 6851); without it: copy, flag deleted, expunge.
+        if "MOVE" in imap.capabilities:
+            status, data = imap.uid("MOVE", str(uid), _quote(move_to))
+        else:
+            status, data = imap.uid("COPY", str(uid), _quote(move_to))
+            if status == "OK":
+                imap.uid("STORE", str(uid), "+FLAGS", r"(\Deleted)")
+                imap.expunge()
+
+        if status != "OK":
+            raise ToolError(f"Не удалось переложить письмо {uid} в «{move_to}»: {data}")
+
+    return move_to
 
 
 def build_message(
@@ -302,7 +332,7 @@ def _drafts_folder(imap: imaplib.IMAP4) -> str:
             if not match:
                 continue
 
-            name = match.group("name").strip('"')
+            name = decode_folder(match.group("name").strip('"'))
             if "\\Drafts" in match.group("flags"):
                 return name
 
@@ -316,8 +346,52 @@ def _drafts_folder(imap: imaplib.IMAP4) -> str:
     return "Drafts"
 
 
+def _ensure_folder(imap: imaplib.IMAP4, folder: str) -> None:
+    status, rows = imap.list('""', _quote(folder))
+    if status == "OK" and any(rows or []):
+        return
+
+    status, data = imap.create(_quote(folder))
+    if status != "OK":
+        raise ToolError(f"Не удалось создать папку почты «{folder}»: {data}")
+
+
 def _quote(folder: str) -> str:
-    return folder if folder.startswith('"') else f'"{folder}"'
+    return folder if folder.startswith('"') else f'"{encode_folder(folder)}"'
+
+
+def encode_folder(name: str) -> str:
+    """IMAP folder names are modified UTF-7 (RFC 3501 5.1.3): `Входящие` → `&BBIERQQ+BDQETwRJBDgENQ-`."""
+    out: list[str] = []
+    pending: list[str] = []
+
+    def flush() -> None:
+        if pending:
+            raw = base64.b64encode("".join(pending).encode("utf-16-be")).decode()
+            out.append("&" + raw.rstrip("=").replace("/", ",") + "-")
+            pending.clear()
+
+    for char in name:
+        if 0x20 <= ord(char) <= 0x7E:
+            flush()
+            out.append("&-" if char == "&" else char)
+        else:
+            pending.append(char)
+
+    flush()
+    return "".join(out)
+
+
+def decode_folder(name: str) -> str:
+    def decode(match: re.Match) -> str:
+        chunk = match.group(1)
+        if not chunk:
+            return "&"
+
+        raw = chunk.replace(",", "/")
+        return base64.b64decode(raw + "=" * (-len(raw) % 4)).decode("utf-16-be")
+
+    return _UTF7_RE.sub(decode, name)
 
 
 def address_of(header: str) -> str:

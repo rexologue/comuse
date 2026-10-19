@@ -95,3 +95,43 @@ def test_domain_mask_allows_only_that_domain():
     with pytest.raises(PermissionDenied, match="stranger@other.ru"):
         ctx.check_recipients(["anyone@company.local", "stranger@other.ru"])
 
+
+
+HEADER = {"from": "Иван Петров <ivan@company.local>", "subject": "Заявка на поставку"}
+
+
+@pytest.mark.parametrize("sender", ["company.local", "IVAN@", "Петров", None])
+def test_sender_filter_matches_name_address_or_domain(sender):
+    assert imap_smtp.matches(HEADER, sender=sender, subject="заявка")
+
+
+@pytest.mark.parametrize(("sender", "subject"), [("other.local", None), (None, "Счёт")])
+def test_filters_reject_other_mail(sender, subject):
+    assert not imap_smtp.matches(HEADER, sender=sender, subject=subject)
+
+
+@pytest.mark.parametrize(
+    ("name", "encoded"),
+    [("INBOX", "INBOX"), ("A&B", "A&-B"), ("Обработано", "&BB4EMQRABDAEMQQ+BEIEMAQ9BD4-"), ("Отчёты/2026", "&BB4EQgRHBFEEQgRL-/2026")],
+)
+def test_folder_names_use_modified_utf7(name, encoded):
+    assert imap_smtp.encode_folder(name) == encoded
+    assert imap_smtp.decode_folder(encoded) == name
+
+
+def test_mark_needs_something_to_do():
+    from pydantic import ValidationError
+
+    from internal_tools.mail.mark import Input
+
+    with pytest.raises(ValidationError):
+        Input(account="work", uid=1)
+
+    assert Input(account="work", uid=1, seen=True).seen is True
+
+
+def test_mark_is_skipped_in_dry_runs():
+    from common.tools import discover
+
+    spec = discover()["mail.mark"]
+    assert (spec.side_effect, spec.dry_run) == ("write", "skip")

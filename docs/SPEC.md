@@ -86,7 +86,7 @@ project/
 │   ├── fs/                # list, transfer (copy/move), write
 │   ├── docs/              # read, fill_template, make_template, readers
 │   ├── xlsx/              # read_table, write_table, aggregate
-│   ├── mail/              # search, read, send, create_draft, adapters/
+│   ├── mail/              # search, read, mark, send, create_draft, adapters/
 │   ├── charts/            # charts (bar/line)
 │   ├── llm/               # extract, classify, write, inputs
 │   └── user/              # ask, notify
@@ -254,7 +254,7 @@ async def send(inp: Input, ctx: ToolContext) -> Output:
 | `fs` | list, copy, move, write | read, write | pathlib, только внутри разрешённых папок |
 | `docs` | read, fill\_template, make\_template | read, write | python-docx, docxtpl, openpyxl, pdfplumber |
 | `xlsx` | read\_table, write\_table, aggregate | read, write | openpyxl; `aggregate` считает суммы, группы и топ-N кодом — числа в отчётах никогда не считает LLM |
-| `mail` | search, read, create\_draft, send | read, write, external | stdlib imaplib/smtplib |
+| `mail` | search, read, mark, create\_draft, send | read, write, external | stdlib imaplib/smtplib |
 | `charts` | bar, line | write | matplotlib → PNG |
 | `llm` | extract, classify, write | none | common.llm, structured output |
 | `user` | ask, notify | none | approvals и events в main |
