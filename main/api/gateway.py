@@ -48,12 +48,12 @@ async def tool(name: str, request: Request):
     return await reverse_proxy(request, "executor", f"tools/{name}")
 
 
-@router.api_route("/accounts", methods=["GET", "POST"], summary="Mail accounts")
+@router.api_route("/accounts", methods=["GET", "POST"], summary="Accounts (mail and other kinds the tool groups offer)")
 async def accounts(request: Request):
     return await reverse_proxy(request, "executor", "accounts")
 
 
-@router.api_route("/accounts/{path:path}", methods=METHODS, summary="Mail account operations")
+@router.api_route("/accounts/{path:path}", methods=METHODS, summary="Account operations: kinds, check, delete")
 async def account_ops(path: str, request: Request):
     return await reverse_proxy(request, "executor", f"accounts/{path}")
 

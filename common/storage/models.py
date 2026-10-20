@@ -224,7 +224,7 @@ class Account(Base):
     __tablename__ = "accounts"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    # imap_smtp | llm
+    # A kind a tool group registers (common/tools/accounts.py), e.g. mail's imap_smtp.
     kind: Mapped[str] = mapped_column(String)
     name: Mapped[str] = mapped_column(String, unique=True)
     # Non-secret connection settings; the secret itself lives in the keyring.

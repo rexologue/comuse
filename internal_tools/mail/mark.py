@@ -5,6 +5,7 @@ import asyncio
 from pydantic import Field, model_validator
 
 from common.tools import ToolContext, ToolInput, ToolOutput, tool
+from internal_tools.mail.accounts import mailbox
 from internal_tools.mail.adapters import imap_smtp
 
 
@@ -41,7 +42,7 @@ class Output(ToolOutput):
     dry_run="skip",
 )
 async def mark(inp: Input, ctx: ToolContext) -> Output:
-    account = ctx.credential("account")
+    account = mailbox(ctx)
 
     folder = await asyncio.to_thread(
         imap_smtp.mark,

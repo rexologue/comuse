@@ -6,6 +6,7 @@ from datetime import date
 from pydantic import BaseModel, Field
 
 from common.tools import ToolContext, ToolError, ToolInput, ToolOutput, tool
+from internal_tools.mail.accounts import mailbox
 from internal_tools.mail.adapters import imap_smtp
 from internal_tools.mail.addresses import AddressMask
 
@@ -50,7 +51,7 @@ class Output(ToolOutput):
     secrets=("account",),
 )
 async def search(inp: Input, ctx: ToolContext) -> Output:
-    account = ctx.credential("account")
+    account = mailbox(ctx)
 
     try:
         since = date.fromisoformat(inp.since[:10]) if inp.since else None

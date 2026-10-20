@@ -106,4 +106,4 @@ uv run pytest
 | `GET /tasks/{id}/runs` | История запусков (пустые проверки — с `?include_empty=true`) |
 | `GET /approvals`, `POST /approvals/{id}/answer` | Одобрение версий задач |
 | `GET /events` | Поток событий (SSE) |
-| `POST /accounts` | Почтовый аккаунт (пароль уходит в keyring) |
+| `GET /accounts/kinds`, `POST /accounts` | Виды аккаунтов с пресетами; создать аккаунт `{name, kind, preset?, config, secret}` (пароль уходит в keyring) |

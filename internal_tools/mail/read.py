@@ -5,6 +5,7 @@ import asyncio
 from pydantic import Field
 
 from common.tools import ToolContext, ToolInput, ToolOutput, tool
+from internal_tools.mail.accounts import mailbox
 from internal_tools.mail.adapters import imap_smtp
 
 
@@ -34,7 +35,7 @@ class Output(ToolOutput):
     secrets=("account",),
 )
 async def read(inp: Input, ctx: ToolContext) -> Output:
-    account = ctx.credential("account")
+    account = mailbox(ctx)
     save_dir = ctx.output_dir(f"mail_{inp.uid}")
 
     data = await asyncio.to_thread(

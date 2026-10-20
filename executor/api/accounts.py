@@ -1,10 +1,12 @@
-"""Mail accounts. Only the non-secret part reaches SQLite; the password goes to the
-keyring and never leaves the executor."""
+"""Accounts: a name, a kind, non-secret settings and a password. Only the settings
+reach SQLite; the password goes to the keyring and never leaves the executor. What a
+kind needs (presets, required settings, a login check) is declared by the tool group
+that owns it (common/tools/accounts.py)."""
 
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Literal
+from typing import Any
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
@@ -12,9 +14,8 @@ from pydantic import BaseModel, Field
 from common.errors import ApiError
 from common.storage.db import session
 from common.storage.models import Account
+from common.tools.accounts import AccountKind, account_kinds, get_account_kind
 from common.utils import new_id
-from internal_tools.mail.adapters import imap_smtp
-from internal_tools.mail.adapters.presets import PRESETS
 
 
 router = APIRouter()
@@ -22,9 +23,8 @@ router = APIRouter()
 
 class AccountCreate(BaseModel):
     name: str = Field(pattern=r"^[a-zA-Z0-9_\-]{1,40}$")
-    kind: Literal["imap_smtp"] = "imap_smtp"
-    email: str
-    # gmail | yandex | mailru | outlook — fills hosts and ports.
+    kind: str
+    # A known provider of the kind (GET /accounts/kinds); fills settings under `config`.
     preset: str | None = None
     config: dict[str, Any] = Field(default_factory=dict)
     secret: str = Field(min_length=1)
@@ -38,27 +38,23 @@ async def list_accounts():
     return {"accounts": [_public(row) for row in rows]}
 
 
-@router.get("/accounts/presets", summary="Known mail providers")
-async def list_presets():
-    return {"presets": PRESETS}
+@router.get("/accounts/kinds", summary="Account kinds the tool groups offer, with their presets")
+async def list_kinds():
+    return {"kinds": {name: {"title": kind.title, "presets": kind.presets} for name, kind in account_kinds().items()}}
 
 
 @router.post("/accounts", summary="Create or replace an account")
 async def create_account(body: AccountCreate, request: Request):
-    config: dict[str, Any] = {}
+    kind = _kind(body.kind)
 
-    if body.preset:
-        if body.preset not in PRESETS:
-            raise ApiError(status_code=400, message=f"Unknown preset `{body.preset}`", details={"presets": list(PRESETS)})
-        config.update(PRESETS[body.preset])
+    if body.preset and body.preset not in kind.presets:
+        raise ApiError(status_code=400, message=f"Unknown preset `{body.preset}`", details={"presets": list(kind.presets)})
 
-    config.update(body.config)
-    config["email"] = body.email
-    config.setdefault("username", body.email)
+    try:
+        config = kind.prepare({**kind.presets.get(body.preset or "", {}), **body.config})
 
-    missing = [key for key in ("imap_host", "smtp_host") if not config.get(key)]
-    if missing:
-        raise ApiError(status_code=400, message=f"Missing mail settings: {missing}; pass a preset or config")
+    except ValueError as e:
+        raise ApiError(status_code=400, message=str(e)) from e
 
     secret_ref = f"account:{body.name}"
     request.app.state.secrets.set(secret_ref, body.secret)
@@ -66,7 +62,7 @@ async def create_account(body: AccountCreate, request: Request):
     with session() as db:
         row = db.query(Account).filter(Account.name == body.name).one_or_none()
         row = row or Account(id=new_id("acc_"), name=body.name)
-        row.kind = body.kind
+        row.kind = kind.name
         row.config = config
         row.secret_ref = secret_ref
         db.add(row)
@@ -75,12 +71,16 @@ async def create_account(body: AccountCreate, request: Request):
     return _public(row)
 
 
-@router.post("/accounts/{name}/check", summary="Try to log in to IMAP and SMTP")
+@router.post("/accounts/{name}/check", summary="Try to log in with the account")
 async def check_account(name: str, request: Request):
     account = request.app.state.runtime.load_credential(name)
+    kind = _kind(account.kind)
+
+    if kind.check is None:
+        return {"status": "unchecked"}
 
     try:
-        await asyncio.to_thread(imap_smtp.check, account.config, account.secret)
+        await asyncio.to_thread(kind.check, account.config, account.secret)
 
     except Exception as e:
         raise ApiError(status_code=502, message=f"Login failed for `{name}`", details={"error": str(e)}) from e
@@ -100,6 +100,14 @@ async def delete_account(name: str, request: Request):
         db.commit()
 
     return {"status": "deleted"}
+
+
+def _kind(name: str) -> AccountKind:
+    kind = get_account_kind(name)
+    if kind is None:
+        raise ApiError(status_code=400, message=f"Unknown account kind `{name}`", details={"kinds": list(account_kinds())})
+
+    return kind
 
 
 def _public(row: Account) -> dict[str, Any]:

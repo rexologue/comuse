@@ -148,7 +148,7 @@ project/
 | `POST /runs/{id}/cancel` | runner | Отменить запуск |
 | `GET /approvals`, `POST /approvals/{id}/answer {approve}` | main, затем compiler | Одобрение версий задач (`version_approve`) — единственное, что ждёт пользователя |
 | `GET /tools`, `GET /tools/{name}` | executor | Каталог инструментов со схемами |
-| `GET /accounts`, `POST /accounts`, `GET /accounts/presets`, `POST /accounts/{name}/check`, `DELETE /accounts/{name}` | executor | Почтовые аккаунты; пароль сразу уходит в keyring |
+| `GET /accounts`, `POST /accounts {name, kind, preset?, config, secret}`, `GET /accounts/kinds`, `POST /accounts/{name}/check`, `DELETE /accounts/{name}` | executor | Аккаунты (почта и другие виды, которые объявляют группы команд); пароль сразу уходит в keyring |
 | `GET /settings`, `PUT /settings` | main | Хранилище «ключ → значение» для будущего UI; сервисы его пока не читают |
 | `GET /events`, `GET /events/recent` | main | Поток событий (SSE) и последние события JSON |
 
@@ -200,7 +200,7 @@ project/
 Единственное место, где выполняются инструменты. И чат, и runner зовут его одним форматом.
 
 - `POST /execute {tool, args, context}` → `{status, output, artifacts}`, где status: `ok` или `error`. Executor ничего не спрашивает: кто вызывает, тот уже решил, что вызов нужен (чат спросил пользователя, задачу пользователь одобрил). В `context`: режим (`chat` или `run`), `session_id` или `run_id` + `step_id`, настройки задачи (`task_settings`), `dry_run`.
-- `GET /tools`, `GET /tools/{name}`, `POST /tools/reload`; аккаунты: `GET`, `POST /accounts`, `GET /accounts/presets`, `POST /accounts/{name}/check`, `DELETE /accounts/{name}`.
+- `GET /tools`, `GET /tools/{name}`, `POST /tools/reload`; аккаунты: `GET`, `POST /accounts`, `GET /accounts/kinds`, `POST /accounts/{name}/check`, `DELETE /accounts/{name}`. Executor хранит аккаунт как имя, вид, настройки и пароль в keyring; что нужно виду (пресеты, обязательные настройки, проверка входа), объявляет группа команд, которой этот вид принадлежит (`common/tools/accounts.py`).
 - **Конвейер вызова:** найти инструмент → проверить args по input-схеме → проверить аргументы-пути → пробный запуск по объявлению `dry_run` команды (`skip`, `draft` или `real`) → загрузить аккаунты для аргументов из `secrets` → вызвать с таймаутом и `ToolContext` → проверить output. Своего журнала у executor нет: всё для журнала вызывающего (длительность, traceback, строки `ctx.log`, уведомления `ctx.notify`) уходит в ответе.
 - **Executor знает типы аргументов, а не группы.**
   - Аргумент типа `WorkspacePath` (или `FileRefs` — список файлов) executor до вызова проверяет песочницей `executor/paths.py`: только рабочая папка и `data:templates` / `data:outputs`, без `..` и симлинков наружу. Входы `llm.*` (`TextOrFileRefs` — путь или обычный текст) заранее не проверяются; файл из них открывается через тот же `ctx.read_path`.
@@ -284,7 +284,7 @@ async def send(inp: Input, ctx: ToolContext) -> Output:
 
 **Настройки группы.** Группа может объявить одну плоскую pydantic-модель `DomainSettings` (`@domain_settings`): тип, ограничения, подпись и описание каждого поля, значение по умолчанию. Схема попадает в манифест команд группы (`settings_schema`, LLM её не видит). Задача, в шагах которой есть команды группы, получает раздел `tasks.settings[группа]` со значениями по умолчанию; при новой версии значения пользователя сохраняются, раздел ненужной группы убирается. Менять значения может только пользователь (`PUT /tasks/{id}/settings`); команда читает свой раздел через `ctx.domain_settings(Модель)`. Пример — `mail.send_directly` (по умолчанию `false`): `mail.send` в запуске задачи кладёт письмо в черновики, отправляет его человек из своего почтового клиента.
 
-**Почта.** Один набор команд `mail.*` поверх stdlib imaplib/smtplib (`adapters/imap_smtp.py`), единственный вид аккаунта — `imap_smtp`. Пресеты Gmail, Яндекса, Mail.ru и Outlook.com лежат в `adapters/presets.py`; корпоративный сервер задаётся `config` аккаунта. Режим соединения — `security` (или отдельно `imap_security` / `smtp_security`): `ssl`, `starttls` или `none`; SMTP логинится, только если сервер предлагает AUTH. Детали:
+**Почта.** Один набор команд `mail.*` поверх stdlib imaplib/smtplib (`adapters/imap_smtp.py`), вид аккаунта `imap_smtp` объявляет сама почтовая группа (`internal_tools/mail/accounts.py`): пресеты Gmail, Яндекса, Mail.ru и Outlook.com (`adapters/presets.py`), обязательные `config.email`, `imap_host`, `smtp_host` и проверку входа. Корпоративный сервер задаётся `config` аккаунта. Команды `mail.*` берут аккаунт через `mailbox(ctx)`: аккаунт другого вида — отказ. Режим соединения — `security` (или отдельно `imap_security` / `smtp_security`): `ssl`, `starttls` или `none`; SMTP логинится, только если сервер предлагает AUTH. Детали:
 
 - `mail.search` принимает `sender_in` — адреса или маски `*@домен`, письма от кого вообще брать; сравнивается адрес отправителя целиком (`test.local` не пропустит `x@evil-test.local.com`). Компилятор заполняет его, когда задача отвечает найденным письмам или что-то с ними делает. Подделанный From не страшен: ответ уходит на этот адрес, то есть в разрешённый домен;
 - черновик — это `APPEND` в папку с флагом `\Drafts` (или «Drafts»; создаётся, если её нет);
@@ -425,7 +425,7 @@ tools:
 - `runs.status`: queued, running, succeeded, empty, failed, cancelled. `empty` — все шаги вернули пустой результат (проверка по расписанию ничего не нашла); `GET /tasks/{id}/runs` их не показывает, `?include_empty=true` показывает.
 - `approvals.kind`: ask\_user, version\_approve, skill\_permissions.
 - `tools.source`: internal (skill и mcp — план).
-- `accounts.kind`: imap\_smtp.
+- `accounts.kind`: вид, который объявила группа команд (сейчас почта: imap\_smtp).
 
 `trace_events.user_feedback` задумано для правок пользователя к результату вызова («нет, возьми другую колонку»), но сейчас не заполняется: compiler отличает удачные вызовы от неудачных по статусу и по самому разговору. Если конкуренция за SQLite станет проблемой, storage можно вынести в отдельный сервис или перейти на Postgres; для хакатона это не нужно.
 
@@ -583,7 +583,7 @@ tools:
 - [x] Сквозной сценарий «пример отчёта → такой же отчёт за прошлую неделю» на сервере команды
 - [x] Сквозной сценарий целиком на `qwen3.8-27b-fp8` (vLLM): отчёт по примеру → «формируй задачу» (с первой попытки, пробный запуск верный) → одобрение в чате → запуск по кнопке за ~0,1 с без LLM → правка «топ-5, по пятницам» с diff → новая версия в расписании
 - [x] Почта в сценарии: автоответчик на заявки (cron → `mail.search` → `mail.send` в черновики → `mail.mark`) на локальном GreenMail
-- [ ] Переработка по `docs/PLAN.md` (сделаны шаги 1–6; остались аккаунты, инструкции групп, итоговая проверка)
+- [ ] Переработка по `docs/PLAN.md` (сделаны шаги 1–7; остались инструкции групп и итоговая проверка)
 - [ ] Фронтенд
 - [ ] Скиллы от агента (Deno + MCP)
 - [ ] Alembic-миграции
@@ -605,6 +605,5 @@ tools:
 
 Нарушения правила «каждая сущность знает только своё», найденные при ревью; исправляются по `docs/PLAN.md`.
 
-1. **Почтовые аккаунты зашиты в executor.** `executor/api/accounts.py` импортирует почтовый адаптер и пресеты, проверяет IMAP/SMTP-поля и логин. Шаг 7 плана.
-2. **Знания групп в общих промптах.** Правила компилятора и системный промпт агента называют конкретные команды (`docs.make_template`, `xlsx.aggregate`, `data.map_rows`, `mail.send`, `sender_email`…); `CORE_TOOLS` агента — список имён.
-3. **Группа `llm` импортирует `internal_tools.docs.readers`** — зависимость одной группы от внутренностей другой.
+1. **Знания групп в общих промптах.** Правила компилятора и системный промпт агента называют конкретные команды (`docs.make_template`, `xlsx.aggregate`, `data.map_rows`, `mail.send`, `sender_email`…); `CORE_TOOLS` агента — список имён.
+2. **Группа `llm` импортирует `internal_tools.docs.readers`** — зависимость одной группы от внутренностей другой.

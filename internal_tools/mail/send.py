@@ -6,6 +6,7 @@ from pydantic import Field
 
 from common.tools import ToolContext, ToolInput, ToolOutput, tool
 from common.tools.fields import EmailAddress, WorkspacePath
+from internal_tools.mail.accounts import mailbox
 from internal_tools.mail.adapters import imap_smtp
 from internal_tools.mail.settings import MailSettings
 
@@ -40,7 +41,7 @@ class Output(ToolOutput):
     timeout=120,
 )
 async def send(inp: Input, ctx: ToolContext) -> Output:
-    account = ctx.credential("account")
+    account = mailbox(ctx)
 
     attachments = [ctx.read_path(ref) for ref in inp.attachments]
     message = imap_smtp.build_message(

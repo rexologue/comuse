@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from common.tools import ToolContext, tool
+from internal_tools.mail.accounts import mailbox
 from internal_tools.mail.adapters import imap_smtp
 from internal_tools.mail.send import Input, Output
 
@@ -17,7 +18,7 @@ from internal_tools.mail.send import Input, Output
     dry_run="skip",
 )
 async def create_draft(inp: Input, ctx: ToolContext) -> Output:
-    account = ctx.credential("account")
+    account = mailbox(ctx)
 
     attachments = [ctx.read_path(ref) for ref in inp.attachments]
     message = imap_smtp.build_message(
