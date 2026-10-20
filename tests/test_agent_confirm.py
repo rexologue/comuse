@@ -32,6 +32,7 @@ def _loop() -> AgentLoop:
     loop = AgentLoop.__new__(AgentLoop)
     loop.main = FakeMain()
     loop.catalog = FakeCatalog()
+    loop._consent = {}
     return loop
 
 
@@ -114,3 +115,34 @@ async def test_a_command_that_changes_files_asks_too(settings):
 
     assert asked["status"] == "needs_approval"
     assert loop.main.executed == []
+
+
+async def test_the_user_can_let_the_chat_stop_asking_about_a_command(settings):
+    loop = _loop()
+    session_id, message_id = _asking_turn("Разложи документы")
+
+    asked = await loop._dispatch(session_id, message_id, _call("fs.move", {"src": "a.pdf", "dst": "Счета/"}), {})
+    history.add_message(session_id, "user", "да, и больше не спрашивай")
+    await loop._confirm(session_id, {"action_id": asked["action_id"], "remember": True})
+
+    # Other files, same command: no more questions in this chat.
+    moved = await loop._dispatch(session_id, message_id, _call("fs.move", {"src": "b.pdf", "dst": "Акты/"}), {})
+    assert moved["status"] == "ok"
+    assert [c["args"]["src"] for c in loop.main.executed] == ["a.pdf", "b.pdf"]
+
+    # Another chat still asks.
+    other_id, other_message = _asking_turn("Разложи документы")
+    assert (await loop._dispatch(other_id, other_message, _call("fs.move", {"src": "c.pdf", "dst": "Счета/"}), {}))["status"] == "needs_approval"
+
+
+async def test_sending_mail_asks_every_time_whatever_the_user_said(settings):
+    loop = _loop()
+    session_id, message_id = _asking_turn()
+
+    asked = await loop._dispatch(session_id, message_id, _call("mail.send", SEND), {})
+    history.add_message(session_id, "user", "да, и больше не спрашивай")
+    await loop._confirm(session_id, {"action_id": asked["action_id"], "remember": True})
+
+    again = await loop._dispatch(session_id, message_id, _call("mail.send", SEND), {})
+    assert again["status"] == "needs_approval"
+    assert len(loop.main.executed) == 1

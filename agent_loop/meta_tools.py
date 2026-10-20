@@ -66,7 +66,13 @@ DEFINITIONS: list[dict[str, Any]] = [
     _fn(
         "action_confirm",
         "Выполнить действие, которое ждало подтверждения (например, отправку письма), после явного согласия пользователя.",
-        {"action_id": {"type": "integer"}},
+        {
+            "action_id": {"type": "integer"},
+            "remember": {
+                "type": "boolean",
+                "description": "Пользователь сам сказал больше не спрашивать про эту команду в этом чате",
+            },
+        },
         ["action_id"],
     ),
 ]

@@ -47,6 +47,10 @@ class AgentLoop:
         self.main     = main
         self.catalog  = catalog
 
+        # Commands the user said to stop asking about, per chat. Memory only: a short-lived
+        # fact of one conversation, gone with a restart (the chat simply asks again).
+        self._consent: dict[str, set[str]] = {}
+
 
     async def run_turn(self, session_id: str | None, user_text: str) -> TurnResult:
         session_id = history.ensure_session(session_id, user_text)
@@ -159,14 +163,23 @@ class AgentLoop:
 
         # Asking first is the chat's rule, not the executor's: the user is right here. The
         # call waits in the trace until action_confirm. A command that does not say it is
-        # harmless (confirm=False) asks.
-        if manifest is not None and manifest.get("confirm", True) is not False:
+        # harmless (confirm=False) asks, unless the user let this chat stop asking about it.
+        if manifest is not None and self._needs_asking(session_id, manifest):
             return self._ask_first(session_id, message_id, manifest, args)
 
         output = await self._execute(session_id, tool, args)
         history.add_trace(session_id, message_id, tool, args, output, output["status"])
 
         return output
+
+
+    def _needs_asking(self, session_id: str, manifest: dict[str, Any]) -> bool:
+        confirm = manifest.get("confirm", True)
+
+        if confirm is False:
+            return False
+
+        return confirm == "always" or manifest["name"] not in self._consent.get(session_id, set())
 
 
     def _ask_first(self, session_id: str, message_id: int, manifest: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
@@ -184,11 +197,20 @@ class AgentLoop:
         }
         trace_id = history.add_trace(session_id, message_id, manifest["name"], args, output, "needs_approval")
 
+        if manifest.get("confirm") == "always":
+            options = "При «да» вызови action_confirm с этим action_id. Эта команда спрашивает каждый раз."
+        else:
+            options = (
+                f"Предложи ответить «да» или «да, и больше не спрашивай про «{manifest['title']}» в этом чате». "
+                "При «да» вызови action_confirm с этим action_id; при втором ответе — ещё и с remember=true. "
+                "remember=true — только если пользователь сам так сказал."
+            )
+
         return {
             **output,
             "action_id": trace_id,
             "next": (
-                "Опиши пользователю действие и спроси согласие. При «да» вызови action_confirm с этим action_id. "
+                f"Опиши пользователю действие и спроси согласие. {options} "
                 "Шаги, которые имеют смысл только после этого действия, до ответа пользователя не делай — "
                 "сделай их после action_confirm."
             ),
@@ -209,6 +231,13 @@ class AgentLoop:
                 "status": "error",
                 "error": "Пользователь ещё не ответил. Опиши ему действие, закончи ответ и дождись его «да».",
             }
+
+        if args.get("remember") is True:
+            manifest = (await self.catalog.manifests()).get(event.tool) or {}
+
+            # A command that asks every time (sending mail) cannot be let off.
+            if manifest.get("confirm") is True:
+                self._consent.setdefault(session_id, set()).add(event.tool)
 
         output = await self._execute(session_id, event.tool, event.args)
         history.update_trace(event.id, status="confirmed" if output["status"] == "ok" else output["status"], result=output)
