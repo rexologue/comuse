@@ -71,12 +71,13 @@ class PostedMessage(BaseModel):
     content: str = Field(min_length=1)
 
 
-@router.post("/sessions/{session_id}/messages", summary="Add a message to a chat (a task telling its user something)")
+@router.post("/sessions/{session_id}/messages", summary="A task tells its user something in the chat it was built in")
 async def post_message(session_id: str, body: PostedMessage):
     if not history.session_exists(session_id):
         raise ApiError(status_code=404, message=f"Session `{session_id}` not found")
 
-    message_id = history.add_message(session_id, "assistant", body.content)
+    # Its own role: it may arrive in the middle of a turn, and it is not the model's words.
+    message_id = history.add_message(session_id, "notice", body.content)
 
     return {"session_id": session_id, "message_id": message_id}
 

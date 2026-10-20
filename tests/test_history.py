@@ -34,3 +34,31 @@ def test_earlier_turns_are_still_cut_to_the_limit(settings):
 
     assert len(messages) == 10
     assert messages[0] == {"role": "user", "content": "вопрос 25"}
+
+
+def test_a_task_notice_never_splits_a_tool_exchange(settings):
+    """A run may post into the chat while a turn is waiting for its tool results."""
+    session_id = history.ensure_session(None, "Найди отчёт")
+    history.add_message(session_id, "user", "Найди отчёт")
+
+    call = {"id": "c1", "type": "function", "function": {"name": "fs__list", "arguments": "{}"}}
+    history.add_message(session_id, "assistant", "", tool_calls=[call])
+    history.add_message(session_id, "notice", "Задача «Сводка»: готово")
+    history.add_message(session_id, "tool", "файлы", tool_call_id="c1", name="fs__list")
+
+    roles = [m["role"] for m in history.llm_history(session_id, limit=40)]
+
+    assert roles == ["user", "assistant", "tool", "assistant"]
+    assert history.llm_history(session_id, limit=40)[-1]["content"].endswith("Задача «Сводка»: готово")
+
+
+def test_a_notice_is_not_the_users_turn(settings):
+    session_id = history.ensure_session(None, "Привет")
+    history.add_message(session_id, "user", "Сделай отчёт")
+    for i in range(25):
+        call = {"id": f"c{i}", "type": "function", "function": {"name": "docs__read", "arguments": "{}"}}
+        history.add_message(session_id, "assistant", "", tool_calls=[call])
+        history.add_message(session_id, "tool", "текст", tool_call_id=f"c{i}", name="docs__read")
+    history.add_message(session_id, "notice", "Задача «Сводка»: готово")
+
+    assert history.llm_history(session_id, limit=10)[0] == {"role": "user", "content": "Сделай отчёт"}

@@ -86,20 +86,36 @@ def llm_history(session_id: str, limit: int) -> list[dict[str, Any]]:
         rows.pop(0)
 
     messages: list[dict[str, Any]] = []
+    # Tool calls still waiting for their results, and task notices that arrived meanwhile:
+    # an API rejects anything between a call and its results.
+    unanswered: set[str] = set()
+    deferred: list[dict[str, Any]] = []
+
     for row in rows:
+        if row.role == "notice":
+            notice = {"role": "assistant", "content": f"[Сообщение задачи, не мои слова] {row.content}"}
+            (deferred if unanswered else messages).append(notice)
+            continue
+
         if row.role == "assistant":
             message: dict[str, Any] = {"role": "assistant", "content": row.content or ""}
             if row.tool_calls:
                 message["tool_calls"] = row.tool_calls
+                unanswered = {call["id"] for call in row.tool_calls}
             messages.append(message)
 
         elif row.role == "tool":
             messages.append({"role": "tool", "tool_call_id": row.tool_call_id, "content": row.content})
+            unanswered.discard(row.tool_call_id)
 
         else:
             messages.append({"role": row.role, "content": row.content})
 
-    return messages
+        if not unanswered and deferred:
+            messages += deferred
+            deferred = []
+
+    return messages + deferred
 
 
 def add_trace(session_id: str, message_id: int | None, tool: str, args: dict[str, Any], result: Any, status: str) -> int:

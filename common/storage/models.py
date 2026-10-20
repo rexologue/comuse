@@ -70,7 +70,7 @@ class ChatMessage(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     session_id: Mapped[str] = mapped_column(String, index=True)
-    # user | assistant | tool
+    # user | assistant | tool | notice (a task run's message)
     role: Mapped[str] = mapped_column(String)
     content: Mapped[str] = mapped_column(Text, default="")
     tool_calls: Mapped[Any] = mapped_column(JSON, nullable=True)
