@@ -40,8 +40,11 @@ class PathResolver(Protocol):
 
 
 @dataclass(slots=True)
-class MailAccount:
+class Credential:
+    """A stored account: non-secret settings plus the password from the keyring."""
+
     name: str
+    kind: str
     config: dict[str, Any]
     secret: str
 
@@ -52,7 +55,6 @@ class ToolContext:
     settings: Settings
     paths: PathResolver
     llm: LLMClient
-    get_account: Callable[[str], MailAccount]
     publish: Callable[[str, dict[str, Any]], Awaitable[None]]
     session_id: str | None = None
     run_id: str | None = None
@@ -62,6 +64,8 @@ class ToolContext:
     draft: bool = False
     # The task's domain settings sections ({"mail": {...}}); empty in chat.
     task_settings: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Accounts the executor loaded for the tool's `secrets` arguments, by argument name.
+    credentials: dict[str, Credential] = field(default_factory=dict)
     artifacts: list[str] = field(default_factory=list)
 
     def domain_settings(self, model: type[SettingsT]) -> SettingsT:
@@ -103,5 +107,8 @@ class ToolContext:
         return path
 
 
-    def account(self, name: str) -> MailAccount:
-        return self.get_account(name)
+    def credential(self, argument: str) -> Credential:
+        if argument not in self.credentials:
+            raise ToolError(f"Аргумент `{argument}` не объявлен в secrets команды")
+
+        return self.credentials[argument]

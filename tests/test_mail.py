@@ -182,11 +182,11 @@ def test_move_never_purges_other_mail(monkeypatch, capabilities, commands):
 
 def _send_context(mode, task_settings, *, draft=False):
     from common.tools import ToolContext
-    from common.tools.context import MailAccount
+    from common.tools.context import Credential
 
     return ToolContext(
         mode=mode, settings=None, paths=None, llm=None,
-        get_account=lambda name: MailAccount(name=name, config={"email": "agent@company.local"}, secret=""),
+        credentials={"account": Credential(name="work", kind="imap_smtp", config={"email": "agent@company.local"}, secret="")},
         publish=None, draft=draft, task_settings=task_settings,
     )
 

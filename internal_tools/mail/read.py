@@ -31,11 +31,10 @@ class Output(ToolOutput):
     card="Прочитать письмо {uid} из «{account}»",
     description="Read one email: text body and attachments (saved to data:outputs, paths returned).",
     side_effect="read",
-    capabilities=("mail.account:{account}",),
     secrets=("account",),
 )
 async def read(inp: Input, ctx: ToolContext) -> Output:
-    account = ctx.account(inp.account)
+    account = ctx.credential("account")
     save_dir = ctx.output_dir(f"mail_{inp.uid}")
 
     data = await asyncio.to_thread(

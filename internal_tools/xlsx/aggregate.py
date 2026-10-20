@@ -43,7 +43,6 @@ class Output(ToolOutput):
         "in a report instead of asking the LLM to add them up."
     ),
     side_effect="read",
-    capabilities=("fs.read:{inputs}",),
 )
 async def aggregate(inp: Input, ctx: ToolContext) -> Output:
     paths = [ctx.read_path(ref) for ref in file_refs(inp.inputs)]

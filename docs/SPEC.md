@@ -192,8 +192,11 @@ project/
 
 - `POST /execute {tool, args, context}` → `{status, output, artifacts}`, где status: `ok`, `error`, `needs_input` или (только в чате) `needs_approval`. В `context`: режим (`chat` или `run`), `session_id` или `run_id` + `step_id`, настройки задачи (`task_settings`), `dry_run`.
 - `GET /tools`, `GET /tools/{name}`, `POST /tools/reload`; аккаунты: `GET`, `POST /accounts`, `GET /accounts/presets`, `POST /accounts/{name}/check`, `DELETE /accounts/{name}`.
-- **Конвейер вызова:** найти инструмент → проверить args по input-схеме → политика внешних действий (в чате — спросить; в пробном запуске — пропустить или черновик по `dry_run` команды; в запуске задачи — ничего, команда сама смотрит настройки своей группы) → вызвать с таймаутом и `ToolContext` → проверить output → записать в `tool_calls` без секретов.
-- **Пути и секреты.** `read_path` / `write_path` (`executor/paths.py`) не выпускают путь за рабочую папку и `data:templates` / `data:outputs`; `account()` достаёт аккаунт и пароль из keyring. Что именно задаче можно, задают её одобренные шаги; отбор подставляемых значений делают команды поиска (`mail.search.sender_in`).
+- **Конвейер вызова:** найти инструмент → проверить args по input-схеме → проверить аргументы-пути → политика внешних действий (в чате — спросить; в пробном запуске — пропустить или черновик по `dry_run` команды; в запуске задачи — ничего, команда сама смотрит настройки своей группы) → загрузить аккаунты для аргументов из `secrets` → вызвать с таймаутом и `ToolContext` → проверить output → записать в `tool_calls` без секретов.
+- **Executor знает типы аргументов, а не группы.**
+  - Аргумент типа `WorkspacePath` (или `FileRefs` — список файлов) executor до вызова проверяет песочницей `executor/paths.py`: только рабочая папка и `data:templates` / `data:outputs`, без `..` и симлинков наружу. Входы `llm.*` (`TextOrFileRefs` — путь или обычный текст) заранее не проверяются; файл из них открывается через тот же `ctx.read_path`.
+  - Аргументы из `secrets` называют сохранённый аккаунт: executor сам достаёт его настройки и пароль из keyring и отдаёт команде как `ctx.credential("account")`. Неизвестный аккаунт — отказ до вызова.
+  - Что именно задаче можно, задают её одобренные шаги; отбор подставляемых значений делают команды поиска (`mail.search.sender_in`).
 - **Регистрация команд.** executor при старте сам сканирует `internal_tools/`, обновляет таблицу `tools` и регистрируется в main. main не знает кода инструментов, источник правды один — папка с командами.
 
 ### scheduler :8005
@@ -216,7 +219,7 @@ class Input(ToolInput):
     cc: list[EmailAddress] = Field(default_factory=list)
     subject: str
     body: str
-    attachments: list[str] = Field(default_factory=list, description="Пути файлов для вложения")
+    attachments: list[WorkspacePath] = Field(default_factory=list, description="Пути файлов для вложения")
 
 class Output(ToolOutput):
     message_id: str
@@ -229,13 +232,12 @@ class Output(ToolOutput):
     card="Отправить письмо {to} с темой «{subject}»",
     description="Send an email ... In a task it saves a draft ... unless the task's mail settings say to send directly.",
     side_effect="external",
-    capabilities=("mail.account:{account}", "fs.read:{attachments}"),
-    secrets=("account",),
+    secrets=("account",),                           # executor загрузит аккаунт по имени
     dry_run="draft",
     timeout=120,
 )
 async def send(inp: Input, ctx: ToolContext) -> Output:
-    account = ctx.account(inp.account)              # аккаунт и пароль из keyring
+    account = ctx.credential("account")             # настройки и пароль, уже загруженные executor
     message = imap_smtp.build_message(...)
 
     if ctx.draft or (ctx.mode == "run" and not ctx.domain_settings(MailSettings).send_directly):
@@ -253,8 +255,8 @@ async def send(inp: Input, ctx: ToolContext) -> Output:
 | `description` | Описание для LLM |
 | `Input`, `Output` | Pydantic-модели, из них строятся JSON-схемы для LLM и для валидации |
 | `side_effect` | `none`, `read`, `write` или `external`; `external` в чате требует подтверждения |
-| `capabilities` | Какие аргументы — аккаунты и пути (`{account}`, `{attachments}`). Пока только описание в манифесте; заменятся типами аргументов, которые проверяет executor (`docs/PLAN.md`, шаг 2) |
-| `secrets` | Какие аргументы ссылаются на аккаунты; сейчас только описание в манифесте, пароль достаёт `ctx.account()` |
+| `secrets` | Какие аргументы называют сохранённый аккаунт; executor загружает его и отдаёт как `ctx.credential(<аргумент>)` |
+| Типы аргументов | `WorkspacePath`, `FileRefs` — пути, executor проверяет их до вызова; `TextOrFileRefs` — путь или текст, не проверяется заранее |
 | `dry_run` | Что делать в пробном запуске: `skip`, `draft` или `real` |
 | `timeout` | Секунды до отмены |
 
@@ -576,7 +578,7 @@ tools:
 - [x] Сквозной сценарий «пример отчёта → такой же отчёт за прошлую неделю» на сервере команды
 - [x] Сквозной сценарий целиком на `qwen3.8-27b-fp8` (vLLM): отчёт по примеру → «формируй задачу» (с первой попытки, пробный запуск верный) → одобрение в чате → запуск по кнопке за ~0,1 с без LLM → правка «топ-5, по пятницам» с diff → новая версия в расписании
 - [x] Почта в сценарии: автоответчик на заявки (cron → `mail.search` → `mail.send` в черновики → `mail.mark`) на локальном GreenMail
-- [ ] Переработка по `docs/PLAN.md` (шаг 1 — права как аргументы шагов — сделан)
+- [ ] Переработка по `docs/PLAN.md` (сделаны шаги 1–2: права как аргументы шагов, секреты и пути в executor по объявлениям)
 - [ ] Фронтенд
 - [ ] Скиллы от агента (Deno + MCP)
 - [ ] Alembic-миграции
@@ -598,8 +600,6 @@ tools:
 
 Нарушения правила «каждая сущность знает только своё», найденные при ревью; исправляются по `docs/PLAN.md`.
 
-1. **Capabilities в `@tool` только описание.** executor не проверяет аргументы-пути до вызова; команда сама вызывает `read_path`. Шаг 2 плана.
-2. **Почтовые аккаунты зашиты в executor.** `executor/api/accounts.py` импортирует почтовый адаптер и пресеты, проверяет IMAP/SMTP-поля и логин; `ToolContext` содержит `MailAccount` и `account()`.
-3. **Знания групп в общих промптах.** Правила компилятора и системный промпт агента называют конкретные команды (`docs.make_template`, `xlsx.aggregate`, `data.map_rows`, `mail.send`, `sender_email`…); `CORE_TOOLS` агента — список имён.
-4. **`secrets` в `@tool` ничего не делает** — executor это поле не читает.
-5. **Группа `llm` импортирует `internal_tools.docs.readers`** — зависимость одной группы от внутренностей другой.
+1. **Почтовые аккаунты зашиты в executor.** `executor/api/accounts.py` импортирует почтовый адаптер и пресеты, проверяет IMAP/SMTP-поля и логин. Шаг 7 плана.
+2. **Знания групп в общих промптах.** Правила компилятора и системный промпт агента называют конкретные команды (`docs.make_template`, `xlsx.aggregate`, `data.map_rows`, `mail.send`, `sender_email`…); `CORE_TOOLS` агента — список имён.
+3. **Группа `llm` импортирует `internal_tools.docs.readers`** — зависимость одной группы от внутренностей другой.

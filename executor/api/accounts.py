@@ -77,7 +77,7 @@ async def create_account(body: AccountCreate, request: Request):
 
 @router.post("/accounts/{name}/check", summary="Try to log in to IMAP and SMTP")
 async def check_account(name: str, request: Request):
-    account = request.app.state.runtime._get_account(name)
+    account = request.app.state.runtime.load_credential(name)
 
     try:
         await asyncio.to_thread(imap_smtp.check, account.config, account.secret)

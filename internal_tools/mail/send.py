@@ -5,7 +5,7 @@ import asyncio
 from pydantic import Field
 
 from common.tools import ToolContext, ToolInput, ToolOutput, tool
-from common.tools.fields import EmailAddress
+from common.tools.fields import EmailAddress, WorkspacePath
 from internal_tools.mail.adapters import imap_smtp
 from internal_tools.mail.settings import MailSettings
 
@@ -16,7 +16,7 @@ class Input(ToolInput):
     cc: list[EmailAddress] = Field(default_factory=list)
     subject: str
     body: str
-    attachments: list[str] = Field(default_factory=list, description="Пути файлов для вложения")
+    attachments: list[WorkspacePath] = Field(default_factory=list, description="Пути файлов для вложения")
 
 
 class Output(ToolOutput):
@@ -35,13 +35,12 @@ class Output(ToolOutput):
         "for the user to send instead, unless the task's mail settings say to send directly."
     ),
     side_effect="external",
-    capabilities=("mail.account:{account}", "fs.read:{attachments}"),
     secrets=("account",),
     dry_run="draft",
     timeout=120,
 )
 async def send(inp: Input, ctx: ToolContext) -> Output:
-    account = ctx.account(inp.account)
+    account = ctx.credential("account")
 
     attachments = [ctx.read_path(ref) for ref in inp.attachments]
     message = imap_smtp.build_message(

@@ -7,10 +7,11 @@ from typing import Any
 from pydantic import Field
 
 from common.tools import ToolContext, ToolError, ToolInput, ToolOutput, tool
+from common.tools.fields import WorkspacePath
 
 
 class ReadInput(ToolInput):
-    path: str = Field(description="Файл .xlsx")
+    path: WorkspacePath = Field(description="Файл .xlsx")
     sheet: str | None = Field(default=None, description="Лист; по умолчанию первый")
     header_row: int = Field(default=1, ge=1, description="Номер строки с заголовками")
     max_rows: int = Field(default=1000, ge=1, le=50000)
@@ -28,7 +29,6 @@ class ReadOutput(ToolOutput):
     card="Прочитать таблицу из «{path}»",
     description="Read an Excel sheet as a list of row objects keyed by the header row.",
     side_effect="read",
-    capabilities=("fs.read:{path}",),
 )
 async def read_table(inp: ReadInput, ctx: ToolContext) -> ReadOutput:
     path = ctx.read_path(inp.path)

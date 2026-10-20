@@ -14,6 +14,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from common.tools import ToolContext, ToolError, ToolInput, ToolOutput, tool
+from common.tools.fields import WorkspacePath
 from internal_tools.docs.readers import markdown_table
 
 
@@ -21,7 +22,7 @@ _NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,40}$")
 
 
 class Input(ToolInput):
-    example: str = Field(description="Готовый отчёт-пример .docx")
+    example: WorkspacePath = Field(description="Готовый отчёт-пример .docx")
     name: str = Field(description="Имя шаблона латиницей, например weekly_sales")
     hint: str = Field(default="", description="Что в отчёте меняется от раза к разу (подсказка для разметки)")
 
@@ -54,7 +55,6 @@ class Output(ToolOutput):
         "and the example's values as a ready context for docs.fill_template."
     ),
     side_effect="write",
-    capabilities=("fs.read:{example}",),
 )
 async def make_template(inp: Input, ctx: ToolContext) -> Output:
     if not _NAME_RE.match(inp.name):

@@ -11,11 +11,14 @@ from typing import Any, Awaitable, Callable, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from common.tools.context import NeedsInput, PermissionDenied, ToolContext, ToolError
+from common.tools.context import Credential, NeedsInput, PermissionDenied, ToolContext, ToolError
 from common.tools.domain import DomainSettings, domain_settings, settings_schema
+from common.tools.fields import PATH_ARG
+from common.tools.refs import file_refs
 
 
 __all__ = [
+    "Credential",
     "DomainSettings",
     "NeedsInput",
     "PermissionDenied",
@@ -27,6 +30,7 @@ __all__ = [
     "discover",
     "domain_settings",
     "function_name",
+    "path_refs",
     "tool",
     "tool_name",
 ]
@@ -53,8 +57,11 @@ class ToolSpec:
     card: str
     description: str
     side_effect: SideEffect
-    capabilities: tuple[str, ...]
+    # Arguments naming a stored account: the executor loads it (config + password from
+    # the keyring) and hands it over as ctx.credential(<argument>).
     secrets: tuple[str, ...]
+    # Arguments typed as workspace paths: {name: "path" | "refs"} (see common/tools/fields.py).
+    path_args: dict[str, str]
     dry_run: DryRunPolicy
     timeout: int | None
     input_model: type[ToolInput]
@@ -70,7 +77,6 @@ class ToolSpec:
             "card": self.card,
             "description": self.description,
             "side_effect": self.side_effect,
-            "capabilities": list(self.capabilities),
             "secrets": list(self.secrets),
             "dry_run": self.dry_run,
             "timeout": self.timeout,
@@ -93,7 +99,6 @@ def tool(
     card: str,
     description: str,
     side_effect: SideEffect = "none",
-    capabilities: tuple[str, ...] = (),
     secrets: tuple[str, ...] = (),
     dry_run: DryRunPolicy = "real",
     timeout: int | None = None,
@@ -114,8 +119,8 @@ def tool(
             card=card,
             description=description,
             side_effect=side_effect,
-            capabilities=tuple(capabilities),
             secrets=tuple(secrets),
+            path_args=_path_args(hints[params[0]]),
             dry_run=dry_run,
             timeout=timeout,
             input_model=hints[params[0]],
@@ -132,6 +137,54 @@ def tool(
         return fn
 
     return decorator
+
+
+def path_refs(spec: ToolSpec, inp: BaseModel) -> list[str]:
+    """Every path an input names through its path-typed arguments."""
+    refs: list[str] = []
+
+    for name, kind in spec.path_args.items():
+        value = getattr(inp, name, None)
+        refs += file_refs(value) if kind == "refs" else _strings(value)
+
+    return refs
+
+
+def _path_args(model: type[BaseModel]) -> dict[str, str]:
+    marks = {}
+
+    for name, prop in model.model_json_schema().get("properties", {}).items():
+        mark = _find_mark(prop)
+        if mark:
+            marks[name] = mark
+
+    return marks
+
+
+def _find_mark(node: Any) -> str | None:
+    if isinstance(node, dict):
+        if PATH_ARG in node:
+            return node[PATH_ARG]
+
+        node = list(node.values())
+
+    if isinstance(node, list):
+        return next((mark for item in node if (mark := _find_mark(item))), None)
+
+    return None
+
+
+def _strings(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+
+    if isinstance(value, dict):
+        value = list(value.values())
+
+    if isinstance(value, list):
+        return [s for item in value for s in _strings(item)]
+
+    return []
 
 
 def discover(package_name: str = "internal_tools") -> dict[str, ToolSpec]:

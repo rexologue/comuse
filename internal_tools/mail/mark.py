@@ -37,12 +37,11 @@ class Output(ToolOutput):
         "so the next run does not handle it again (e.g. search unseen=true, then seen=true)."
     ),
     side_effect="write",
-    capabilities=("mail.account:{account}",),
     secrets=("account",),
     dry_run="skip",
 )
 async def mark(inp: Input, ctx: ToolContext) -> Output:
-    account = ctx.account(inp.account)
+    account = ctx.credential("account")
 
     folder = await asyncio.to_thread(
         imap_smtp.mark,

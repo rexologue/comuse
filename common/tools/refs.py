@@ -9,14 +9,25 @@ from typing import Annotated, Any, Union
 
 from pydantic import Field
 
+from common.tools.fields import PATH_ARG
 
+
+_SHAPES = Union[str, list[Union[str, dict[str, Any]]], dict[str, Any]]
+
+# Only files: the executor checks every path in it before the tool runs.
 FileRefs = Annotated[
-    Union[str, list[Union[str, dict[str, Any]]], dict[str, Any]],
+    _SHAPES,
     Field(
-        description=(
-            "Файлы: один путь, список путей ([\"a.xlsx\", \"b.xlsx\"]) или результат fs.list целиком"
-        )
+        description="Файлы: один путь, список путей ([\"a.xlsx\", \"b.xlsx\"]) или результат fs.list целиком",
+        json_schema_extra={PATH_ARG: "refs"},
     ),
+]
+
+# Files or plain text (llm.* inputs): text is not a path, so nothing is checked up
+# front; files it names are still opened through the sandboxed ctx.read_path.
+TextOrFileRefs = Annotated[
+    _SHAPES,
+    Field(description="Путь, список путей, результат fs.list или обычный текст"),
 ]
 
 

@@ -5,10 +5,11 @@ from datetime import date, datetime, timedelta
 from pydantic import BaseModel, Field
 
 from common.tools import ToolContext, ToolError, ToolInput, ToolOutput, tool
+from common.tools.fields import WorkspacePath
 
 
 class Input(ToolInput):
-    folder: str = Field(default="", description="Папка относительно рабочей директории; пусто — корень")
+    folder: WorkspacePath = Field(default="", description="Папка относительно рабочей директории; пусто — корень")
     pattern: str = Field(default="*", description="Glob-шаблон имени, например *.xlsx")
     recursive: bool = Field(default=False, description="Искать и во вложенных папках")
     modified_from: str | None = Field(default=None, description="Изменён не раньше этой даты (YYYY-MM-DD, включительно)")
@@ -32,7 +33,6 @@ class Output(ToolOutput):
     card="Взять файлы «{pattern}» из папки «{folder}»",
     description="List files in a workspace folder, filtered by a glob pattern and an optional modification date range.",
     side_effect="read",
-    capabilities=("fs.read:{folder}",),
 )
 async def list_files(inp: Input, ctx: ToolContext) -> Output:
     folder = ctx.read_path(inp.folder)

@@ -3,10 +3,11 @@ from __future__ import annotations
 from pydantic import Field
 
 from common.tools import ToolContext, ToolError, ToolInput, ToolOutput, tool
+from common.tools.fields import WorkspacePath
 
 
 class Input(ToolInput):
-    path: str = Field(description="Путь файла в рабочей папке или data:outputs/…")
+    path: WorkspacePath = Field(description="Путь файла в рабочей папке или data:outputs/…")
     content: str = Field(description="Текст файла (UTF-8)")
     overwrite: bool = Field(default=True, description="Перезаписать существующий файл")
 
@@ -22,7 +23,6 @@ class Output(ToolOutput):
     card="Записать текст в «{path}»",
     description="Write a UTF-8 text file (txt, md, csv) into the workspace.",
     side_effect="write",
-    capabilities=("fs.write:{path}",),
     dry_run="skip",
 )
 async def write_file(inp: Input, ctx: ToolContext) -> Output:

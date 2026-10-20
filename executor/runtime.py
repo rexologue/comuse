@@ -1,8 +1,9 @@
-"""The call pipeline: validate → side-effect policy → run with timeout → log.
+"""The call pipeline: validate the arguments → check path arguments → side-effect
+policy → load declared secrets → run with timeout → log.
 
-What a task may do is its approved steps; limits on values known only at run time
-are arguments of the tools themselves (mail.send's allow_to). Paths always stay
-inside the user's workspace."""
+The executor knows argument types, not domains: a path-typed argument must stay inside
+the workspace, a `secrets` argument names an account it loads. What a task may do is
+its approved steps; what to work on is chosen by the tools themselves."""
 
 from __future__ import annotations
 
@@ -19,8 +20,8 @@ from common.schemas.execution import ExecContext, ExecuteRequest, ExecuteRespons
 from common.settings import Settings
 from common.storage.db import session
 from common.storage.models import Account, ToolCall
-from common.tools import NeedsInput, ToolContext, ToolError, ToolSpec
-from common.tools.context import MailAccount, PermissionDenied
+from common.tools import Credential, NeedsInput, ToolContext, ToolError, ToolSpec, path_refs
+from common.tools.context import PermissionDenied
 from common.utils import truncate
 from executor.paths import WorkspacePaths
 from executor.registry import ToolRegistry
@@ -46,6 +47,11 @@ class ExecutorRuntime:
         self.llm      = llm
         self.main     = main
 
+        self.paths = WorkspacePaths(
+            workspace_dir=settings.storage.workspace_dir,
+            data_dir=settings.storage.data_dir,
+        )
+
 
     async def execute(self, req: ExecuteRequest) -> ExecuteResponse:
         started = time.monotonic()
@@ -68,6 +74,13 @@ class ExecutorRuntime:
         except ValidationError as e:
             return ExecuteResponse(status="error", error=f"Неверные аргументы `{req.tool}`: {_short_errors(e)}")
 
+        try:
+            for ref in path_refs(spec, inp):
+                self.paths.read_path(ref)
+
+        except PermissionDenied as e:
+            return ExecuteResponse(status="error", error=f"Нет доступа: {e}")
+
         decision = self._decide(spec, req.context)
         if decision.skip:
             return ExecuteResponse(status="ok", mode="skipped", message=decision.message)
@@ -79,7 +92,13 @@ class ExecutorRuntime:
                 preview={"tool": spec.name, "title": spec.title, "args": req.args},
             )
 
-        ctx = self._tool_context(req.context, draft=decision.draft)
+        try:
+            credentials = {argument: self.load_credential(getattr(inp, argument)) for argument in spec.secrets}
+
+        except ToolError as e:
+            return ExecuteResponse(status="error", error=str(e))
+
+        ctx = self._tool_context(req.context, draft=decision.draft, credentials=credentials)
 
         try:
             raw = await asyncio.wait_for(
@@ -128,18 +147,12 @@ class ExecutorRuntime:
         return _Decision()
 
 
-    def _tool_context(self, ctx: ExecContext, *, draft: bool) -> ToolContext:
-        paths = WorkspacePaths(
-            workspace_dir=self.settings.storage.workspace_dir,
-            data_dir=self.settings.storage.data_dir,
-        )
-
+    def _tool_context(self, ctx: ExecContext, *, draft: bool, credentials: dict[str, Credential]) -> ToolContext:
         return ToolContext(
             mode=ctx.mode,
             settings=self.settings,
-            paths=paths,
+            paths=self.paths,
             llm=self.llm,
-            get_account=self._get_account,
             publish=self.main.publish,
             session_id=ctx.session_id,
             run_id=ctx.run_id,
@@ -147,10 +160,11 @@ class ExecutorRuntime:
             dry_run=ctx.dry_run,
             draft=draft,
             task_settings=ctx.task_settings,
+            credentials=credentials,
         )
 
 
-    def _get_account(self, name: str) -> MailAccount:
+    def load_credential(self, name: str) -> Credential:
         with session() as db:
             account = db.query(Account).filter(Account.name == name).one_or_none()
 
@@ -161,7 +175,7 @@ class ExecutorRuntime:
         if secret is None:
             raise ToolError(f"Для аккаунта `{name}` нет сохранённого пароля")
 
-        return MailAccount(name=account.name, config=dict(account.config), secret=secret)
+        return Credential(name=account.name, kind=account.kind, config=dict(account.config), secret=secret)
 
 
     def _log_call(self, req: ExecuteRequest, response: ExecuteResponse) -> None:

@@ -5,11 +5,12 @@ import asyncio
 from pydantic import Field
 
 from common.tools import ToolContext, ToolInput, ToolOutput, tool
+from common.tools.fields import WorkspacePath
 from internal_tools.docs.readers import read_document
 
 
 class Input(ToolInput):
-    path: str = Field(description="Документ: docx, xlsx, pdf, txt, md, csv")
+    path: WorkspacePath = Field(description="Документ: docx, xlsx, pdf, txt, md, csv")
     max_chars: int = Field(default=20000, ge=100, le=200000, description="Обрезать текст до стольких символов")
 
 
@@ -25,7 +26,6 @@ class Output(ToolOutput):
     card="Прочитать «{path}»",
     description="Read a document (docx, xlsx, pdf, txt, md, csv) as text; tables become markdown tables.",
     side_effect="read",
-    capabilities=("fs.read:{path}",),
 )
 async def read(inp: Input, ctx: ToolContext) -> Output:
     path = ctx.read_path(inp.path)

@@ -7,15 +7,16 @@ from typing import Any
 from pydantic import Field
 
 from common.tools import ToolContext, ToolError, ToolInput, ToolOutput, tool
+from common.tools.fields import WorkspacePath
 
 
 _LOOP = re.compile(r"\{%-?\s*(?:tr|tc|p|r)?\s*for\s+([A-Za-z_]\w*)\s+in\s+([A-Za-z_]\w*)")
 
 
 class Input(ToolInput):
-    template: str = Field(description="Шаблон .docx с полями {{ имя }}, обычно data:templates/…")
+    template: WorkspacePath = Field(description="Шаблон .docx с полями {{ имя }}, обычно data:templates/…")
     context: dict[str, Any] = Field(default_factory=dict, description="Значения полей шаблона")
-    images: dict[str, str] = Field(default_factory=dict, description="Поле шаблона → путь картинки (PNG)")
+    images: dict[str, WorkspacePath] = Field(default_factory=dict, description="Поле шаблона → путь картинки (PNG)")
     output_name: str = Field(default="document.docx", description="Имя готового файла")
 
 
@@ -32,7 +33,6 @@ class Output(ToolOutput):
         "with the given values; images are inserted from PNG paths. Returns the new file path."
     ),
     side_effect="write",
-    capabilities=("fs.read:{template}",),
 )
 async def fill_template(inp: Input, ctx: ToolContext) -> Output:
     template = ctx.read_path(inp.template)

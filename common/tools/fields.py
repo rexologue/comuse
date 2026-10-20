@@ -23,4 +23,12 @@ def _check_email(value: str) -> str:
     return value
 
 
+# Marks an argument whose values are workspace paths. The executor checks every such
+# value before the tool runs (inside the workspace or data:templates / data:outputs),
+# whatever the tool then does with it.
+PATH_ARG = "x-path"
+
+WorkspacePath = Annotated[str, Field(json_schema_extra={PATH_ARG: "path"})]
+
+
 EmailAddress = Annotated[str, AfterValidator(_check_email), Field(description="Адрес почты, например ivanov@company.ru")]

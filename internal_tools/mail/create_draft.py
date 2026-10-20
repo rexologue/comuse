@@ -13,12 +13,11 @@ from internal_tools.mail.send import Input, Output
     card="Черновик письма {to} с темой «{subject}»",
     description="Save an email into the account's Drafts folder without sending it.",
     side_effect="write",
-    capabilities=("mail.account:{account}", "fs.read:{attachments}"),
     secrets=("account",),
     dry_run="skip",
 )
 async def create_draft(inp: Input, ctx: ToolContext) -> Output:
-    account = ctx.account(inp.account)
+    account = ctx.credential("account")
 
     attachments = [ctx.read_path(ref) for ref in inp.attachments]
     message = imap_smtp.build_message(

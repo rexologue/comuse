@@ -47,11 +47,10 @@ class Output(ToolOutput):
     card="Найти письма в «{account}»: отправитель «{sender}», только от {sender_in}, тема «{subject}»",
     description="Search an IMAP mailbox; newest first. Returns uid, sender, sender_email (bare address for replies), to, subject, date.",
     side_effect="read",
-    capabilities=("mail.account:{account}",),
     secrets=("account",),
 )
 async def search(inp: Input, ctx: ToolContext) -> Output:
-    account = ctx.account(inp.account)
+    account = ctx.credential("account")
 
     try:
         since = date.fromisoformat(inp.since[:10]) if inp.since else None

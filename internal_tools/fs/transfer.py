@@ -9,11 +9,12 @@ from pathlib import Path
 from pydantic import Field
 
 from common.tools import ToolContext, ToolError, ToolInput, ToolOutput, tool
+from common.tools.fields import WorkspacePath
 
 
 class Input(ToolInput):
-    src: str = Field(description="Файл-источник")
-    dst: str = Field(description="Куда: папка (оканчивается на /) или новый путь файла")
+    src: WorkspacePath = Field(description="Файл-источник")
+    dst: WorkspacePath = Field(description="Куда: папка (оканчивается на /) или новый путь файла")
     overwrite: bool = Field(default=False, description="Перезаписать, если файл уже есть")
 
 
@@ -27,7 +28,6 @@ class Output(ToolOutput):
     card="Скопировать «{src}» в «{dst}»",
     description="Copy a file inside the workspace; dst may be a folder.",
     side_effect="write",
-    capabilities=("fs.read:{src}", "fs.write:{dst}"),
     dry_run="skip",
 )
 async def copy_file(inp: Input, ctx: ToolContext) -> Output:
@@ -43,7 +43,6 @@ async def copy_file(inp: Input, ctx: ToolContext) -> Output:
     card="Переместить «{src}» в «{dst}»",
     description="Move a file inside the workspace; dst may be a folder (created if missing).",
     side_effect="write",
-    capabilities=("fs.write:{src}", "fs.write:{dst}"),
     dry_run="skip",
 )
 async def move_file(inp: Input, ctx: ToolContext) -> Output:
