@@ -94,12 +94,17 @@ class RunEngine:
             status, error = "failed", f"Сбой исполнителя: {e!r}"
             state.result = {"artifacts": state.artifacts}
 
+        except asyncio.CancelledError:
+            # The caller stopped waiting (wait=true timed out) or the service is stopping:
+            # the run ends here instead of staying "running" with no end in its log.
+            state.result = {"artifacts": state.artifacts}
+            self._close(run_id, journal, state, "failed", "Запуск прерван: не уложился во время ожидания")
+            raise
+
         if status == "succeeded" and not run.dry_run and _found_nothing(state):
             status = "empty"
 
-        journal.add("end", {"status": status, "error": error, "result": state.result})
-        self.update(run_id, status=status, error=error, result=state.result, finished_at=utcnow())
-        self._cancelled.discard(run_id)
+        self._close(run_id, journal, state, status, error)
 
         await self.main.publish(
             "run.finished",
@@ -107,6 +112,12 @@ class RunEngine:
         )
 
         return run_detail(run_id)
+
+
+    def _close(self, run_id: str, journal: _Journal, state: _State, status: str, error: str | None) -> None:
+        journal.add("end", {"status": status, "error": error, "result": state.result})
+        self.update(run_id, status=status, error=error, result=state.result, finished_at=utcnow())
+        self._cancelled.discard(run_id)
 
 
     def update(self, run_id: str, **fields: Any) -> None:

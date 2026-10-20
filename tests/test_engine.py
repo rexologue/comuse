@@ -239,3 +239,24 @@ async def test_runs_endpoint_creates_and_executes_a_run(settings):
 
     assert run["status"] == "succeeded"
     assert run_log(run["id"])[-1]["kind"] == "end"
+
+
+async def test_a_run_its_caller_stopped_waiting_for_is_closed(settings):
+    """wait=true gives up on a long run: the run must end as failed, not stay running."""
+    import asyncio
+
+    class SlowMain(FakeMain):
+        async def post(self, path, json=None, **kwargs):
+            if path == "/executor/execute":
+                await asyncio.sleep(10)
+
+            return await super().post(path, json=json, **kwargs)
+
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(RunEngine(SlowMain(_tools())).execute(_make_run(SPEC, dry_run=True)), timeout=0.05)
+
+    with session() as db:
+        run = db.get(Run, "run_1")
+
+    assert run.status == "failed" and run.finished_at is not None
+    assert run_log("run_1")[-1]["kind"] == "end"

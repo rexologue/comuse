@@ -15,7 +15,7 @@ from common.utils import new_id
 
 router = APIRouter()
 
-# A synchronous (wait=true) run, e.g. the compiler's dry run, gives up after this.
+# A synchronous (wait=true) run, e.g. a dry run asked in chat, gives up after this.
 _WAIT_TIMEOUT_SEC = 600
 
 
@@ -53,7 +53,7 @@ async def start_run(body: RunBody, request: Request):
             return await asyncio.wait_for(engine.execute(run.id), timeout=_WAIT_TIMEOUT_SEC)
 
         except TimeoutError as e:
-            engine.cancel(run.id)
+            # wait_for has cancelled the run; it closed itself as failed.
             raise ApiError(status_code=504, message=f"Run `{run.id}` did not finish in {_WAIT_TIMEOUT_SEC}s") from e
 
     _spawn(request, engine.execute(run.id))
