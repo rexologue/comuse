@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
+from jsonschema import Draft202012Validator
+
 from agent_loop import history, meta_tools
 from agent_loop.catalog import ToolCatalog, to_function
 from agent_loop.prompts import system_prompt
@@ -149,21 +151,46 @@ class AgentLoop:
             history.add_trace(session_id, message_id, f"meta:{name}", args, output, output["status"])
             return output
 
-        manifest = by_function.get(name)
-        tool = manifest["name"] if manifest else tool_name(name)
+        tool = tool_name(name)
+        # The whole catalog, not just this turn's selection: an external tool must never
+        # slip past the question because the model reached it some other way.
+        manifest = by_function.get(name) or (await self.catalog.manifests()).get(tool)
 
-        output = await self._execute(session_id, tool, args, confirmed=False)
-        trace_id = history.add_trace(session_id, message_id, tool, args, output, output["status"])
+        # Asking before an external action is the chat's rule, not the executor's: the
+        # user is right here. The call waits in the trace until action_confirm.
+        if manifest is not None and manifest["side_effect"] == "external":
+            return self._ask_first(session_id, message_id, manifest, args)
 
-        if output["status"] == "needs_approval":
-            output["action_id"] = trace_id
-            output["next"] = (
+        output = await self._execute(session_id, tool, args)
+        history.add_trace(session_id, message_id, tool, args, output, output["status"])
+
+        return output
+
+
+    def _ask_first(self, session_id: str, message_id: int, manifest: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+        # A call that cannot run anyway is reported now, not after the user said yes.
+        problems = [e.message for e in Draft202012Validator(manifest["input_schema"]).iter_errors(args)]
+        if problems:
+            output = {"status": "error", "error": f"Неверные аргументы `{manifest['name']}`: {'; '.join(problems)}"}
+            history.add_trace(session_id, message_id, manifest["name"], args, output, "error")
+            return output
+
+        output = {
+            "status": "needs_approval",
+            "message": f"«{manifest['title']}» требует подтверждения пользователя",
+            "preview": {"tool": manifest["name"], "title": manifest["title"], "args": args},
+        }
+        trace_id = history.add_trace(session_id, message_id, manifest["name"], args, output, "needs_approval")
+
+        return {
+            **output,
+            "action_id": trace_id,
+            "next": (
                 "Опиши пользователю действие и спроси согласие. При «да» вызови action_confirm с этим action_id. "
                 "Шаги, которые имеют смысл только после этого действия (пометить письмо прочитанным, переложить, "
                 "удалить), до ответа пользователя не делай — сделай их после action_confirm."
-            )
-
-        return output
+            ),
+        }
 
 
     async def _confirm(self, session_id: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -173,20 +200,20 @@ class AgentLoop:
         if event is None or event.session_id != session_id or event.status != "needs_approval":
             return {"status": "error", "error": "Нет действия, ожидающего подтверждения, с таким action_id"}
 
-        output = await self._execute(session_id, event.tool, event.args, confirmed=True)
+        output = await self._execute(session_id, event.tool, event.args)
         history.update_trace(event.id, status="confirmed" if output["status"] == "ok" else output["status"], result=output)
 
         return output
 
 
-    async def _execute(self, session_id: str, tool: str, args: dict[str, Any], *, confirmed: bool) -> dict[str, Any]:
+    async def _execute(self, session_id: str, tool: str, args: dict[str, Any]) -> dict[str, Any]:
         try:
             response = await self.main.post(
                 "/executor/execute",
                 json={
                     "tool": tool,
                     "args": args,
-                    "context": {"mode": "chat", "session_id": session_id, "confirmed": confirmed},
+                    "context": {"mode": "chat", "session_id": session_id},
                 },
             )
 

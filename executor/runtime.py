@@ -1,5 +1,6 @@
-"""The call pipeline: validate the arguments → check path arguments → side-effect
-policy → load declared secrets → run with timeout → log.
+"""The call pipeline: validate the arguments → check path arguments → dry-run policy →
+load declared secrets → run with timeout → log. Whoever calls has already decided the
+call should happen (the chat asks the user first; a task was approved as a whole).
 
 The executor knows argument types, not domains: a path-typed argument must stay inside
 the workspace, a `secrets` argument names an account it loads. What a task may do is
@@ -85,13 +86,6 @@ class ExecutorRuntime:
         if decision.skip:
             return ExecuteResponse(status="ok", mode="skipped", message=decision.message)
 
-        if decision.ask_first:
-            return ExecuteResponse(
-                status="needs_approval",
-                message=decision.message,
-                preview={"tool": spec.name, "title": spec.title, "args": req.args},
-            )
-
         try:
             credentials = {argument: self.load_credential(getattr(inp, argument)) for argument in spec.secrets}
 
@@ -132,19 +126,16 @@ class ExecutorRuntime:
 
 
     def _decide(self, spec: ToolSpec, ctx: ExecContext) -> _Decision:
-        """How a side effect is allowed to happen for this call. A task run never waits
-        here: the user approved the task itself, and how its external actions behave
-        (draft or real) is up to each tool and its domain settings."""
-        if ctx.dry_run:
-            if spec.side_effect in ("write", "external") and spec.dry_run == "skip":
-                return _Decision(skip=True, message="Пропущено в пробном запуске")
+        """A dry run follows the tool's own `dry_run` declaration; anything else runs.
+        How an external action behaves in a task (draft or real) is up to the tool and
+        its domain settings."""
+        if not ctx.dry_run:
+            return _Decision()
 
-            return _Decision(draft=spec.dry_run == "draft")
+        if spec.side_effect in ("write", "external") and spec.dry_run == "skip":
+            return _Decision(skip=True, message="Пропущено в пробном запуске")
 
-        if ctx.mode == "chat" and spec.side_effect == "external" and not ctx.confirmed:
-            return _Decision(ask_first=True, message=f"«{spec.title}» требует подтверждения пользователя")
-
-        return _Decision()
+        return _Decision(draft=spec.dry_run == "draft")
 
 
     def _tool_context(self, ctx: ExecContext, *, draft: bool, credentials: dict[str, Credential]) -> ToolContext:
@@ -200,13 +191,12 @@ class ExecutorRuntime:
 
 
 class _Decision:
-    __slots__ = ("skip", "draft", "ask_first", "message")
+    __slots__ = ("skip", "draft", "message")
 
-    def __init__(self, *, skip: bool = False, draft: bool = False, ask_first: bool = False, message: str | None = None):
-        self.skip      = skip
-        self.draft     = draft
-        self.ask_first = ask_first
-        self.message   = message
+    def __init__(self, *, skip: bool = False, draft: bool = False, message: str | None = None):
+        self.skip    = skip
+        self.draft   = draft
+        self.message = message
 
 
 def _dump_output(spec: ToolSpec, raw: Any) -> Any:

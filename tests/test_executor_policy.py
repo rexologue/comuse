@@ -1,5 +1,5 @@
-"""Executor side-effect policy: chat asks first, dry runs suppress effects, task runs
-never wait (each tool decides by its domain settings)."""
+"""Executor: dry runs follow each tool's declaration, everything else simply runs (the
+chat asks the user itself); path and secret arguments are handled before the call."""
 
 from __future__ import annotations
 
@@ -20,29 +20,15 @@ def _decide(tool: str, **ctx):
     return runtime._decide(SPECS[tool], ExecContext(**ctx))
 
 
-def test_reads_never_ask():
-    decision = _decide("fs.list", mode="chat")
-    assert not decision.ask_first and not decision.skip
-
-
-def test_chat_send_asks_first():
-    decision = _decide("mail.send", mode="chat")
-    assert decision.ask_first
-
-
-def test_confirmed_send_goes_through():
-    decision = _decide("mail.send", mode="chat", confirmed=True)
-    assert not decision.ask_first and not decision.draft
+@pytest.mark.parametrize("mode", ["chat", "run"])
+def test_executor_never_asks(mode):
+    decision = _decide("mail.send", mode=mode)
+    assert not decision.skip and not decision.draft
 
 
 def test_dry_run_send_is_a_draft_and_move_is_skipped():
     assert _decide("mail.send", mode="run", dry_run=True).draft
     assert _decide("fs.move", mode="run", dry_run=True).skip
-
-
-def test_task_run_never_waits():
-    decision = _decide("mail.send", mode="run")
-    assert not decision.ask_first and not decision.draft and not decision.skip
 
 
 def test_spec_has_no_approval_section():

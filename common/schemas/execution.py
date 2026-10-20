@@ -17,8 +17,6 @@ class ExecContext(BaseModel):
     # The task's domain settings sections; each tool reads its own domain's.
     task_settings: dict[str, dict[str, Any]] = Field(default_factory=dict)
     dry_run: bool = False
-    # The user already confirmed this exact external action.
-    confirmed: bool = False
 
 
 class ExecuteRequest(BaseModel):
@@ -28,9 +26,8 @@ class ExecuteRequest(BaseModel):
 
 
 class ExecuteResponse(BaseModel):
-    # needs_approval: an external action waits for the user's OK (a draft may exist).
     # needs_input: the tool asks the user a question (user.ask).
-    status: Literal["ok", "error", "needs_approval", "needs_input"]
+    status: Literal["ok", "error", "needs_input"]
     output: Any = None
     error: str | None = None
     # real | draft | skipped — what actually happened to a side-effecting tool.

@@ -161,7 +161,7 @@ project/
 - **API:** `POST /v1/chat/completions` (со стримингом), `GET /sessions`, `GET /sessions/{id}`.
 - **Цикл:** история сессии → отбор инструментов (топ-`AGENT_TOOLS_TOP_K`=24 по эмбеддингам плюс уже использованные в сессии и `fs.list`, `docs.read`; без эмбеддингов — все) → LLM → tool calls → `POST main/executor/execute` с `context.mode = "chat"` → результат в историю и в `trace_events` → снова LLM. Остановка, когда ответ пришёл без tool calls, или после `AGENT_MAX_ITERATIONS`=16 итераций.
 - **Мета-инструменты** управляют самой системой, а не компьютером: `task_compile`, `task_patch`, `task_reject`, `task_list`, `task_run_now`, `task_control` (пауза, возобновление, архив), `run_status`, `approvals_list`, `approval_answer`, `action_confirm`. Их обрабатывает agent-loop через main, в executor они не идут. Включить задачу агент не может: такого инструмента нет, а `approval_answer` передаёт только ответы на вопросы `ask_user`.
-- **Внешние действия в чате** (`side_effect: external`) executor возвращает со статусом `needs_approval`, агент спрашивает пользователя прямо в диалоге и после «да» вызывает `action_confirm`. Зависимые шаги (пометить письмо прочитанным и т. п.) он делает только после подтверждения.
+- **Внешние действия в чате** (`side_effect: external` по каталогу) спрашивает сам agent-loop: в executor такой вызов не уходит. Agent-loop проверяет аргументы по input-схеме, записывает вызов в трейс со статусом `needs_approval` и возвращает модели `action_id`; агент спрашивает пользователя прямо в диалоге и после «да» вызывает `action_confirm` — только тогда вызов идёт в executor, один раз. Зависимые шаги (пометить письмо прочитанным и т. п.) агент делает только после подтверждения.
 
 ### compiler :8002
 
@@ -190,9 +190,9 @@ project/
 
 Единственное место, где выполняются инструменты. И чат, и runner зовут его одним форматом.
 
-- `POST /execute {tool, args, context}` → `{status, output, artifacts}`, где status: `ok`, `error`, `needs_input` или (только в чате) `needs_approval`. В `context`: режим (`chat` или `run`), `session_id` или `run_id` + `step_id`, настройки задачи (`task_settings`), `dry_run`.
+- `POST /execute {tool, args, context}` → `{status, output, artifacts}`, где status: `ok`, `error` или `needs_input`. Executor ничего не спрашивает: кто вызывает, тот уже решил, что вызов нужен (чат спросил пользователя, задачу пользователь одобрил). В `context`: режим (`chat` или `run`), `session_id` или `run_id` + `step_id`, настройки задачи (`task_settings`), `dry_run`.
 - `GET /tools`, `GET /tools/{name}`, `POST /tools/reload`; аккаунты: `GET`, `POST /accounts`, `GET /accounts/presets`, `POST /accounts/{name}/check`, `DELETE /accounts/{name}`.
-- **Конвейер вызова:** найти инструмент → проверить args по input-схеме → проверить аргументы-пути → политика внешних действий (в чате — спросить; в пробном запуске — пропустить или черновик по `dry_run` команды; в запуске задачи — ничего, команда сама смотрит настройки своей группы) → загрузить аккаунты для аргументов из `secrets` → вызвать с таймаутом и `ToolContext` → проверить output → записать в `tool_calls` без секретов.
+- **Конвейер вызова:** найти инструмент → проверить args по input-схеме → проверить аргументы-пути → пробный запуск по объявлению `dry_run` команды (`skip`, `draft` или `real`) → загрузить аккаунты для аргументов из `secrets` → вызвать с таймаутом и `ToolContext` → проверить output → записать в `tool_calls` без секретов.
 - **Executor знает типы аргументов, а не группы.**
   - Аргумент типа `WorkspacePath` (или `FileRefs` — список файлов) executor до вызова проверяет песочницей `executor/paths.py`: только рабочая папка и `data:templates` / `data:outputs`, без `..` и симлинков наружу. Входы `llm.*` (`TextOrFileRefs` — путь или обычный текст) заранее не проверяются; файл из них открывается через тот же `ctx.read_path`.
   - Аргументы из `secrets` называют сохранённый аккаунт: executor сам достаёт его настройки и пароль из keyring и отдаёт команде как `ctx.credential("account")`. Неизвестный аккаунт — отказ до вызова.
