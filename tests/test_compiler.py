@@ -246,3 +246,10 @@ def test_copied_or_own_texts_pass(body):
     from compiler.compile import check_verbatim
 
     check_verbatim(_with_body(body), CHAT)
+
+
+def test_a_template_may_use_only_what_a_run_has():
+    """The runner gives a run today and now; a name it does not have would pass the check
+    and fail every run with an undefined name."""
+    errors = _bad(lambda s: s["variables"].update(source="{{ trigger }}"))
+    assert "trigger" in errors[0]

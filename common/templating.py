@@ -18,7 +18,9 @@ from jinja2.sandbox import SandboxedEnvironment
 
 _SINGLE_EXPR = re.compile(r"^\s*\{\{(?P<expr>.*?)\}\}\s*$", re.DOTALL)
 
-BUILTIN_NAMES = {"today", "now", "trigger", "loop", "range", "dict", "lipsum", "cycler", "joiner", "namespace"}
+# Names a template may use besides variables and steps: what the runner puts into every
+# run (today, now) and Jinja's own globals. Nothing else exists at run time.
+BUILTIN_NAMES = {"today", "now", "loop", "range", "dict", "lipsum", "cycler", "joiner", "namespace"}
 
 
 def _as_date(value: Any) -> date:
