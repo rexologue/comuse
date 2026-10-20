@@ -133,7 +133,7 @@ project/
 
 | Метод и путь | Куда идёт | Что делает |
 | --- | --- | --- |
-| `POST /agent/v1/chat/completions` | agent-loop | Чат в OpenAI-совместимом формате, `session_id` в `metadata` |
+| `POST /agent/v1/chat/completions` | agent-loop | Чат в OpenAI-совместимом формате; чат определяется по `session_id` (в `metadata` или полем, например через `extra_body` SDK), а без него — по присланной переписке |
 | `GET /agent/sessions`, `GET /agent/sessions/{id}` | agent-loop | Список сессий, история и трейс |
 | `POST /compiler/compile` | compiler | `{session_id, title?, hint?}` → черновик задачи и approval `version_approve` |
 | `POST /compiler/patch` | compiler | `{task_id, instruction, session_id?}` → черновик новой версии и diff (LLM) |
@@ -155,7 +155,7 @@ project/
 
 Внутренние маршруты (нужен internal-токен): `POST /internal/register`, `POST /internal/events`, `POST /executor/execute` (вызывают agent-loop и runner), `POST /runner/runs` (вызывает scheduler).
 
-В исходной схеме был путь `/agent/v1/chat/compatible`. Лучше `/chat/completions`: тогда любой OpenAI-клиент работает с нами без настроек, достаточно указать `base_url`.
+В исходной схеме был путь `/agent/v1/chat/compatible`. Лучше `/chat/completions`: тогда любой OpenAI-клиент работает с нами без настроек, достаточно указать `base_url`. История чата хранится у нас, из `messages` берётся только последнее сообщение пользователя. Клиент, который знает про `session_id`, получает его в ответе и присылает обратно. Обычный клиент (Open WebUI и т. п.) про него не знает и каждый раз присылает всю переписку: тогда agent-loop ищет чат, где реплики пользователя и ответы ассистента с текстом заканчиваются ровно этой перепиской (вызовы инструментов и сообщения задач в копии клиента нет, они не сравниваются). Не нашёлся — начинается новый чат.
 
 ### agent-loop :8001
 

@@ -27,6 +27,45 @@ def ensure_session(session_id: str | None, first_text: str) -> str:
         return chat.id
 
 
+def find_session(dialogue: list[tuple[str, str]]) -> str | None:
+    """The chat whose conversation ends with `dialogue`: (role, text) pairs of the user's
+    messages and the assistant's answers, as a plain OpenAI client sends them back each
+    time instead of a session id. Tool exchanges and task notices are not in a client's
+    copy, so they are left out here too; the newest matching chat wins."""
+    if not dialogue:
+        return None
+
+    role, text = dialogue[-1]
+
+    with session() as db:
+        rows = (
+            db.query(ChatMessage.session_id)
+            .filter(ChatMessage.role == role, ChatMessage.content == text)
+            .order_by(ChatMessage.id.desc())
+            .limit(50)
+            .all()
+        )
+
+    for session_id in dict.fromkeys(session_id for (session_id,) in rows):
+        if _dialogue_tail(session_id, len(dialogue)) == [(r, t.strip()) for r, t in dialogue]:
+            return session_id
+
+    return None
+
+
+def _dialogue_tail(session_id: str, count: int) -> list[tuple[str, str]]:
+    with session() as db:
+        rows = (
+            db.query(ChatMessage.role, ChatMessage.content)
+            .filter(ChatMessage.session_id == session_id, ChatMessage.role.in_(("user", "assistant")), ChatMessage.content != "")
+            .order_by(ChatMessage.id.desc())
+            .limit(count)
+            .all()
+        )
+
+    return [(role, (content or "").strip()) for role, content in reversed(rows)]
+
+
 def session_exists(session_id: str) -> bool:
     with session() as db:
         return db.get(ChatSession, session_id) is not None

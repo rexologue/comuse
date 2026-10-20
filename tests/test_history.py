@@ -62,3 +62,31 @@ def test_a_notice_is_not_the_users_turn(settings):
     history.add_message(session_id, "notice", "Задача «Сводка»: готово")
 
     assert history.llm_history(session_id, limit=10)[0] == {"role": "user", "content": "Сделай отчёт"}
+
+
+def test_a_plain_client_finds_its_chat_by_the_conversation(settings):
+    """A client without session_id sends the whole conversation back every time."""
+    from agent_loop.api.chat import _earlier_dialogue
+
+    session_id = history.ensure_session(None, "Сделай отчёт")
+    history.add_message(session_id, "user", "Сделай отчёт")
+    call = {"id": "c1", "type": "function", "function": {"name": "fs__list", "arguments": "{}"}}
+    history.add_message(session_id, "assistant", "", tool_calls=[call])
+    history.add_message(session_id, "tool", "файлы", tool_call_id="c1", name="fs__list")
+    history.add_message(session_id, "assistant", "Готово: Отчёт.docx")
+    history.add_message(session_id, "notice", "Задача «Сводка»: готово")
+
+    # Another chat that started the same way but went elsewhere.
+    other = history.ensure_session(None, "Сделай отчёт")
+    history.add_message(other, "user", "Сделай отчёт")
+    history.add_message(other, "assistant", "Какой именно?")
+
+    sent = [
+        {"role": "system", "content": "You are a helpful assistant"},
+        {"role": "user", "content": "Сделай отчёт"},
+        {"role": "assistant", "content": [{"type": "text", "text": "Готово: Отчёт.docx"}]},
+        {"role": "user", "content": "Теперь каждую неделю"},
+    ]
+
+    assert history.find_session(_earlier_dialogue(sent)) == session_id
+    assert history.find_session(_earlier_dialogue(sent[:2])) is None  # a first message starts a new chat

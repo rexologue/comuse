@@ -1,5 +1,7 @@
 """OpenAI-compatible chat endpoint. The session id travels in `metadata.session_id`
-(or the `session_id` field); the reply carries it back so a client can continue."""
+(or the `session_id` field, e.g. through an SDK's extra_body); the reply carries it back
+so a client can continue. A plain client that knows nothing of it sends the whole
+conversation back every time instead, and the chat is found by that conversation."""
 
 from __future__ import annotations
 
@@ -45,6 +47,9 @@ async def models():
 async def chat_completions(body: ChatRequest, request: Request):
     session_id = body.session_id or (body.metadata or {}).get("session_id")
     user_text = _last_user_text(body.messages)
+
+    if session_id is None:
+        session_id = history.find_session(_earlier_dialogue(body.messages))
 
     loop = request.app.state.loop
 
@@ -136,13 +141,27 @@ def _completion(result: TurnResult) -> dict[str, Any]:
 
 def _last_user_text(messages: list[dict[str, Any]]) -> str:
     for message in reversed(messages):
-        if message.get("role") != "user":
-            continue
-
-        content = message.get("content")
-        if isinstance(content, list):
-            return "\n".join(part.get("text", "") for part in content if isinstance(part, dict))
-
-        return str(content or "")
+        if message.get("role") == "user":
+            return _text(message)
 
     raise ApiError(status_code=400, message="No user message in `messages`")
+
+
+def _earlier_dialogue(messages: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    """What the client says was said before its last message: user messages and the
+    assistant's answers with text (system prompts and tool messages are its own)."""
+    last_user = max((i for i, m in enumerate(messages) if m.get("role") == "user"), default=0)
+
+    return [
+        (message["role"], _text(message).strip())
+        for message in messages[:last_user]
+        if message.get("role") in ("user", "assistant") and _text(message).strip()
+    ]
+
+
+def _text(message: dict[str, Any]) -> str:
+    content = message.get("content")
+    if isinstance(content, list):
+        return "\n".join(part.get("text", "") for part in content if isinstance(part, dict))
+
+    return str(content or "")
