@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from pydantic import Field
 
 from common.tools import ToolContext, ToolError, ToolInput, ToolOutput, tool
@@ -34,6 +36,6 @@ async def write_file(inp: Input, ctx: ToolContext) -> Output:
         return Output(path=ctx.to_ref(path), size=len(inp.content.encode("utf-8")))
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(inp.content, encoding="utf-8")
+    await asyncio.to_thread(path.write_text, inp.content, encoding="utf-8")
 
     return Output(path=ctx.to_ref(path), size=path.stat().st_size)

@@ -3,6 +3,7 @@ ending with `/`) receives the file under its own name."""
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 from pathlib import Path
 
@@ -36,7 +37,7 @@ async def copy_file(inp: Input, ctx: ToolContext) -> Output:
         return Output(path=ctx.to_ref(dst))
 
     dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dst)
+    await asyncio.to_thread(shutil.copy2, src, dst)
 
     return Output(path=ctx.to_ref(dst))
 
@@ -57,7 +58,7 @@ async def move_file(inp: Input, ctx: ToolContext) -> Output:
         return Output(path=ctx.to_ref(dst))
 
     dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(src, dst)
+    await asyncio.to_thread(shutil.move, src, dst)
 
     return Output(path=ctx.to_ref(dst))
 

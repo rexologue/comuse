@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import date, datetime, timedelta
 
 from pydantic import BaseModel, Field
@@ -43,7 +44,15 @@ async def list_files(inp: Input, ctx: ToolContext) -> Output:
     since = _parse_date(inp.modified_from, "modified_from")
     until = _parse_date(inp.modified_to, "modified_to")
 
-    matches = folder.rglob(inp.pattern) if inp.recursive else folder.glob(inp.pattern)
+    # A recursive walk over a network share takes long: off the event loop, so other
+    # calls keep going and the timeout can fire.
+    files = await asyncio.to_thread(_scan, folder, inp.pattern, inp.recursive, since, until, ctx)
+
+    return Output(files=files)
+
+
+def _scan(folder, pattern: str, recursive: bool, since: date | None, until: date | None, ctx: ToolContext) -> list[FileInfo]:
+    matches = folder.rglob(pattern) if recursive else folder.glob(pattern)
     files: list[FileInfo] = []
 
     for path in sorted(matches):
@@ -67,7 +76,7 @@ async def list_files(inp: Input, ctx: ToolContext) -> Output:
             )
         )
 
-    return Output(files=files)
+    return files
 
 
 def _parse_date(value: str | None, name: str) -> date | None:
