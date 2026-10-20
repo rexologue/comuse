@@ -20,7 +20,6 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 
 from common.clients.llm_client import LLMClient
-from common.clients.main_client import MainClient
 from common.schemas.execution import ExecContext, ExecuteRequest, ExecuteResponse
 from common.settings import Settings
 from common.storage.db import session
@@ -42,14 +41,12 @@ class ExecutorRuntime:
         registry: ToolRegistry,
         secrets: SecretStore,
         llm: LLMClient,
-        main: MainClient,
     ):
 
         self.settings = settings
         self.registry = registry
         self.secrets  = secrets
         self.llm      = llm
-        self.main     = main
 
         self.paths = WorkspacePaths(
             workspace_dir=settings.storage.workspace_dir,

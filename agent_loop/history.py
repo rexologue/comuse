@@ -9,7 +9,7 @@ from sqlalchemy import func
 from common.errors import ApiError
 from common.storage.db import session
 from common.storage.models import ChatMessage, ChatSession, TraceEvent
-from common.utils import new_id
+from common.utils import new_id, utcnow
 
 
 def ensure_session(session_id: str | None, first_text: str) -> str:
@@ -91,9 +91,10 @@ def add_message(
         )
         db.add(message)
 
+        # The chat list is newest first by the last message.
         chat = db.get(ChatSession, session_id)
         if chat is not None:
-            chat.status = "active"
+            chat.updated_at = utcnow()
 
         db.commit()
 

@@ -185,16 +185,6 @@ _TRANSITIONS = {
 }
 
 
-def get_task(task_id: str) -> Task:
-    with session() as db:
-        task = db.get(Task, task_id)
-
-    if task is None:
-        raise ApiError(status_code=404, message=f"Task `{task_id}` not found")
-
-    return task
-
-
 def set_settings(task_id: str, settings: dict[str, Any]) -> Task:
     with session() as db:
         task = db.get(Task, task_id)

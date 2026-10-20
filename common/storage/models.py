@@ -16,27 +16,18 @@ from common.utils import utcnow
 # MAIN
 # -----------------------------
 
-class Setting(Base):
-    __tablename__ = "settings"
-
-    key: Mapped[str] = mapped_column(String, primary_key=True)
-    value: Mapped[Any] = mapped_column(JSON)
-
-
 class Approval(Base):
     __tablename__ = "approvals"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    # version_approve (skill_permissions — planned)
+    # version_approve: the user's approval of a task version, the only one there is
     kind: Mapped[str] = mapped_column(String, index=True)
-    # pending | approved | rejected | cancelled
+    # pending | approved | rejected | cancelled (a newer draft replaced the version)
     status: Mapped[str] = mapped_column(String, default="pending", index=True)
-    run_id: Mapped[str | None] = mapped_column(String, index=True)
     task_id: Mapped[str | None] = mapped_column(String, index=True)
     task_version_id: Mapped[str | None] = mapped_column(String)
     session_id: Mapped[str | None] = mapped_column(String)
     payload: Mapped[Any] = mapped_column(JSON, default=dict)
-    answer: Mapped[Any] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -48,7 +39,6 @@ class Event(Base):
     type: Mapped[str] = mapped_column(String, index=True)
     payload: Mapped[Any] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 # -----------------------------
@@ -60,7 +50,6 @@ class ChatSession(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     title: Mapped[str] = mapped_column(String, default="")
-    status: Mapped[str] = mapped_column(String, default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -90,7 +79,6 @@ class TraceEvent(Base):
     result: Mapped[Any] = mapped_column(JSON, nullable=True)
     # ok | error | needs_approval | confirmed | rejected
     status: Mapped[str] = mapped_column(String)
-    user_feedback: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -133,21 +121,6 @@ class TaskVersion(Base):
     session_id: Mapped[str | None] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-
-
-# -----------------------------
-# SCHEDULER
-# -----------------------------
-
-class Trigger(Base):
-    __tablename__ = "triggers"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    task_id: Mapped[str] = mapped_column(String, index=True)
-    type: Mapped[str] = mapped_column(String)
-    config: Mapped[Any] = mapped_column(JSON, default=dict)
-    next_fire_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
 # -----------------------------
@@ -195,30 +168,6 @@ class RunLog(Base):
 # -----------------------------
 # EXECUTOR
 # -----------------------------
-
-class Tool(Base):
-    __tablename__ = "tools"
-
-    name: Mapped[str] = mapped_column(String, primary_key=True)
-    # internal | skill | mcp
-    source: Mapped[str] = mapped_column(String, default="internal")
-    version: Mapped[str] = mapped_column(String, default="1")
-    manifest: Mapped[Any] = mapped_column(JSON)
-    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-
-
-class Skill(Base):
-    __tablename__ = "skills"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    name: Mapped[str] = mapped_column(String, unique=True)
-    # draft | approved | disabled
-    status: Mapped[str] = mapped_column(String, default="draft")
-    manifest: Mapped[Any] = mapped_column(JSON)
-    path: Mapped[str] = mapped_column(String)
-    source_session_id: Mapped[str | None] = mapped_column(String)
-    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-
 
 class Account(Base):
     __tablename__ = "accounts"

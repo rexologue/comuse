@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from common.storage.db import session
-from common.storage.models import Approval, Setting
+from common.storage.models import Approval
 from main import events
 from main.auth import require_client
 from main.orchestrator import approval_dict
@@ -87,23 +86,3 @@ async def stream_events(request: Request, since: int | None = None):
 
     return EventSourceResponse(generator())
 
-
-# -----------------------------
-# SETTINGS
-# -----------------------------
-
-@router.get("/settings", summary="User-level settings")
-async def get_settings():
-    with session() as db:
-        return {row.key: row.value for row in db.query(Setting)}
-
-
-@router.put("/settings", summary="Update user-level settings")
-async def put_settings(body: dict[str, Any]):
-    with session() as db:
-        for key, value in body.items():
-            db.merge(Setting(key=key, value=value))
-
-        db.commit()
-
-    return await get_settings()

@@ -1,4 +1,7 @@
-"""Decides *when* a task runs; the runner decides how. Every fire goes through main."""
+"""Decides *when* a task runs; the runner decides how. Every fire goes through main.
+
+Jobs live in memory only and are rebuilt from the active tasks on every start: when a
+task runs is in its approved spec, so the scheduler keeps no table of its own."""
 
 from __future__ import annotations
 
@@ -13,7 +16,7 @@ from common.errors import ApiError
 from common.schemas.task import TaskSpec
 from common.settings import Settings
 from common.storage.db import session
-from common.storage.models import Task, TaskVersion, Trigger
+from common.storage.models import Task, TaskVersion
 
 
 log = logging.getLogger("scheduler")
@@ -26,6 +29,8 @@ class TaskScheduler:
         self.main     = main
 
         self._scheduler = AsyncIOScheduler()
+        # task_id → its cron expression, for the jobs listing.
+        self._exprs: dict[str, str] = {}
 
 
     def start(self) -> None:
@@ -79,22 +84,15 @@ class TaskScheduler:
 
 
     def jobs(self) -> list[dict[str, Any]]:
-        with session() as db:
-            triggers = {t.task_id: t for t in db.query(Trigger).filter(Trigger.enabled.is_(True))}
-
-        out = []
-        for task_id, trigger in triggers.items():
-            job = self._scheduler.get_job(task_id)
-            out.append(
-                {
-                    "task_id": task_id,
-                    "type": trigger.type,
-                    "config": trigger.config,
-                    "next_run_time": job.next_run_time.isoformat() if job and job.next_run_time else None,
-                }
-            )
-
-        return out
+        """Scheduled tasks (manual ones have no job: they run only when asked)."""
+        return [
+            {
+                "task_id": job.id,
+                "expr": self._exprs.get(job.id),
+                "next_run_time": job.next_run_time.isoformat() if job.next_run_time else None,
+            }
+            for job in self._scheduler.get_jobs()
+        ]
 
 
     # -----------------------------
@@ -106,7 +104,7 @@ class TaskScheduler:
         self._unschedule(task_id)
 
         if trigger.type == "cron":
-            job = self._scheduler.add_job(
+            self._scheduler.add_job(
                 self._fire,
                 CronTrigger.from_crontab(trigger.expr),
                 id=task_id,
@@ -115,28 +113,18 @@ class TaskScheduler:
                 coalesce=True,
                 misfire_grace_time=3600,
             )
-            self._save_trigger(task_id, trigger.type, trigger.model_dump(), next_fire=job.next_run_time)
-
-        else:
-            self._save_trigger(task_id, trigger.type, trigger.model_dump())
+            self._exprs[task_id] = trigger.expr
 
         log.info("scheduled %s: %s", task_id, trigger.model_dump(exclude_defaults=True))
 
 
     def _remove(self, task_id: str) -> int:
-        had_job = self._unschedule(task_id)
-
-        with session() as db:
-            row = db.get(Trigger, task_id)
-            if row is not None and row.enabled:
-                row.enabled = False
-                db.commit()
-                had_job = True
-
-        return int(had_job)
+        return int(self._unschedule(task_id))
 
 
     def _unschedule(self, task_id: str) -> bool:
+        self._exprs.pop(task_id, None)
+
         if self._scheduler.get_job(task_id) is None:
             return False
 
@@ -155,34 +143,3 @@ class TaskScheduler:
 
         except ApiError as e:
             log.warning("cannot fire %s: %s", task_id, e.message)
-
-        job = self._scheduler.get_job(task_id)
-        if job is not None:
-            self._update_trigger(task_id, next_fire=job.next_run_time)
-
-
-    # -----------------------------
-    # TRIGGERS TABLE (scheduler is its only writer)
-    # -----------------------------
-
-    def _save_trigger(self, task_id: str, kind: str, config: dict[str, Any], next_fire=None) -> None:
-        with session() as db:
-            row = db.get(Trigger, task_id) or Trigger(id=task_id, task_id=task_id)
-            row.type = kind
-            row.config = config
-            row.enabled = True
-            row.next_fire_at = next_fire
-            db.add(row)
-            db.commit()
-
-
-    def _update_trigger(self, task_id: str, *, next_fire=None) -> None:
-        with session() as db:
-            row = db.get(Trigger, task_id)
-            if row is None:
-                return
-
-            if next_fire is not None:
-                row.next_fire_at = next_fire
-
-            db.commit()

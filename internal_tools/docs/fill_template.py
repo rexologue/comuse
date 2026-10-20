@@ -58,7 +58,7 @@ def _render(template, context, images, output) -> None:
     values = dict(context)
 
     # A missing field renders empty without any error; fail loudly instead so a dry
-    # run shows it and the compiler can repair the task.
+    # run shows it to the user.
     expected = document.get_undeclared_template_variables()
     missing = sorted(expected - set(values) - set(images))
     if missing:

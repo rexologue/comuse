@@ -47,7 +47,6 @@ def _runtime(settings):
     runtime.paths = WorkspacePaths(settings.storage.workspace_dir, settings.storage.data_dir)
     runtime.secrets = None
     runtime.llm = None
-    runtime.main = None
 
     return runtime
 

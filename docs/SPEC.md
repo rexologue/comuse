@@ -115,7 +115,7 @@ project/
 └── pyproject.toml
 ```
 
-Отдельного сервиса storage нет: это пакет `common/storage`, который импортирует каждый сервис. Правила записи — в разделе «База данных». Скиллы от агента (`skills/`, Deno) пока не реализованы: в БД есть заготовка таблицы `skills`, кода нет.
+Отдельного сервиса storage нет: это пакет `common/storage`, который импортирует каждый сервис. Правила записи — в разделе «База данных». Скиллы от агента (`skills/`, Deno) пока не реализованы: ни кода, ни таблиц под них нет.
 
 ## Сервисы
 
@@ -150,7 +150,6 @@ project/
 | `GET /approvals`, `POST /approvals/{id}/answer {approve}` | main, затем compiler | Одобрение версий задач (`version_approve`) — единственное, что ждёт пользователя |
 | `GET /tools`, `GET /tools/{name}` | executor | Каталог инструментов со схемами |
 | `GET /accounts`, `POST /accounts {name, kind, preset?, config, secret}`, `GET /accounts/kinds`, `POST /accounts/{name}/check`, `DELETE /accounts/{name}` | executor | Аккаунты (почта и другие виды, которые объявляют группы команд); пароль сразу уходит в keyring |
-| `GET /settings`, `PUT /settings` | main | Хранилище «ключ → значение» для будущего UI; сервисы его пока не читают |
 | `GET /events`, `GET /events/recent` | main | Поток событий (SSE) и последние события JSON |
 
 Внутренние маршруты (нужен internal-токен): `POST /internal/register`, `POST /internal/events`, `POST /executor/execute` (вызывают agent-loop и runner), `POST /runner/runs` (вызывает scheduler).
@@ -213,7 +212,7 @@ project/
 
 Отдельный сервис, который решает только «когда запускать». Runner напрямую не вызывает, только через main, как и все остальные.
 
-- При старте и по `POST /reload {task_id?}` читает активные версии задач и пересобирает свою таблицу `triggers`. `GET /jobs` показывает, что и когда запустится.
+- При старте и по `POST /reload {task_id?}` читает активные версии задач и пересобирает задания в памяти: когда запускать задачу, записано в её одобренной версии, своей таблицы у scheduler нет. Задачу, версию которой он прочитать не может (например, собранную по старой схеме), он пропускает с ошибкой в логе, остальные планирует. `GET /jobs` показывает, что и когда запустится.
 - **Типы триггеров:** `cron` (APScheduler) и `manual` (без расписания). Scheduler знает только время запуска: почту, папки и прочее он не читает. «Ответить на новые письма» или «разобрать новые файлы» — это шаги задачи (`mail.search`, `fs.list` и т. д.), запускаемой по cron.
 - Срабатывание → `POST main/runner/runs {task_id, trigger}`.
 
@@ -408,29 +407,24 @@ tools:
 
 | Таблица | Владелец | Основные поля | Кто читает |
 | --- | --- | --- | --- |
-| `settings` | main | key, value\_json | пока никто |
-| `approvals` | main | id, kind, status, run\_id, task\_id, task\_version\_id, session\_id, payload\_json, answer\_json, created\_at, resolved\_at | runner, compiler, agent-loop |
-| `events` | main | id, type, payload\_json, created\_at, read\_at | — |
-| `chat_sessions` | agent-loop | id, title, status, created\_at | compiler, main |
-| `chat_messages` | agent-loop | id, session\_id, role, content, tool\_calls\_json, tool\_call\_id, name, created\_at | compiler |
-| `trace_events` | agent-loop | id, session\_id, message\_id, tool, args\_json, result\_json, status, user\_feedback, created\_at | compiler |
+| `approvals` | main | id, kind, status, task\_id, task\_version\_id, session\_id, payload\_json, created\_at, resolved\_at | — (клиенты через API) |
+| `events` | main | id, type, payload\_json, created\_at | — |
+| `chat_sessions` | agent-loop | id, title, created\_at, updated\_at | compiler, main |
+| `chat_messages` | agent-loop | id, session\_id, role (user, assistant, tool, notice), content, tool\_calls\_json, tool\_call\_id, name, created\_at | compiler |
+| `trace_events` | agent-loop | id, session\_id, message\_id, tool, args\_json, result\_json, status, created\_at | compiler |
 | `tasks` | compiler | id, title, status, settings\_json, current\_version\_id, source\_session\_id, created\_at, updated\_at | все |
 | `task_versions` | compiler | id, task\_id, version\_no, spec\_json, status, parent\_version\_id, patch\_json, summary, created\_by (compile, patch, manual), session\_id (чат версии), created\_at, approved\_at | runner, scheduler, main |
-| `triggers` | scheduler | id, task\_id, type, config\_json, next\_fire\_at, enabled | main |
 | `runs` | runner | id, task\_id, task\_version\_id, trigger, status, dry\_run, result\_json, error, started\_at, finished\_at | main, agent-loop, compiler |
 | `run_log` | runner | id, run\_id, task\_id, seq, at, kind (start, step, notify, end), step\_key, data\_json | main |
-| `tools` | executor | name, source, version, manifest\_json, enabled | agent-loop, compiler |
-| `skills` | executor | заготовка под скиллы, не используется | — |
 | `accounts` | executor | id, kind, name, config\_json, secret\_ref, created\_at | main (без секретов) |
 
 Значения перечислений:
 
 - `runs.status`: queued, running, succeeded, empty, failed, cancelled. `empty` — все шаги вернули пустой результат (проверка по расписанию ничего не нашла); `GET /tasks/{id}/runs` их не показывает, `?include_empty=true` показывает.
-- `approvals.kind`: version\_approve (skill\_permissions — план). Одобрение одно — версии задачи.
-- `tools.source`: internal (skill и mcp — план).
+- `approvals.kind`: version\_approve. Одобрение одно — версии задачи; новый черновик отменяет (`cancelled`) одобрения прежних.
 - `accounts.kind`: вид, который объявила группа команд (сейчас почта: imap\_smtp).
 
-`trace_events.user_feedback` задумано для правок пользователя к результату вызова («нет, возьми другую колонку»), но сейчас не заполняется: compiler отличает удачные вызовы от неудачных по статусу и по самому разговору. Если конкуренция за SQLite станет проблемой, storage можно вынести в отдельный сервис или перейти на Postgres; для хакатона это не нужно.
+Каталог команд таблицы не имеет: executor собирает его из `internal_tools/` при старте и отдаёт по `GET /tools`. Если конкуренция за SQLite станет проблемой, storage можно вынести в отдельный сервис или перейти на Postgres; для хакатона это не нужно.
 
 ## Ключевые сценарии
 

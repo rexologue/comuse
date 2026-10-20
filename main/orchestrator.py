@@ -33,7 +33,6 @@ class Orchestrator:
         *,
         kind: str,
         payload: dict[str, Any],
-        run_id: str | None = None,
         task_id: str | None = None,
         task_version_id: str | None = None,
         session_id: str | None = None,
@@ -42,7 +41,6 @@ class Orchestrator:
             approval = Approval(
                 id=new_id("apr_"),
                 kind=kind,
-                run_id=run_id,
                 task_id=task_id,
                 task_version_id=task_version_id,
                 session_id=session_id,
@@ -181,11 +179,10 @@ class Orchestrator:
             log.warning("scheduler reload for %s failed: %s", task_id, e.message)
 
 
-    def _resolve(self, approval_id: str, status: str, answer: Any) -> None:
+    def _resolve(self, approval_id: str, status: str) -> None:
         with session() as db:
             approval = db.get(Approval, approval_id)
             approval.status = status
-            approval.answer = answer
             approval.resolved_at = utcnow()
             db.commit()
 
@@ -201,7 +198,7 @@ class Orchestrator:
             )
 
         for approval in pending:
-            self._resolve(approval.id, status, None)
+            self._resolve(approval.id, status)
 
 
     def _cancel_task_approvals(self, task_id: str) -> None:
@@ -209,7 +206,7 @@ class Orchestrator:
             pending = db.query(Approval).filter(Approval.task_id == task_id, Approval.status == "pending").all()
 
         for approval in pending:
-            self._resolve(approval.id, "cancelled", None)
+            self._resolve(approval.id, "cancelled")
 
 
     def _get(self, approval_id: str) -> dict[str, Any]:
@@ -222,12 +219,10 @@ def approval_dict(approval: Approval) -> dict[str, Any]:
         "id": approval.id,
         "kind": approval.kind,
         "status": approval.status,
-        "run_id": approval.run_id,
         "task_id": approval.task_id,
         "task_version_id": approval.task_version_id,
         "session_id": approval.session_id,
         "payload": approval.payload,
-        "answer": approval.answer,
         "created_at": approval.created_at.isoformat() if approval.created_at else None,
         "resolved_at": approval.resolved_at.isoformat() if approval.resolved_at else None,
     }

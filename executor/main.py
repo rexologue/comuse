@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI):
 
     app.state.registry = registry
     app.state.secrets = secrets
-    app.state.runtime = ExecutorRuntime(settings, registry, secrets, llm, app.state.main)
+    app.state.runtime = ExecutorRuntime(settings, registry, secrets, llm)
 
     try:
         yield

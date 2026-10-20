@@ -25,7 +25,7 @@ class PatchBody(BaseModel):
     session_id: str | None = None
 
 
-@router.post("/compile", summary="Chat session → draft task (with dry run)")
+@router.post("/compile", summary="Chat session → draft task (nothing runs)")
 async def compile_task(body: CompileBody, request: Request):
     return await request.app.state.compiler.compile(body.session_id, title=body.title, hint=body.hint)
 
