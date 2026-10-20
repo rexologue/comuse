@@ -94,6 +94,29 @@ def test_bad_cron():
     assert "cron" in errors[0]
 
 
+@pytest.mark.parametrize("expr", ["0 9 * * 1", "0 9 * * 1-5", "0 9 * * 0,6", "0 9 * * */2"])
+def test_weekdays_as_numbers_are_refused(expr):
+    """APScheduler counts days from Monday, cron from Sunday: «1» would run on Tuesdays."""
+    errors = _bad(lambda s: s["trigger"].update(expr=expr))
+    assert "именами" in errors[0]
+
+
+def test_weekdays_by_name_read_and_run_the_same():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from common.cron import cron_trigger
+    from common.schemas.task import Trigger
+    from compiler.cards import describe_trigger
+
+    tuesday = datetime(2026, 10, 20, tzinfo=ZoneInfo("UTC"))
+    first = cron_trigger("0 9 * * MON-FRI").get_next_fire_time(None, tuesday)
+
+    assert describe_trigger(Trigger(type="cron", expr="0 9 * * MON-FRI")) == "по будням в 09:00"
+    assert first.strftime("%a") == "Tue"
+    assert cron_trigger("0 9 * * MON").get_next_fire_time(None, tuesday).strftime("%a") == "Mon"
+
+
 def test_absolute_path():
     errors = _bad(lambda s: s["steps"][0]["args"].update(folder="C:\\Users\\me\\Отчёты"))
     assert "абсолютный" in errors[0]

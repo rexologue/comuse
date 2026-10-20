@@ -7,10 +7,10 @@ import re
 from typing import Any
 
 import jsonschema
-from apscheduler.triggers.cron import CronTrigger
 from pydantic import ValidationError
 
 from common import templating
+from common.cron import cron_trigger
 from common.schemas.task import Step, TaskSpec
 
 
@@ -38,7 +38,7 @@ def validate_spec(data: Any, catalog: dict[str, dict[str, Any]]) -> TaskSpec:
 
     if spec.trigger.type == "cron":
         try:
-            CronTrigger.from_crontab(spec.trigger.expr)
+            cron_trigger(spec.trigger.expr)
 
         except ValueError as e:
             errors.append(f"trigger.expr {spec.trigger.expr!r} — неверный cron: {e}")

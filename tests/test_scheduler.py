@@ -33,3 +33,16 @@ async def test_a_task_from_an_older_schema_does_not_stop_the_others(settings):
 
     finally:
         scheduler.shutdown()
+
+
+async def test_a_task_with_weekdays_as_numbers_is_not_scheduled(settings):
+    _task("task_numbers", {**GOOD, "trigger": {"type": "cron", "expr": "0 9 * * 1"}})
+
+    scheduler = TaskScheduler(settings, main=None)
+    scheduler.start()
+
+    try:
+        assert scheduler.reload() == {"scheduled": 0, "removed": 0}
+
+    finally:
+        scheduler.shutdown()

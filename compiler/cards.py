@@ -11,11 +11,10 @@ from common.schemas.task import Step, TaskSpec, Trigger
 
 _EXPR = re.compile(r"\{\{\s*(.*?)\s*\}\}")
 
+# Days of week are names only (common/cron.py refuses numbers).
 _DAYS = {
     "MON": "понедельникам", "TUE": "вторникам", "WED": "средам", "THU": "четвергам",
     "FRI": "пятницам", "SAT": "субботам", "SUN": "воскресеньям",
-    "1": "понедельникам", "2": "вторникам", "3": "средам", "4": "четвергам",
-    "5": "пятницам", "6": "субботам", "0": "воскресеньям", "7": "воскресеньям",
 }
 
 
@@ -126,7 +125,7 @@ def _describe_cron(expr: str) -> str:
 
     if dom == "*" and month == "*":
         days = [_DAYS.get(d.upper(), d) for d in dow.split(",")]
-        if dow.upper() in ("MON-FRI", "1-5"):
+        if dow.upper() == "MON-FRI":
             return f"по будням {at}"
 
         return f"по {', '.join(days)} {at}"

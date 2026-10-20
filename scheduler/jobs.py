@@ -9,9 +9,9 @@ import logging
 from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
 
 from common.clients.main_client import MainClient
+from common.cron import cron_trigger
 from common.errors import ApiError
 from common.schemas.task import TaskSpec
 from common.settings import Settings
@@ -106,7 +106,7 @@ class TaskScheduler:
         if trigger.type == "cron":
             self._scheduler.add_job(
                 self._fire,
-                CronTrigger.from_crontab(trigger.expr),
+                cron_trigger(trigger.expr),
                 id=task_id,
                 args=[task_id],
                 replace_existing=True,
