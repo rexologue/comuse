@@ -65,6 +65,12 @@ def add_version(
             .first()
         )
 
+        # The new draft carries the older drafts' changes (it was built on the newest);
+        # they are no longer something to approve.
+        db.query(TaskVersion).filter(TaskVersion.task_id == task_id, TaskVersion.status == "draft").update(
+            {"status": "superseded"}, synchronize_session=False
+        )
+
         version = TaskVersion(
             id=new_id("ver_"),
             task_id=task_id,
@@ -105,19 +111,18 @@ def get_version(task_id: str, version_id: str) -> TaskVersion:
 
 
 def base_version(task_id: str) -> TaskVersion:
-    """What a patch builds on: the active version, else the newest draft."""
+    """What a change builds on: the newest draft after the active version (the user is
+    still shaping it: a second change must keep the first), else the active version."""
     task = get_task(task_id)
 
     with session() as db:
-        if task.current_version_id:
-            return db.get(TaskVersion, task.current_version_id)
+        current = db.get(TaskVersion, task.current_version_id) if task.current_version_id else None
 
-        version = (
-            db.query(TaskVersion)
-            .filter(TaskVersion.task_id == task_id, TaskVersion.status == "draft")
-            .order_by(TaskVersion.version_no.desc())
-            .first()
-        )
+        query = db.query(TaskVersion).filter(TaskVersion.task_id == task_id, TaskVersion.status == "draft")
+        if current is not None:
+            query = query.filter(TaskVersion.version_no > current.version_no)
+
+        version = query.order_by(TaskVersion.version_no.desc()).first() or current
 
     if version is None:
         raise ApiError(status_code=409, message=f"Task `{task_id}` has no version to change")

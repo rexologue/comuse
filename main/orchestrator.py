@@ -129,6 +129,9 @@ class Orchestrator:
 
 
     def _with_version_approval(self, result: dict[str, Any], session_id: str | None) -> dict[str, Any]:
+        # The new draft replaces the task's older drafts, so their approvals are void.
+        self._cancel_task_approvals(result["task_id"])
+
         approval = self.create_approval(
             kind="version_approve",
             task_id=result["task_id"],
@@ -199,6 +202,14 @@ class Orchestrator:
 
         for approval in pending:
             self._resolve(approval.id, status, None)
+
+
+    def _cancel_task_approvals(self, task_id: str) -> None:
+        with session() as db:
+            pending = db.query(Approval).filter(Approval.task_id == task_id, Approval.status == "pending").all()
+
+        for approval in pending:
+            self._resolve(approval.id, "cancelled", None)
 
 
     def _get(self, approval_id: str) -> dict[str, Any]:

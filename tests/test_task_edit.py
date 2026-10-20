@@ -87,3 +87,49 @@ async def test_agent_dry_run_reports_the_run_as_is():
 
     assert result["output"]["status"] == "failed"
     assert result["output"]["steps"] == [{"step": "files", "status": "error", "error": "нет папки", "output": None}]
+
+
+async def test_a_second_change_keeps_the_first_one(settings):
+    """After approval, changes asked one after another build on each other, not each on
+    the approved version: approving the last draft must not lose the earlier change."""
+    task_id = _task()
+    first = store.base_version(task_id)
+    store.approve(task_id, first.id, CATALOG)
+    compiler = _compiler(settings)
+
+    cc = await compiler.edit(task_id, spec=None, ops=[{"op": "replace", "path": "/steps/0/args/folder", "value": "Архив"}], summary=None)
+    day = await compiler.edit(task_id, spec=None, ops=[{"op": "replace", "path": "/trigger/expr", "value": "0 9 * * FRI"}], summary=None)
+
+    latest = store.get_version(task_id, day["version_id"])
+    assert latest.spec["steps"][0]["args"]["folder"] == "Архив"
+    assert latest.spec["trigger"]["expr"] == "0 9 * * FRI"
+    assert latest.parent_version_id == cc["version_id"]
+    assert store.get_version(task_id, cc["version_id"]).status == "superseded"
+
+
+async def test_a_new_draft_voids_the_older_drafts_approval(settings):
+    from main.events import EventBus
+    from main.orchestrator import Orchestrator
+
+    class Compiler:
+        def __init__(self):
+            self.no = 0
+
+        async def post(self, path, json=None, **_):
+            self.no += 1
+            return {"task_id": "task_1", "version_id": f"ver_{self.no}"}
+
+    class Registry:
+        def __init__(self):
+            self.compiler = Compiler()
+
+        def client(self, name):
+            return self.compiler
+
+    orchestrator = Orchestrator(Registry(), EventBus())
+
+    first = await orchestrator.edit("task_1", {"ops": []})
+    second = await orchestrator.edit("task_1", {"ops": []})
+
+    assert orchestrator._get(first["approval_id"])["status"] == "cancelled"
+    assert orchestrator._get(second["approval_id"])["status"] == "pending"
