@@ -65,36 +65,44 @@ def test_search_output_describes_sender_email():
 
 
 @pytest.mark.parametrize("entry", ["boss@company.ru", "*@company.local", " *@Corp.LAN "])
-def test_recipient_permissions_accept_addresses_and_domain_masks(entry):
-    from common.schemas.task import Permissions
+def test_recipient_masks_accept_addresses_and_domains(entry):
+    from internal_tools.mail.send import Input
 
-    assert Permissions(mail_send_to=[entry]).mail_send_to == [entry.strip().lower()]
+    inp = Input(account="w", to=["a@company.local"], subject="s", body="b", allow_to=[entry])
+    assert inp.allow_to == [entry.strip().lower()]
 
 
 @pytest.mark.parametrize("entry", ["*", "*@*", "*@", "boss", "a@b@c"])
-def test_recipient_permissions_reject_too_broad_or_malformed(entry):
+def test_recipient_masks_reject_too_broad_or_malformed(entry):
     from pydantic import ValidationError
 
-    from common.schemas.task import Permissions
+    from internal_tools.mail.send import Input
 
     with pytest.raises(ValidationError):
-        Permissions(mail_send_to=[entry])
+        Input(account="w", to=["a@company.local"], subject="s", body="b", allow_to=[entry])
 
 
-def test_domain_mask_allows_only_that_domain():
-    from common.schemas.task import Permissions
-    from common.tools import PermissionDenied, ToolContext
+def test_allow_to_lets_through_only_its_domain_and_addresses():
+    from internal_tools.mail.recipients import check_allowed
 
-    ctx = ToolContext(
-        mode="run", settings=None, paths=None, llm=None, get_account=None, publish=None,
-        permissions=Permissions(mail_send_to=["*@company.local", "boss@other.ru"]),
-    )
+    check_allowed(["anyone@company.local", "Client@COMPANY.local", "boss@other.ru"], ["*@company.local", "boss@other.ru"])
+    check_allowed(["anyone@anywhere.ru"], [])  # no limit: the step's own recipients were approved
 
-    ctx.check_recipients(["anyone@company.local", "Client@COMPANY.local", "boss@other.ru"])
+    with pytest.raises(ToolError, match="stranger@other.ru"):
+        check_allowed(["anyone@company.local", "stranger@other.ru"], ["*@company.local"])
 
-    with pytest.raises(PermissionDenied, match="stranger@other.ru"):
-        ctx.check_recipients(["anyone@company.local", "stranger@other.ru"])
 
+async def test_send_refuses_recipients_outside_allow_to(monkeypatch):
+    from internal_tools.mail.send import Input, send
+
+    sent = []
+    monkeypatch.setattr(imap_smtp, "send", lambda *a: sent.append(a))
+
+    inp = Input(account="work", to=["attacker@evil.com"], subject="Re", body="b", allow_to=["*@company.local"])
+    with pytest.raises(ToolError):
+        await send(inp, _send_context("chat", {}))
+
+    assert sent == []
 
 
 HEADER = {"from": "Иван Петров <ivan@company.local>", "subject": "Заявка на поставку"}
@@ -184,7 +192,7 @@ def _send_context(mode, task_settings, *, draft=False):
     from common.tools.context import MailAccount
 
     return ToolContext(
-        mode=mode, settings=None, paths=None, llm=None, permissions=None,
+        mode=mode, settings=None, paths=None, llm=None,
         get_account=lambda name: MailAccount(name=name, config={"email": "agent@company.local"}, secret=""),
         publish=None, draft=draft, task_settings=task_settings,
     )

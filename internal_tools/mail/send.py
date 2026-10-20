@@ -7,6 +7,7 @@ from pydantic import Field
 from common.tools import ToolContext, ToolInput, ToolOutput, tool
 from common.tools.fields import EmailAddress
 from internal_tools.mail.adapters import imap_smtp
+from internal_tools.mail.recipients import RecipientMask, check_allowed
 from internal_tools.mail.settings import MailSettings
 
 
@@ -17,6 +18,14 @@ class Input(ToolInput):
     subject: str
     body: str
     attachments: list[str] = Field(default_factory=list, description="Пути файлов для вложения")
+    allow_to: list[RecipientMask] = Field(
+        default_factory=list,
+        description=(
+            "Кому вообще можно писать этим шагом. Обязательно, если адресат подставляется из данных "
+            "(например, ответ отправителю: to = {{ msg.sender_email }}): тогда укажи маску домена «*@домен» "
+            "из разговора. Пусто — без ограничения (адресаты заданы в шаге явно)."
+        ),
+    )
 
 
 class Output(ToolOutput):
@@ -29,20 +38,20 @@ class Output(ToolOutput):
 @tool(
     name="mail.send",
     title="Отправить письмо",
-    card="Отправить письмо {to} с темой «{subject}»",
+    card="Отправить письмо {to} с темой «{subject}» (можно только: {allow_to})",
     description=(
         "Send an email with attachments from a configured account. In a task it saves a draft "
         "for the user to send instead, unless the task's mail settings say to send directly."
     ),
     side_effect="external",
-    capabilities=("mail.account:{account}", "mail.send:{to}", "mail.send:{cc}", "fs.read:{attachments}"),
+    capabilities=("mail.account:{account}", "fs.read:{attachments}"),
     secrets=("account",),
     dry_run="draft",
     timeout=120,
 )
 async def send(inp: Input, ctx: ToolContext) -> Output:
     account = ctx.account(inp.account)
-    ctx.check_recipients([*inp.to, *inp.cc])
+    check_allowed([*inp.to, *inp.cc], inp.allow_to)
 
     attachments = [ctx.read_path(ref) for ref in inp.attachments]
     message = imap_smtp.build_message(

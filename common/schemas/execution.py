@@ -6,7 +6,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from common.schemas.task import Permissions
 
 
 class ExecContext(BaseModel):
@@ -15,8 +14,6 @@ class ExecContext(BaseModel):
     session_id: str | None = None
     run_id: str | None = None
     step_key: str | None = None
-    # None = the whole workspace (chat mode); a task run always passes its own.
-    permissions: Permissions | None = None
     # The task's domain settings sections; each tool reads its own domain's.
     task_settings: dict[str, dict[str, Any]] = Field(default_factory=dict)
     dry_run: bool = False

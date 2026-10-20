@@ -23,7 +23,6 @@ from common.storage.models import ChatMessage, TraceEvent
 from common.utils import truncate
 from compiler import prompts, store, task_settings
 from compiler.cards import build_cards, describe_trigger, diff_specs, summarize
-from compiler.permissions import derive_permissions
 from compiler.validate import SpecError, validate_spec
 
 
@@ -69,7 +68,6 @@ class Compiler:
         # A spec that validates can still fail on real data; show the model what the
         # dry run hit and let it repair the spec a couple of times.
         for repair in range(_DRY_RUN_REPAIRS + 1):
-            spec = spec.model_copy(update={"permissions": derive_permissions(spec, catalog)})
             cards = build_cards(spec, catalog)
 
             if version is None:
@@ -99,7 +97,6 @@ class Compiler:
             "title": spec.title,
             "summary": summarize(spec),
             "trigger": describe_trigger(spec.trigger),
-            "permissions": spec.permissions.model_dump(),
             "settings": task_settings.describe(task_settings.sync({}, spec, catalog), catalog),
             "cards": cards,
             "dry_run": dry_run,
@@ -156,7 +153,6 @@ class Compiler:
             reasoning_effort=self.settings.llm.chat_reasoning_effort or None,
         )
 
-        spec = spec.model_copy(update={"permissions": derive_permissions(spec, catalog)})
         cards = build_cards(spec, catalog)
         diff = diff_specs(TaskSpec.model_validate(base.spec), spec, catalog)
 

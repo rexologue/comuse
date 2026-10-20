@@ -10,7 +10,6 @@ import pytest
 from common.schemas.task import TaskSpec
 from common.tools import discover
 from compiler.cards import build_cards, describe_trigger, diff_specs
-from compiler.permissions import derive_permissions
 from compiler.validate import SpecError, validate_spec
 
 
@@ -105,15 +104,6 @@ def test_duplicate_step_ids():
     assert "duplicate" in errors[0]
 
 
-def test_derive_permissions():
-    spec = validate_spec(GOOD, CATALOG)
-    permissions = derive_permissions(spec, CATALOG)
-
-    assert permissions.read_folders == ["Отчёты/Продажи"]
-    # fs.move dst "Архив/{{ file.name }}" → the literal folder before the template.
-    assert permissions.write_folders == ["Архив"]
-
-
 def test_cards_and_trigger_text():
     spec = validate_spec(GOOD, CATALOG)
     cards = build_cards(spec, CATALOG)
@@ -153,26 +143,6 @@ def test_unknown_filter_in_foreach():
     assert "nope" in " ".join(errors)
 
 
-def test_unused_model_folders_are_not_granted():
-    spec = copy.deepcopy(GOOD)
-    spec["steps"] = spec["steps"][:3]
-    spec["permissions"] = {"write_folders": ["Отчёты/Отчёты"]}
-
-    permissions = derive_permissions(validate_spec(spec, CATALOG), CATALOG)
-
-    assert permissions.write_folders == []
-
-
-def test_model_folders_kept_where_paths_are_templated():
-    spec = copy.deepcopy(GOOD)
-    spec["permissions"] = {"write_folders": ["Отчёты/Продажи"]}
-
-    permissions = derive_permissions(validate_spec(spec, CATALOG), CATALOG)
-
-    # fs.move's src is `{{ file.path }}`: only the model knows it is Отчёты/Продажи.
-    assert permissions.write_folders == ["Архив", "Отчёты/Продажи"]
-
-
 def test_compiled_task_must_reflect_the_chat():
     from compiler.compile import check_reflects_chat
 
@@ -196,7 +166,6 @@ def test_mapping_cards_name_their_fields():
 AUTO_REPLY = {
     "title": "Ответ на заявки",
     "trigger": {"type": "cron", "expr": "*/5 * * * *"},
-    "permissions": {"mail_send_to": ["*@company.local"]},
     "steps": [
         {"id": "found", "tool": "mail.search", "args": {"account": "work", "subject": "Заявка", "unseen": True}, "on_empty": "skip"},
         {
@@ -207,7 +176,7 @@ AUTO_REPLY = {
                 {
                     "id": "send",
                     "tool": "mail.send",
-                    "args": {"account": "work", "to": ["{{ msg.sender_email }}"], "subject": "Re: {{ msg.subject }}", "body": "Заявка принята."},
+                    "args": {"account": "work", "to": ["{{ msg.sender_email }}"], "allow_to": ["*@company.local"], "subject": "Re: {{ msg.subject }}", "body": "Заявка принята."},
                 }
             ],
         }
@@ -215,20 +184,15 @@ AUTO_REPLY = {
 }
 
 
-def test_templated_recipient_keeps_the_domain_mask():
-    permissions = derive_permissions(validate_spec(AUTO_REPLY, CATALOG), CATALOG)
+def test_recipient_limit_shows_on_the_card_and_in_the_diff():
+    unlimited = copy.deepcopy(AUTO_REPLY)
+    del unlimited["steps"][1]["steps"][0]["args"]["allow_to"]
 
-    assert permissions.mail_send_to == ["*@company.local"]
-    assert permissions.mail_accounts == ["work"]
+    old, new = validate_spec(unlimited, CATALOG), validate_spec(AUTO_REPLY, CATALOG)
+    card = build_cards(new, CATALOG)[1]["children"][0]["text"]
 
-
-def test_domain_mask_reads_as_words_in_the_diff():
-    old = validate_spec({**AUTO_REPLY, "permissions": {}}, CATALOG)
-    new = validate_spec(AUTO_REPLY, CATALOG)
-
-    lines = diff_specs(old, new, CATALOG)["lines"]
-
-    assert "+ разрешено (адресаты писем): любой адрес в домене company.local" in lines
+    assert "можно только: *@company.local" in card
+    assert any("*@company.local" in line for line in diff_specs(old, new, CATALOG)["lines"])
 
 
 def test_user_ask_before_sending_is_rejected():

@@ -57,7 +57,7 @@ async def test_foreach_passes_outputs_between_steps(settings):
     moves = [c["args"]["dst"] for c in main.calls if c["tool"] == "fs.move"]
     assert moves == ["Документы/счёт/", "Документы/акт/"]
 
-    # Every call carries the task's permissions and the run's identity.
+    # Every call carries the run mode and the run's identity.
     assert all(c["context"]["mode"] == "run" and c["context"]["run_id"] == "run_1" for c in main.calls)
     assert [e[0] for e in main.events] == ["run.started", "run.finished"]
 

@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 STEP_ID_PATTERN = r"^[a-z][a-z0-9_]{0,40}$"
-
-# A recipient permission: an exact address, or every address of one domain.
-_RECIPIENT = re.compile(r"^(?:[^@\s*<>,;]+|\*)@[^@\s*<>,;]+$")
 
 
 class Trigger(BaseModel):
@@ -29,28 +25,6 @@ class Trigger(BaseModel):
             raise ValueError("cron trigger requires `expr`")
 
         return self
-
-
-class Permissions(BaseModel):
-    """Everything a task may touch. The executor enforces it on every call."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    read_folders: list[str] = Field(default_factory=list)
-    write_folders: list[str] = Field(default_factory=list)
-    mail_accounts: list[str] = Field(default_factory=list)
-    # Exact addresses or `*@domain` (any address of that domain); a bare `*` is not allowed.
-    mail_send_to: list[str] = Field(default_factory=list)
-    net_domains: list[str] = Field(default_factory=list)
-
-    @field_validator("mail_send_to")
-    @classmethod
-    def _check_recipients(cls, value: list[str]) -> list[str]:
-        bad = [item for item in value if not _RECIPIENT.match(item.strip())]
-        if bad:
-            raise ValueError(f"mail_send_to: {bad} — нужен адрес или маска домена вида *@company.ru")
-
-        return [item.strip().lower() for item in value]
 
 
 class Step(BaseModel):
@@ -101,7 +75,6 @@ class TaskSpec(BaseModel):
     title: str = Field(min_length=1)
     description: str = ""
     trigger: Trigger = Field(default_factory=Trigger)
-    permissions: Permissions = Field(default_factory=Permissions)
     variables: dict[str, str] = Field(default_factory=dict)
     steps: list[Step] = Field(min_length=1)
 

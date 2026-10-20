@@ -6,7 +6,7 @@ import re
 import string
 from typing import Any
 
-from common.schemas.task import Permissions, Step, TaskSpec, Trigger
+from common.schemas.task import Step, TaskSpec, Trigger
 
 
 _EXPR = re.compile(r"\{\{\s*(.*?)\s*\}\}")
@@ -60,7 +60,6 @@ def diff_specs(old: TaskSpec, new: TaskSpec, catalog: dict[str, dict[str, Any]])
     if old.title != new.title:
         changes.append({"kind": "title", "before": old.title, "after": new.title})
 
-    changes += _permission_changes(old.permissions, new.permissions)
 
     return {"changes": changes, "lines": [_line(c) for c in changes]}
 
@@ -147,36 +146,6 @@ def _flatten(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return flat
 
 
-def _permission_changes(old: Permissions, new: Permissions) -> list[dict[str, Any]]:
-    labels = {
-        "read_folders": "чтение папок",
-        "write_folders": "запись в папки",
-        "mail_accounts": "почтовые аккаунты",
-        "mail_send_to": "адресаты писем",
-        "net_domains": "сайты",
-    }
-
-    changes = []
-    for field, label in labels.items():
-        before, after = set(getattr(old, field)), set(getattr(new, field))
-
-        if after - before:
-            changes.append({"kind": "permission_added", "what": label, "items": [_permission_item(i) for i in sorted(after - before)]})
-
-        if before - after:
-            changes.append({"kind": "permission_removed", "what": label, "items": [_permission_item(i) for i in sorted(before - after)]})
-
-    return changes
-
-
-def _permission_item(item: str) -> str:
-    """`*@company.local` reads as words, so the user sees how broad it is."""
-    if item.startswith("*@"):
-        return f"любой адрес в домене {item[2:]}"
-
-    return item
-
-
 def _line(change: dict[str, Any]) -> str:
     kind = change["kind"]
 
@@ -192,10 +161,4 @@ def _line(change: dict[str, Any]) -> str:
     if kind == "trigger":
         return f"~ расписание: {change['before']} → {change['after']}"
 
-    if kind == "title":
-        return f"~ название: {change['before']} → {change['after']}"
-
-    if kind == "permission_added":
-        return f"+ разрешено ({change['what']}): {', '.join(change['items'])}"
-
-    return f"− больше не разрешено ({change['what']}): {', '.join(change['items'])}"
+    return f"~ название: {change['before']} → {change['after']}"

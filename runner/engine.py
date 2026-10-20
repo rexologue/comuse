@@ -365,7 +365,6 @@ class _Walk:
             "mode": "run",
             "run_id": self.run.id,
             "step_key": key,
-            "permissions": self.spec.permissions.model_dump(),
             "task_settings": self.task_settings,
             "dry_run": self.run.dry_run,
         }

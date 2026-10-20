@@ -1,7 +1,8 @@
 """The call pipeline: validate → side-effect policy → run with timeout → log.
 
-Permissions are enforced inside the tool context (paths, accounts, recipients), so a
-tool cannot touch anything the task did not declare, whatever the LLM asked for."""
+What a task may do is its approved steps; limits on values known only at run time
+are arguments of the tools themselves (mail.send's allow_to). Paths always stay
+inside the user's workspace."""
 
 from __future__ import annotations
 
@@ -131,7 +132,6 @@ class ExecutorRuntime:
         paths = WorkspacePaths(
             workspace_dir=self.settings.storage.workspace_dir,
             data_dir=self.settings.storage.data_dir,
-            permissions=ctx.permissions,
         )
 
         return ToolContext(
@@ -139,7 +139,6 @@ class ExecutorRuntime:
             settings=self.settings,
             paths=paths,
             llm=self.llm,
-            permissions=ctx.permissions,
             get_account=self._get_account,
             publish=self.main.publish,
             session_id=ctx.session_id,

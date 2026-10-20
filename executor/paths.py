@@ -3,15 +3,15 @@
 - `Отчёты/Продажи/q3.xlsx` — relative to WORKSPACE_DIR (Windows folder or /workspace);
 - `data:templates/weekly.docx`, `data:outputs/…` — inside DATA_DIR.
 
-Every resolution normalizes the path, refuses escapes (`..`, symlinks out of the root)
-and checks the task's folder permissions."""
+Every resolution normalizes the path and refuses escapes (`..`, symlinks out of the
+root, DATA_DIR beyond templates and outputs). What a task may touch is its approved
+steps; this only keeps every path inside the user's workspace."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from common.pathrefs import DATA_PREFIX, normalize_folder
-from common.schemas.task import Permissions
+from common.pathrefs import DATA_PREFIX
 from common.tools import PermissionDenied
 
 
@@ -20,35 +20,18 @@ _DATA_AREAS = ("templates", "outputs")
 
 
 class WorkspacePaths:
-    def __init__(
-        self,
-        workspace_dir: Path,
-        data_dir: Path,
-        permissions: Permissions | None,
-    ):
+    def __init__(self, workspace_dir: Path, data_dir: Path):
 
         self.workspace_dir = workspace_dir.resolve()
         self.data_dir      = data_dir.resolve()
-        self.permissions   = permissions
 
 
     def read_path(self, ref: str) -> Path:
-        path, in_data = self._resolve(ref)
-
-        if not in_data and self.permissions is not None:
-            folders = self.permissions.read_folders + self.permissions.write_folders
-            self._check_folder(path, folders, "чтение")
-
-        return path
+        return self._resolve(ref)
 
 
     def write_path(self, ref: str) -> Path:
-        path, in_data = self._resolve(ref)
-
-        if not in_data and self.permissions is not None:
-            self._check_folder(path, self.permissions.write_folders, "запись")
-
-        return path
+        return self._resolve(ref)
 
 
     def to_ref(self, path: Path) -> str:
@@ -63,7 +46,7 @@ class WorkspacePaths:
         raise PermissionDenied(f"Путь вне рабочей папки: {path}")
 
 
-    def _resolve(self, ref: str) -> tuple[Path, bool]:
+    def _resolve(self, ref: str) -> Path:
         ref = (ref or "").strip()
 
         if ref.startswith(DATA_PREFIX):
@@ -73,7 +56,7 @@ class WorkspacePaths:
             if not any(path.is_relative_to(self.data_dir / area) for area in _DATA_AREAS):
                 raise PermissionDenied(f"Доступ к `{ref}` запрещён: разрешены только data:templates и data:outputs")
 
-            return path, True
+            return path
 
         candidate = Path(ref.replace("\\", "/")).expanduser()
 
@@ -83,19 +66,4 @@ class WorkspacePaths:
         if not path.is_relative_to(self.workspace_dir):
             raise PermissionDenied(f"Путь `{ref}` выходит за пределы рабочей папки")
 
-        return path, False
-
-
-    def _check_folder(self, path: Path, folders: list[str], action: str) -> None:
-        rel = path.relative_to(self.workspace_dir).as_posix()
-
-        for folder in folders:
-            normalized = normalize_folder(folder)
-            if normalized == "" or rel == normalized or rel.startswith(normalized + "/"):
-                return
-
-        raise PermissionDenied(
-            f"{action.capitalize()} `{rel}` не разрешено этой задаче "
-            f"(разрешены: {', '.join(folders) or 'ничего'})"
-        )
-
+        return path

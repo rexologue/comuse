@@ -1,10 +1,9 @@
-"""Workspace sandbox: references resolve inside their roots and honour permissions."""
+"""Workspace sandbox: references resolve inside their roots, escapes are refused."""
 
 from __future__ import annotations
 
 import pytest
 
-from common.schemas.task import Permissions
 from common.tools import PermissionDenied
 from executor.paths import WorkspacePaths
 
@@ -20,7 +19,7 @@ def roots(tmp_path):
 
 def test_relative_and_data_refs(roots):
     workspace, data = roots
-    paths = WorkspacePaths(workspace, data, permissions=None)
+    paths = WorkspacePaths(workspace, data)
 
     assert paths.read_path("Отчёты/Продажи") == (workspace / "Отчёты" / "Продажи").resolve()
     assert paths.read_path("data:templates/t.docx") == (data / "templates" / "t.docx").resolve()
@@ -33,7 +32,7 @@ def test_escapes_are_refused(roots, ref):
     workspace, data = roots
 
     with pytest.raises(PermissionDenied):
-        WorkspacePaths(workspace, data, permissions=None).read_path(ref)
+        WorkspacePaths(workspace, data).read_path(ref)
 
 
 def test_symlink_out_of_workspace_is_refused(roots, tmp_path):
@@ -42,24 +41,4 @@ def test_symlink_out_of_workspace_is_refused(roots, tmp_path):
     (workspace / "link").symlink_to(tmp_path / "outside")
 
     with pytest.raises(PermissionDenied):
-        WorkspacePaths(workspace, data, permissions=None).read_path("link/file.txt")
-
-
-def test_task_permissions(roots):
-    workspace, data = roots
-    permissions = Permissions(read_folders=["Отчёты/Продажи"], write_folders=["Готовые/"])
-    paths = WorkspacePaths(workspace, data, permissions)
-
-    paths.read_path("Отчёты/Продажи/q.xlsx")
-    paths.read_path("Готовые/out.docx")
-    paths.write_path("Готовые/out.docx")
-
-    with pytest.raises(PermissionDenied):
-        paths.read_path("Отчёты/Другое/q.xlsx")
-
-    with pytest.raises(PermissionDenied):
-        paths.write_path("Отчёты/Продажи/q.xlsx")
-
-    # Prefix match is per path segment: "Отчёты/Продажи2" is not inside "Отчёты/Продажи".
-    with pytest.raises(PermissionDenied):
-        paths.read_path("Отчёты/Продажи2/q.xlsx")
+        WorkspacePaths(workspace, data).read_path("link/file.txt")

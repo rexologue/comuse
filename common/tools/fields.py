@@ -13,8 +13,8 @@ _EMAIL_RE = re.compile(r"^[^@\s<>,;]+@[^@\s<>,;]+$")
 
 def _check_email(value: str) -> str:
     """Shape only: one `@`, no spaces or separators. Deliverability is the mail
-    server's call; task permissions and user confirmation decide who may get mail.
-    Stricter validators reject internal domains such as `company.local`."""
+    server's call; who may get mail is the approved task (and `allow_to`) or the
+    user's confirmation in chat. Stricter validators reject domains like `company.local`."""
     value = value.strip()
 
     if not _EMAIL_RE.match(value):
