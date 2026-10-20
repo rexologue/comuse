@@ -9,7 +9,7 @@ from typing import Any
 from common.tools import PermissionDenied, ToolContext
 from common.tools.refs import file_refs
 from common.utils import truncate
-from internal_tools.docs.readers import read_document
+from common.documents import read_document
 
 
 MAX_INPUT_CHARS = 60000

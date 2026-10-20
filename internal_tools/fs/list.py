@@ -33,6 +33,7 @@ class Output(ToolOutput):
     card="Взять файлы «{pattern}» из папки «{folder}»",
     description="List files in a workspace folder, filtered by a glob pattern and an optional modification date range.",
     side_effect="read",
+    core=True,
 )
 async def list_files(inp: Input, ctx: ToolContext) -> Output:
     folder = ctx.read_path(inp.folder)

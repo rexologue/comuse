@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict
 from common.tools.context import Credential, PermissionDenied, ToolContext, ToolError
 from common.tools.domain import DomainSettings, domain_settings, settings_schema
 from common.tools.fields import PATH_ARG
+from common.tools.guides import guide_of
 from common.tools.refs import file_refs
 
 
@@ -63,6 +64,8 @@ class ToolSpec:
     path_args: dict[str, str]
     dry_run: DryRunPolicy
     timeout: int | None
+    # Always offered to the chat agent, whatever the request (looking around starts there).
+    core: bool
     input_model: type[ToolInput]
     output_model: type[BaseModel]
     fn: Callable[[Any, ToolContext], Awaitable[Any]]
@@ -84,6 +87,9 @@ class ToolSpec:
             "output_schema": self.output_model.model_json_schema(by_alias=False),
             # Settings of the tool's domain a task using it gets (None: the domain has none).
             "settings_schema": settings_schema(self.name),
+            # How to use the tool's group, for the agent and the compiler (None: no guide).
+            "guide": guide_of(self.name),
+            "core": self.core,
             "source": "internal",
         }
 
@@ -101,6 +107,7 @@ def tool(
     secrets: tuple[str, ...] = (),
     dry_run: DryRunPolicy = "real",
     timeout: int | None = None,
+    core: bool = False,
 ):
     """Register a tool. The function's first parameter annotation is its input model,
     its return annotation the output model; both become JSON schemas for the LLM."""
@@ -122,6 +129,7 @@ def tool(
             path_args=_path_args(hints[params[0]]),
             dry_run=dry_run,
             timeout=timeout,
+            core=core,
             input_model=hints[params[0]],
             output_model=hints["return"],
             fn=fn,

@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from common.tools import ToolContext, ToolError, ToolInput, ToolOutput, tool
 from common.tools.fields import WorkspacePath
-from internal_tools.docs.readers import markdown_table
+from common.documents import markdown_table
 
 
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,40}$")

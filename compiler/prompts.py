@@ -4,6 +4,8 @@ import json
 from datetime import date
 from typing import Any
 
+from common.tools.guides import collect
+
 
 # Deliberately a different domain from the demo scenarios: models copy example steps
 # verbatim (a mail step the user never asked for), so the example shows the mechanics only.
@@ -77,30 +79,24 @@ RULES = f"""Ты превращаешь разговор пользовател�
 2. Повтори успешную последовательность действий из разговора. Неудачные попытки, разведку и вопросы — выброси.
    Не добавляй действий, которых не было в разговоре и о которых пользователь не просил (например, отправку
    писем): пример ниже показывает только формат, а не состав шагов.
-3. Обобщай конкретику: даты — через variables и фильтры; конкретные файлы — шагом fs.list с pattern и датами.
+3. Обобщай конкретику: даты — через variables и фильтры, конкретные значения из разговора — шагами, которые
+   найдут их при запуске (как именно — в инструкциях групп ниже).
 4. Ссылка на результат шага: {{{{ <id_шага>.output.<поле> }}}} — поля бери из output-схемы инструмента.
    Строка, которая целиком является одним {{{{ … }}}}, подставляется как значение (список остаётся списком).
 5. Доступно в шаблонах: today, now, variables, результаты шагов выше, переменная foreach (as). Фильтры дат:
    start_of_week, end_of_week, start_of_prev_week, end_of_prev_week, start_of_month, end_of_month,
-   start_of_prev_month, end_of_prev_month, add_days(n), format_date('%d.%m.%Y').
-6. Если в разговоре шаблон уже создан (docs.make_template), не создавай его заново — используй готовый путь data:templates/….
-   Ключи context в docs.fill_template — ровно поля шаблона (fields и tables из docs.make_template).
-   Числа считай xlsx.aggregate: число строк — .output.rows, суммы — .output.totals, группы — .output.groups.
-   Строки таблицы шаблона готовь шагом data.map_rows: fields — выражения над row БЕЗ фигурных скобок
-   (например {{"client": "row.key", "amount": "row.sums['Сумма'] | format_number"}}), limit — сколько строк.
-   Для чисел в тексте есть фильтр format_number, для дат — format_date (по умолчанию ДД.ММ.ГГГГ).
-7. Для обработки каждого файла по отдельности — foreach с вложенными steps, например:
+   start_of_prev_month, end_of_prev_month, add_days(n), format_date('%d.%m.%Y'). Для чисел в тексте —
+   format_number, для дат — format_date (по умолчанию ДД.ММ.ГГГГ).
+6. Для обработки каждого файла по отдельности — foreach с вложенными steps, например:
    {json.dumps(_FOREACH_EXAMPLE, ensure_ascii=False)}
-8. Пути — только относительные (как в результатах fs.list) или data:…; никаких абсолютных путей.
-9. trigger: cron из 5 полей (дни недели MON..SUN) или manual — по просьбе пользователя. Trigger задаёт
+7. Пути — только относительные (как в результатах инструментов) или data:…; никаких абсолютных путей.
+8. trigger: cron из 5 полей (дни недели MON..SUN) или manual — по просьбе пользователя. Trigger задаёт
    только время запуска; что искать (письма, файлы), делают шаги задачи.
-10. Ограничения на значения, которые станут известны только при запуске, задаются аргументами самих
-    инструментов (см. описания аргументов в каталоге).
-11. id шагов — латиницей snake_case, короткие и понятные.
-12. Письмо, которое в разговоре отправлялось, отправляй шагом mail.send (не mail.create_draft), даже если
-    ассистент в разговоре спрашивал «отправить?»: задача никого ни о чём не спрашивает, а сохранить письмо в
-    черновики или отправить сразу — решает mail.send по настройкам задачи, которые выбирает пользователь.
-13. Тексты, которые пользователь написал сам (текст письма, тему, формулировки), переноси дословно, символ
+9. Ограничения на значения, которые станут известны только при запуске, задаются аргументами самих
+   инструментов (см. описания аргументов в каталоге).
+10. id шагов — латиницей snake_case, короткие и понятные.
+11. Задача никого ни о чём не спрашивает и не ждёт: вопросы и подтверждения из разговора в неё не переносятся.
+12. Тексты, которые пользователь написал сам (текст письма, тему, формулировки), переноси дословно, символ
     в символ: копируй из разговора, не пересказывай и не набирай заново.
 
 Пример задачи:
@@ -126,7 +122,16 @@ def compile_messages(
         "Верни только JSON задачи."
     )
 
-    return [{"role": "system", "content": RULES}, {"role": "user", "content": user}]
+    return [{"role": "system", "content": rules(catalog)}, {"role": "user", "content": user}]
+
+
+def rules(catalog: dict[str, dict[str, Any]]) -> str:
+    """The compiler's own rules plus every tool group's instructions for tasks."""
+    guides = collect(list(catalog.values()), "compiler")
+    if not guides:
+        return RULES
+
+    return RULES + "\n\nИнструкции групп инструментов:\n" + "\n".join(f"- {g}" for g in guides)
 
 
 def patch_messages(
@@ -137,7 +142,7 @@ def patch_messages(
     today: date,
 ) -> list[dict[str, Any]]:
     system = (
-        RULES
+        rules(catalog)
         + "\n\nСейчас нужно ИЗМЕНИТЬ существующую задачу. Верни JSON вида "
         '{"summary": "что изменится, одной фразой", "ops": [JSON Patch RFC 6902]}. '
         "Пути в ops — JSON Pointer по текущей задаче, например /steps/3/args/cc. "

@@ -6,7 +6,7 @@ from pydantic import Field
 
 from common.tools import ToolContext, ToolInput, ToolOutput, tool
 from common.tools.fields import WorkspacePath
-from internal_tools.docs.readers import read_document
+from common.documents import read_document
 
 
 class Input(ToolInput):
@@ -26,6 +26,7 @@ class Output(ToolOutput):
     card="Прочитать «{path}»",
     description="Read a document (docx, xlsx, pdf, txt, md, csv) as text; tables become markdown tables.",
     side_effect="read",
+    core=True,
 )
 async def read(inp: Input, ctx: ToolContext) -> Output:
     path = ctx.read_path(inp.path)

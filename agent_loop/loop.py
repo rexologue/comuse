@@ -13,6 +13,7 @@ from jsonschema import Draft202012Validator
 from agent_loop import history, meta_tools
 from agent_loop.catalog import ToolCatalog, to_function
 from agent_loop.prompts import system_prompt
+from common.tools.guides import collect
 from common.clients.llm_client import LLMClient
 from common.clients.main_client import MainClient
 from common.errors import ApiError
@@ -59,7 +60,7 @@ class AgentLoop:
         nudged = False
 
         for _ in range(self.settings.agent.max_iterations):
-            messages = [{"role": "system", "content": system_prompt(date.today())}]
+            messages = [{"role": "system", "content": system_prompt(date.today(), collect(manifests, "agent"))}]
             messages += history.llm_history(session_id, self.settings.agent.history_messages)
 
             # Turn-local only: the nudge never becomes part of the stored chat.
@@ -187,8 +188,8 @@ class AgentLoop:
             "action_id": trace_id,
             "next": (
                 "Опиши пользователю действие и спроси согласие. При «да» вызови action_confirm с этим action_id. "
-                "Шаги, которые имеют смысл только после этого действия (пометить письмо прочитанным, переложить, "
-                "удалить), до ответа пользователя не делай — сделай их после action_confirm."
+                "Шаги, которые имеют смысл только после этого действия, до ответа пользователя не делай — "
+                "сделай их после action_confirm."
             ),
         }
 

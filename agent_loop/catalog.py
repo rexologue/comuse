@@ -17,9 +17,6 @@ log = logging.getLogger("catalog")
 
 _CATALOG_TTL_SEC = 60
 
-# Looking around is how every request starts; these are never ranked out.
-CORE_TOOLS = {"fs.list", "docs.read"}
-
 # After an embeddings failure, ranking is skipped for a while instead of paying the
 # connection retries on every chat turn.
 _EMBED_BACKOFF_SEC = 300
@@ -51,7 +48,9 @@ class ToolCatalog:
     async def select(self, query: str, always: set[str] | None = None) -> list[dict[str, Any]]:
         """Top-k tools for the query plus `always` (tools already used in the session)."""
         manifests = await self.manifests()
-        always = {name for name in (always or set()) | CORE_TOOLS if name in manifests}
+        # Tools marked core (looking around is how every request starts) are never ranked out.
+        core = {name for name, manifest in manifests.items() if manifest.get("core")}
+        always = {name for name in (always or set()) | core if name in manifests}
 
         # Without an embeddings model (or with few tools) the model simply sees them all.
         if not self.embed_model or len(manifests) <= self.top_k or time.monotonic() < self._embed_down_until:
