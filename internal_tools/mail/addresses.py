@@ -1,4 +1,8 @@
-"""Address masks: an exact address or every address of a domain (`*@company.ru`)."""
+"""Address masks: an exact address or every address of a domain (`*@company.ru`).
+
+They select by the From header, which a sender can forge: a filter, not proof of who
+wrote. Replies are safe (they go to that address), anything else done with the letter is
+not; checking the server's Authentication-Results is left for a real mail server."""
 
 from __future__ import annotations
 
