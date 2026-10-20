@@ -84,18 +84,28 @@ async def _compile(main: MainClient, session_id: str, args: dict[str, Any]) -> A
         "summary": result.get("summary"),
         "steps": result.get("cards"),
         "trigger": result.get("trigger"),
-        "settings": {
-            f"{domain}.{key}": {"title": item["title"], "value": item["value"], "description": item["description"]}
-            for domain, items in (result.get("settings") or {}).items()
-            for key, item in items.items()
-        },
+        "settings": [
+            _setting_line(item)
+            for items in (result.get("settings") or {}).values()
+            for item in items.values()
+        ],
         "next": (
-            "Покажи пользователю шаги задачи простыми словами. Если есть настройки (settings), скажи, как "
-            "задача будет себя вести с ними сейчас и что поменять их можно в настройках задачи. Дальше решает "
+            "Покажи пользователю шаги задачи простыми словами. Если есть настройки (settings), перескажи их "
+            "как есть: каждая строка — текущее значение и что оно значит. Меняет их только сам пользователь в "
+            "настройках задачи; ты их не меняешь и не обещаешь поменять. Дальше решает "
             "пользователь: попросит пробный запуск — вызови task_dry_run; попросит поправить — task_patch; "
             "включает задачу только он сам, в списке задач. Сам ты её не включаешь и не запускаешь без просьбы."
         ),
     }
+
+
+def _setting_line(item: dict[str, Any]) -> str:
+    """«Отправлять письма сразу: выключено. <what it means>» — a bare false next to the
+    title reads as the opposite to a model."""
+    value = item["value"]
+    state = ("включено" if value else "выключено") if isinstance(value, bool) else str(value)
+
+    return f"{item['title']}: {state}. {item['description']}".strip()
 
 
 async def _dry_run(main: MainClient, session_id: str, args: dict[str, Any]) -> Any:
