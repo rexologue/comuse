@@ -7,8 +7,8 @@ __pycache__/
 
 # Окружение и данные
 .env
-data/
-workspace/
+/data/
+/workspace/
 
 # IDE
 .idea/
