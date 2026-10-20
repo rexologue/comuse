@@ -34,3 +34,8 @@ class ExecuteResponse(BaseModel):
     message: str | None = None
     artifacts: list[str] = Field(default_factory=list)
     duration_ms: int = 0
+    # For the caller's log (the executor keeps none): a crash's traceback, what the
+    # tool wrote with ctx.log(), and messages for the user it sent with ctx.notify().
+    traceback: str | None = None
+    logs: list[str] = Field(default_factory=list)
+    notifications: list[str] = Field(default_factory=list)

@@ -45,12 +45,13 @@ def settings(env) -> Settings:
 
 
 class FakeMain:
-    """Stands in for MainClient: `/executor/execute` goes to `tools`, events are collected.
-    Any other call fails the test (a run never asks for an approval)."""
+    """Stands in for MainClient: `/executor/execute` goes to `tools`, notifications and
+    events are collected. Any other call fails the test (a run never asks for anything)."""
 
     def __init__(self, tools: dict[str, Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]]):
         self.tools     = tools
         self.calls: list[dict[str, Any]] = []
+        self.notified: list[dict[str, Any]] = []
         self.events: list[tuple[str, dict[str, Any]]] = []
 
 
@@ -59,6 +60,10 @@ class FakeMain:
             self.calls.append(json)
             handler = self.tools[json["tool"]]
             return {"status": "ok", "artifacts": [], **handler(json["args"], json["context"])}
+
+        if path == "/internal/notify":
+            self.notified.append(json)
+            return {"delivered": True}
 
         raise AssertionError(f"unexpected POST {path}")
 

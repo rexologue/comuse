@@ -187,7 +187,7 @@ def _send_context(mode, task_settings, *, draft=False):
     return ToolContext(
         mode=mode, settings=None, paths=None, llm=None,
         credentials={"account": Credential(name="work", kind="imap_smtp", config={"email": "agent@company.local"}, secret="")},
-        publish=None, draft=draft, task_settings=task_settings,
+        draft=draft, task_settings=task_settings,
     )
 
 

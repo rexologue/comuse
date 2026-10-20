@@ -17,10 +17,10 @@ class NotifyOutput(ToolOutput):
     name="user.notify",
     title="Уведомить пользователя",
     card="Уведомить: «{message}»",
-    description="Show a notification to the user in the app (no email).",
+    description="Tell the user something from a task run: it goes to the run log and to the task's chat (no email).",
     side_effect="none",
 )
 async def notify(inp: NotifyInput, ctx: ToolContext) -> NotifyOutput:
-    await ctx.publish("notify", {"message": inp.message, "run_id": ctx.run_id, "session_id": ctx.session_id})
+    ctx.notify(inp.message)
 
     return NotifyOutput(sent=True)

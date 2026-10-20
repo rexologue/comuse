@@ -85,6 +85,12 @@ class CompilerSettings:
 
 
 @dataclass(slots=True, frozen=True)
+class RunnerSettings:
+    # Finished runs older than this go, with their log and data:outputs/<run_id>.
+    retention_days: int
+
+
+@dataclass(slots=True, frozen=True)
 class ExecutorSettings:
     tool_timeout: int
     keyring_backend: str
@@ -98,6 +104,7 @@ class Settings:
     llm: LLMSettings
     agent: AgentSettings
     compiler: CompilerSettings
+    runner: RunnerSettings
     executor: ExecutorSettings
 
     @classmethod
@@ -232,6 +239,16 @@ class Settings:
         )
 
         # -----------------------------
+        # RUNNER
+        # -----------------------------
+
+        runner_retention_days = int_coercion(
+            os.environ.get("RUN_RETENTION_DAYS", "15"),
+            "RUN_RETENTION_DAYS",
+            low=1,
+        )
+
+        # -----------------------------
         # EXECUTOR
         # -----------------------------
 
@@ -285,6 +302,9 @@ class Settings:
             compiler=CompilerSettings(
                 max_attempts=compiler_max_attempts,
                 dry_run_timeout=compiler_dry_run_timeout,
+            ),
+            runner=RunnerSettings(
+                retention_days=runner_retention_days,
             ),
             executor=ExecutorSettings(
                 tool_timeout=executor_tool_timeout,

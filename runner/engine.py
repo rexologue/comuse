@@ -1,6 +1,10 @@
 """Executes a frozen TaskSpec step by step, start to finish; never plans anything and
 never waits for a person (whatever needs one, a tool leaves outside the run: a draft,
-a file to check). Step keys are paths: `sort[2].move`."""
+a file to check). Step keys are paths: `sort[2].move`.
+
+Everything about a run goes into its one log (`run_log`, by task_id + run_id): the
+start with its version, settings and variables, every step with its arguments,
+output, error and the tool's own lines, notifications, the end."""
 
 from __future__ import annotations
 
@@ -16,7 +20,7 @@ from common.clients.main_client import MainClient
 from common.errors import ApiError
 from common.schemas.task import Step, TaskSpec
 from common.storage.db import session
-from common.storage.models import RUN_FINISHED, Run, StepRun, Task, TaskVersion
+from common.storage.models import RUN_FINISHED, Run, RunLog, Task, TaskVersion
 from common.storage.queries import run_detail
 from common.utils import truncate, utcnow
 
@@ -69,7 +73,8 @@ class RunEngine:
         self.update(run_id, status="running", started_at=utcnow())
         await self.main.publish("run.started", {"run_id": run_id, "task_id": run.task_id, "title": task.title, "dry_run": run.dry_run})
 
-        walk = _Walk(self, run, spec, state, task_settings=task.settings or {})
+        journal = _Journal(run)
+        walk = _Walk(self, run, spec, state, journal, title=task.title, task_settings=task.settings or {})
 
         try:
             await walk.execute()
@@ -92,7 +97,8 @@ class RunEngine:
         if status == "succeeded" and not run.dry_run and _found_nothing(state):
             status = "empty"
 
-        self.update(run_id, status=status, error=error, result=state.result, state=state.dump(), finished_at=utcnow())
+        journal.add("end", {"status": status, "error": error, "result": state.result})
+        self.update(run_id, status=status, error=error, result=state.result, finished_at=utcnow())
         self._cancelled.discard(run_id)
 
         await self.main.publish(
@@ -125,17 +131,43 @@ class _State:
         self.result: dict[str, Any] | None = None
 
 
-    def dump(self) -> dict[str, Any]:
-        return {"done": self.done, "artifacts": self.artifacts, "result": self.result}
+class _Journal:
+    """Appends to the run's log; entries are numbered in the order they happen."""
+
+    def __init__(self, run: Run):
+
+        self.run_id  = run.id
+        self.task_id = run.task_id
+        self.seq     = 0
+
+
+    def add(self, kind: str, data: dict[str, Any], *, step_key: str | None = None) -> None:
+        self.seq += 1
+
+        with session() as db:
+            db.add(RunLog(run_id=self.run_id, task_id=self.task_id, seq=self.seq, kind=kind, step_key=step_key, data=data))
+            db.commit()
 
 
 class _Walk:
-    def __init__(self, engine: RunEngine, run: Run, spec: TaskSpec, state: _State, *, task_settings: dict[str, Any]):
+    def __init__(
+        self,
+        engine: RunEngine,
+        run: Run,
+        spec: TaskSpec,
+        state: _State,
+        journal: _Journal,
+        *,
+        title: str,
+        task_settings: dict[str, Any],
+    ):
 
         self.engine        = engine
         self.run           = run
         self.spec          = spec
         self.state         = state
+        self.journal       = journal
+        self.title         = title
         self.task_settings = task_settings
 
         self.last_output: Any = None
@@ -152,9 +184,25 @@ class _Walk:
                 ctx[name] = templating.render_str(expr, ctx)
 
             except TemplateError as e:
+                self._log_start(ctx)
                 raise _Fail(f"Переменная `{name}`: {e}") from e
 
+        self._log_start(ctx)
         await self._steps(self.spec.steps, ctx, prefix="")
+
+
+    def _log_start(self, ctx: dict[str, Any]) -> None:
+        self.journal.add(
+            "start",
+            {
+                "title": self.title,
+                "task_version_id": self.run.task_version_id,
+                "trigger": self.run.trigger,
+                "dry_run": self.run.dry_run,
+                "settings": self.task_settings,
+                "variables": templating.jsonable({name: ctx[name] for name in self.spec.variables if name in ctx}),
+            },
+        )
 
 
     async def _steps(self, steps: list[Step], ctx: dict[str, Any], prefix: str) -> None:
@@ -208,13 +256,15 @@ class _Walk:
             status = response["status"]
             self.state.artifacts += [a for a in response.get("artifacts", []) if a not in self.state.artifacts]
 
+            await self._deliver(response.get("notifications") or [], key)
+
             if status == "ok":
                 return await self._check_empty(step, key, args, response["output"])
 
             if attempt < attempts:
                 await asyncio.sleep(_RETRY_BACKOFF_SEC * attempt)
 
-        # The failed attempt is already in step_runs (written by _call).
+        # The failed attempt is already in the log (written by _call).
         return await self._handle_error(step, key, args, response.get("error") or "неизвестная ошибка", record=False)
 
 
@@ -266,9 +316,33 @@ class _Walk:
             output=response.get("output"),
             error=response.get("error"),
             attempt=attempt,
+            extra={
+                "mode": response.get("mode"),
+                "duration_ms": response.get("duration_ms"),
+                "traceback": response.get("traceback"),
+                "logs": response.get("logs") or [],
+            },
         )
 
         return response
+
+
+    async def _deliver(self, messages: list[str], key: str) -> None:
+        """Notifications go to the log and, outside a dry run, to the task's chat."""
+        for message in messages:
+            self.journal.add("notify", {"message": message}, step_key=key)
+
+            if self.run.dry_run:
+                continue
+
+            try:
+                await self.engine.main.post(
+                    "/internal/notify",
+                    json={"task_id": self.run.task_id, "run_id": self.run.id, "title": self.title, "message": message},
+                )
+
+            except ApiError as e:
+                log.warning("notification of run %s not delivered: %s", self.run.id, e.message)
 
 
     def _evaluate(self, expr: str, ctx: dict[str, Any], key: str) -> Any:
@@ -301,23 +375,19 @@ class _Walk:
         output: Any,
         error: str | None = None,
         attempt: int = 1,
+        extra: dict[str, Any] | None = None,
     ) -> None:
-        with session() as db:
-            db.add(
-                StepRun(
-                    run_id=self.run.id,
-                    step_key=key,
-                    step_id=step.id,
-                    tool=step.tool,
-                    attempt=attempt,
-                    status=status,
-                    input=inputs,
-                    output=_clip(output),
-                    error=error,
-                    finished_at=utcnow(),
-                )
-            )
-            db.commit()
+        data = {
+            "step_id": step.id,
+            "tool": step.tool,
+            "attempt": attempt,
+            "status": status,
+            "input": inputs,
+            "output": _clip(output),
+            "error": error,
+            **(extra or {}),
+        }
+        self.journal.add("step", {k: v for k, v in data.items() if v not in (None, [], {}) or k in ("status", "output")}, step_key=key)
 
 
 def _found_nothing(state: _State) -> bool:
@@ -338,7 +408,7 @@ def _is_empty(output: Any) -> bool:
 
 
 def _clip(output: Any) -> Any:
-    """Big outputs (document text) are stored cut; the full value stays in the state."""
+    """Big outputs (document text) are logged cut."""
     text = truncate(output, 20000)
 
     return output if len(text) < 20000 else {"truncated": text}

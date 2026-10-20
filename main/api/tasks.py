@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
 from common.errors import ApiError
-from common.storage.queries import run_detail
+from common.storage.queries import run_detail, run_log
 from main import views
 from main.auth import require_client
 from main.proxy import reverse_proxy
@@ -100,6 +100,15 @@ async def get_run(run_id: str):
         raise ApiError(status_code=404, message=f"Run `{run_id}` not found")
 
     return run
+
+
+@router.get("/runs/{run_id}/log", summary="The run's whole log: start, every step, notifications, end")
+async def get_run_log(run_id: str):
+    entries = run_log(run_id)
+    if entries is None:
+        raise ApiError(status_code=404, message=f"Run `{run_id}` not found")
+
+    return {"run_id": run_id, "log": entries}
 
 
 @router.post("/runs/{run_id}/cancel", summary="Cancel a run")

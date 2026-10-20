@@ -42,7 +42,6 @@ async def start_run(body: RunBody, request: Request):
             trigger=body.trigger,
             dry_run=body.dry_run,
             status="queued",
-            state={},
         )
         db.add(run)
         db.commit()

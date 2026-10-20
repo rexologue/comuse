@@ -67,6 +67,20 @@ async def session_detail(session_id: str):
     return history.session_view(session_id)
 
 
+class PostedMessage(BaseModel):
+    content: str = Field(min_length=1)
+
+
+@router.post("/sessions/{session_id}/messages", summary="Add a message to a chat (a task telling its user something)")
+async def post_message(session_id: str, body: PostedMessage):
+    if not history.session_exists(session_id):
+        raise ApiError(status_code=404, message=f"Session `{session_id}` not found")
+
+    message_id = history.add_message(session_id, "assistant", body.content)
+
+    return {"session_id": session_id, "message_id": message_id}
+
+
 async def _stream(task: asyncio.Task):
     while not task.done():
         try:

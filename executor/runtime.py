@@ -1,6 +1,8 @@
 """The call pipeline: validate the arguments → check path arguments → dry-run policy →
-load declared secrets → run with timeout → log. Whoever calls has already decided the
-call should happen (the chat asks the user first; a task was approved as a whole).
+load declared secrets → run with timeout. The executor keeps no log: the response
+carries everything (duration, traceback, the tool's log lines and notifications) for
+the caller's own log. Whoever calls has already decided the call should happen (the
+chat asks the user first; a task was approved as a whole).
 
 The executor knows argument types, not domains: a path-typed argument must stay inside
 the workspace, a `secrets` argument names an account it loads. What a task may do is
@@ -11,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import traceback
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
@@ -20,10 +23,9 @@ from common.clients.main_client import MainClient
 from common.schemas.execution import ExecContext, ExecuteRequest, ExecuteResponse
 from common.settings import Settings
 from common.storage.db import session
-from common.storage.models import Account, ToolCall
+from common.storage.models import Account
 from common.tools import Credential, ToolContext, ToolError, ToolSpec, path_refs
 from common.tools.context import PermissionDenied
-from common.utils import truncate
 from executor.paths import WorkspacePaths
 from executor.registry import ToolRegistry
 from executor.secrets import SecretStore
@@ -58,8 +60,6 @@ class ExecutorRuntime:
         started = time.monotonic()
         response = await self._execute(req)
         response.duration_ms = int((time.monotonic() - started) * 1000)
-
-        self._log_call(req, response)
 
         return response
 
@@ -102,21 +102,34 @@ class ExecutorRuntime:
             output = _dump_output(spec, raw)
 
         except PermissionDenied as e:
-            return ExecuteResponse(status="error", error=f"Нет доступа: {e}")
+            return ExecuteResponse(status="error", error=f"Нет доступа: {e}", logs=ctx.logs)
 
         except ToolError as e:
-            return ExecuteResponse(status="error", error=str(e))
+            return ExecuteResponse(status="error", error=str(e), logs=ctx.logs)
 
         except TimeoutError:
             return ExecuteResponse(status="error", error=f"`{spec.name}` не уложился в таймаут")
 
         except Exception as e:
             log.exception("tool %s crashed", spec.name)
-            return ExecuteResponse(status="error", error=f"Сбой `{spec.name}`: {e!r}")
+            return ExecuteResponse(
+                status="error",
+                error=f"Сбой `{spec.name}`: {e!r}",
+                traceback=traceback.format_exc(),
+                logs=ctx.logs,
+                notifications=ctx.notifications,
+            )
 
         mode = "draft" if decision.draft else "real"
 
-        return ExecuteResponse(status="ok", output=output, mode=mode, artifacts=ctx.artifacts)
+        return ExecuteResponse(
+            status="ok",
+            output=output,
+            mode=mode,
+            artifacts=ctx.artifacts,
+            logs=ctx.logs,
+            notifications=ctx.notifications,
+        )
 
 
     def _decide(self, spec: ToolSpec, ctx: ExecContext) -> _Decision:
@@ -138,7 +151,6 @@ class ExecutorRuntime:
             settings=self.settings,
             paths=self.paths,
             llm=self.llm,
-            publish=self.main.publish,
             session_id=ctx.session_id,
             run_id=ctx.run_id,
             step_key=ctx.step_key,
@@ -163,27 +175,6 @@ class ExecutorRuntime:
         return Credential(name=account.name, kind=account.kind, config=dict(account.config), secret=secret)
 
 
-    def _log_call(self, req: ExecuteRequest, response: ExecuteResponse) -> None:
-        ctx = req.context
-
-        with session() as db:
-            db.add(
-                ToolCall(
-                    tool=req.tool,
-                    mode=ctx.mode,
-                    session_id=ctx.session_id,
-                    run_id=ctx.run_id,
-                    step_key=ctx.step_key,
-                    # Arguments never carry secrets (accounts are referenced by name).
-                    args=_clip_args(req.args),
-                    status=response.status,
-                    duration_ms=response.duration_ms,
-                    error=response.error,
-                )
-            )
-            db.commit()
-
-
 class _Decision:
     __slots__ = ("skip", "draft", "message")
 
@@ -202,7 +193,3 @@ def _dump_output(spec: ToolSpec, raw: Any) -> Any:
 
 def _short_errors(e: ValidationError) -> str:
     return "; ".join(f"{'.'.join(str(p) for p in err['loc'])}: {err['msg']}" for err in e.errors())
-
-
-def _clip_args(args: dict[str, Any]) -> dict[str, Any]:
-    return {key: truncate(value, 500) if not isinstance(value, (int, float, bool)) else value for key, value in args.items()}

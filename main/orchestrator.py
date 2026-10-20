@@ -9,7 +9,7 @@ from typing import Any
 
 from common.errors import ApiError
 from common.storage.db import session
-from common.storage.models import Approval
+from common.storage.models import Approval, Task
 from common.utils import new_id, utcnow
 from main.events import EventBus
 from main.registry import ServiceRegistry
@@ -132,6 +132,35 @@ class Orchestrator:
         )
 
         return {**result, "approval_id": approval["id"]}
+
+
+    # -----------------------------
+    # NOTIFICATIONS
+    # -----------------------------
+
+    async def notify(self, *, task_id: str, run_id: str, title: str, message: str) -> dict[str, Any]:
+        """A task run's message reaches the chat the task was built in (and the event
+        stream); the run log already has it."""
+        self.bus.publish("notify", {"task_id": task_id, "run_id": run_id, "title": title, "message": message})
+
+        with session() as db:
+            task = db.get(Task, task_id)
+            session_id = task.source_session_id if task else None
+
+        if session_id is None:
+            return {"delivered": False}
+
+        try:
+            await self.registry.client("agent_loop").post(
+                f"/sessions/{session_id}/messages",
+                json={"content": f"Задача «{title}»: {message}"},
+            )
+
+        except ApiError as e:
+            log.warning("notification for task %s not delivered to chat %s: %s", task_id, session_id, e.message)
+            return {"delivered": False}
+
+        return {"delivered": True, "session_id": session_id}
 
 
     async def _reload_triggers(self, task_id: str) -> None:

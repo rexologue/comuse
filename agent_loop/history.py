@@ -25,6 +25,11 @@ def ensure_session(session_id: str | None, first_text: str) -> str:
         return chat.id
 
 
+def session_exists(session_id: str) -> bool:
+    with session() as db:
+        return db.get(ChatSession, session_id) is not None
+
+
 def add_message(
     session_id: str,
     role: str,

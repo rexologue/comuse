@@ -143,6 +143,7 @@ project/
 | `GET`, `PUT /tasks/{id}/settings` | compiler | Настройки доменов задачи с подписями; `PUT {домен: {поле: значение}}` меняет значения, ключи добавить или удалить нельзя |
 | `POST /runs` | runner | `{task_id, dry_run?}` → запуск вручную |
 | `GET /runs/{id}`, `GET /tasks/{id}/runs` | storage | Статус запуска и его шаги; запуски `empty` в истории только с `?include_empty=true` |
+| `GET /runs/{id}/log` | storage | Журнал запуска целиком: старт, каждый шаг, уведомления, конец |
 | `POST /runs/{id}/cancel` | runner | Отменить запуск |
 | `GET /approvals`, `POST /approvals/{id}/answer {approve}` | main, затем compiler | Одобрение версий задач (`version_approve`) — единственное, что ждёт пользователя |
 | `GET /tools`, `GET /tools/{name}` | executor | Каталог инструментов со схемами |
@@ -180,7 +181,13 @@ project/
 
 - `POST /runs {task_id или task_version_id, trigger, dry_run, wait}`: создаёт запись в `runs`, исполняет в фоне и сразу отвечает `run_id` (с `wait` — ждёт конца; так делает dry run компилятора).
 - `POST /runs/{id}/cancel` отменяет.
-- **Движок:** берёт `current_version_id` → считает `variables` → для каждого шага рендерит `args` (Jinja2, StrictUndefined) → `POST main/executor/execute` → пишет `step_runs` → обрабатывает `on_error`.
+- **Движок:** берёт `current_version_id` → считает `variables` → для каждого шага рендерит `args` (Jinja2, StrictUndefined) → `POST main/executor/execute` → пишет шаг в журнал → обрабатывает `on_error`.
+- **Один журнал на запуск** (`run_log`, по `task_id` + `run_id`, записи только добавляются):
+  - старт: название, версия, откуда запуск, пробный ли, настройки, посчитанные переменные;
+  - каждый шаг и каждая попытка: команда, подставленные аргументы, выход (длинный обрезается), статус, ошибка с traceback, длительность, строки самой команды (`ctx.log`);
+  - уведомления: что команда сказала пользователю через `ctx.notify` (`user.notify`). Вне пробного запуска они уходят через `POST main/internal/notify` в чат, из которого собрана задача;
+  - конец: статус, ошибка, итог.
+- **Срок хранения:** раз в 6 часов (и при старте) runner удаляет запуски, закончившиеся раньше `RUN_RETENTION_DAYS` (15) дней назад, вместе с журналом и папкой `data:outputs/<run_id>`.
 - **Запуск никогда не ждёт человека** и идёт от начала до конца. Ошибка шага по `on_error`: `fail` (запуск упал), `retry`, `skip`; пустой результат по `on_empty`: `continue`, `fail`, `skip` (тихо закончить). Где нужен человек, команда оставляет результат вне запуска: письмо в черновиках, файл в папке на проверку.
 - Один запуск задачи за раз: если предыдущий ещё идёт, runner отвечает 409, scheduler пишет это в лог и ждёт следующего срабатывания.
 - Если все шаги вернули пустой результат (проверка по расписанию ничего не нашла), запуск получает статус `empty`.
@@ -192,7 +199,7 @@ project/
 
 - `POST /execute {tool, args, context}` → `{status, output, artifacts}`, где status: `ok` или `error`. Executor ничего не спрашивает: кто вызывает, тот уже решил, что вызов нужен (чат спросил пользователя, задачу пользователь одобрил). В `context`: режим (`chat` или `run`), `session_id` или `run_id` + `step_id`, настройки задачи (`task_settings`), `dry_run`.
 - `GET /tools`, `GET /tools/{name}`, `POST /tools/reload`; аккаунты: `GET`, `POST /accounts`, `GET /accounts/presets`, `POST /accounts/{name}/check`, `DELETE /accounts/{name}`.
-- **Конвейер вызова:** найти инструмент → проверить args по input-схеме → проверить аргументы-пути → пробный запуск по объявлению `dry_run` команды (`skip`, `draft` или `real`) → загрузить аккаунты для аргументов из `secrets` → вызвать с таймаутом и `ToolContext` → проверить output → записать в `tool_calls` без секретов.
+- **Конвейер вызова:** найти инструмент → проверить args по input-схеме → проверить аргументы-пути → пробный запуск по объявлению `dry_run` команды (`skip`, `draft` или `real`) → загрузить аккаунты для аргументов из `secrets` → вызвать с таймаутом и `ToolContext` → проверить output. Своего журнала у executor нет: всё для журнала вызывающего (длительность, traceback, строки `ctx.log`, уведомления `ctx.notify`) уходит в ответе.
 - **Executor знает типы аргументов, а не группы.**
   - Аргумент типа `WorkspacePath` (или `FileRefs` — список файлов) executor до вызова проверяет песочницей `executor/paths.py`: только рабочая папка и `data:templates` / `data:outputs`, без `..` и симлинков наружу. Входы `llm.*` (`TextOrFileRefs` — путь или обычный текст) заранее не проверяются; файл из них открывается через тот же `ctx.read_path`.
   - Аргументы из `secrets` называют сохранённый аккаунт: executor сам достаёт его настройки и пароль из keyring и отдаёт команде как `ctx.credential("account")`. Неизвестный аккаунт — отказ до вызова.
@@ -271,7 +278,7 @@ async def send(inp: Input, ctx: ToolContext) -> Output:
 | `mail` | search, read, mark, create\_draft, send | read, write, external | stdlib imaplib/smtplib |
 | `charts` | bar, line | write | matplotlib → PNG |
 | `llm` | extract, classify, write | none | common.llm, structured output |
-| `user` | notify | none | событие в main (ничего не ждёт) |
+| `user` | notify | none | в журнал запуска и сообщением в чат задачи (ничего не ждёт) |
 
 **Настройки группы.** Группа может объявить одну плоскую pydantic-модель `DomainSettings` (`@domain_settings`): тип, ограничения, подпись и описание каждого поля, значение по умолчанию. Схема попадает в манифест команд группы (`settings_schema`, LLM её не видит). Задача, в шагах которой есть команды группы, получает раздел `tasks.settings[группа]` со значениями по умолчанию; при новой версии значения пользователя сохраняются, раздел ненужной группы убирается. Менять значения может только пользователь (`PUT /tasks/{id}/settings`); команда читает свой раздел через `ctx.domain_settings(Модель)`. Пример — `mail.send_directly` (по умолчанию `false`): `mail.send` в запуске задачи кладёт письмо в черновики, отправляет его человек из своего почтового клиента.
 
@@ -405,13 +412,11 @@ tools:
 | `tasks` | compiler | id, title, status, settings\_json, current\_version\_id, source\_session\_id, created\_at, updated\_at | все |
 | `task_versions` | compiler | id, task\_id, version\_no, spec\_json, status, parent\_version\_id, patch\_json, summary, created\_by, created\_at, approved\_at | runner, scheduler, main |
 | `triggers` | scheduler | id, task\_id, type, config\_json, next\_fire\_at, enabled | main |
-| `runs` | runner | id, task\_id, task\_version\_id, trigger, status, dry\_run, state\_json (продолжение после паузы), result\_json, error, started\_at, finished\_at | main, agent-loop, compiler |
-| `step_runs` | runner | id, run\_id, step\_key (`sort[2].move`), step\_id, tool, attempt, status, input\_json, output\_json, error, started\_at, finished\_at | main |
+| `runs` | runner | id, task\_id, task\_version\_id, trigger, status, dry\_run, result\_json, error, started\_at, finished\_at | main, agent-loop, compiler |
+| `run_log` | runner | id, run\_id, task\_id, seq, at, kind (start, step, notify, end), step\_key, data\_json | main |
 | `tools` | executor | name, source, version, manifest\_json, enabled | agent-loop, compiler |
 | `skills` | executor | заготовка под скиллы, не используется | — |
 | `accounts` | executor | id, kind, name, config\_json, secret\_ref, created\_at | main (без секретов) |
-| `tool_calls` | executor | id, tool, mode, session\_id, run\_id, step\_key, args\_json (обрезанные, без секретов), status, duration\_ms, error, created\_at | main |
-| `artifacts` | executor | заготовка, не используется: файлы запуска лежат в `runs.state` и `result` | — |
 
 Значения перечислений:
 
@@ -452,8 +457,8 @@ tools:
 
 1. scheduler: сработал cron → `POST main/runner/runs {task_id, trigger: "cron"}`.
 2. runner создаёт run и по шагам вызывает `main/executor/execute`.
-3. executor выполняет команду с настройками задачи (пароль — через `ToolContext`) и пишет `tool_calls`.
-4. runner пишет `step_runs`, в конце шлёт событие `run.finished` в main, тот отдаёт его клиенту по SSE.
+3. executor выполняет команду с настройками задачи (пароль — через `ToolContext`) и всё нужное для журнала возвращает в ответе.
+4. runner пишет каждый шаг в журнал запуска, уведомления пересылает в чат задачи, в конце шлёт событие `run.finished` в main, тот отдаёт его клиенту по SSE. Посмотреть, как прошло: `GET /runs/{id}/log`.
 
 ### 5. Отправка писем из задачи
 
@@ -465,7 +470,7 @@ tools:
 
 | Риск | Мера |
 | --- | --- |
-| Секрет утёк в лог, промпт или git | Секреты только в keyring (Windows Credential Manager, macOS Keychain, Secret Service). В БД лежит `secret_ref`, в `tool_calls` аргументы с вырезанными секретами |
+| Секрет утёк в лог, промпт или git | Секреты только в keyring (Windows Credential Manager, macOS Keychain, Secret Service). В БД лежит `secret_ref`; аргументы команд секретов не содержат (аккаунт указывается по имени), поэтому журнал запуска их не видит |
 | Prompt injection из письма или документа | Запуск исполняет только одобренные шаги; что берётся из данных, отбирает команда поиска (`mail.search.sender_in: ["*@company.ru"]` — письмо `attacker@evil.com` задача просто не увидит) |
 | Агент написал опасный код | (план) Скиллы будут запускаться только в Deno с явными `--allow-*` и только после одобрения прав пользователем |
 | Доступ к файлам вне задачи | Все пути команд проходят `executor/paths.py`: только рабочая папка и `data:templates` / `data:outputs`, только разрешённые задаче папки; `..` и симлинки наружу отклоняются |
@@ -505,6 +510,7 @@ tools:
 | `AGENT_MAX_ITERATIONS`, `AGENT_TOOLS_TOP_K`, `AGENT_HISTORY_MESSAGES` | 16, 24, 40 | то же | Шаги агента за ход, сколько инструментов видит модель, длина истории |
 | `COMPILER_MAX_ATTEMPTS`, `COMPILER_DRY_RUN_TIMEOUT_SEC` | 3, 300 | то же | Попытки собрать задачу, таймаут пробного запуска |
 | `TOOL_TIMEOUT_SEC`, `LLM_TIMEOUT_SEC` | 300, 300 | то же | Таймауты команды и запроса к LLM |
+| `RUN_RETENTION_DAYS` | 15 | то же | Сколько дней хранить запуски, их журнал и файлы |
 
 Порты заданы умолчаниями (8000–8005) и переопределяются `PORT`. Каждый сервис сам сообщает main свой `SELF_URL`, поэтому список адресов поддерживать не нужно.
 

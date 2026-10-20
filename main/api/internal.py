@@ -31,6 +31,18 @@ async def register(body: RegisterBody, request: Request):
     return {"status": "ok"}
 
 
+class NotifyBody(BaseModel):
+    task_id: str
+    run_id: str
+    title: str
+    message: str
+
+
+@router.post("/internal/notify", summary="A task run tells its user something")
+async def notify(body: NotifyBody, request: Request):
+    return await request.app.state.orchestrator.notify(**body.model_dump())
+
+
 @router.post("/internal/events", summary="Publish an event")
 async def publish(body: EventBody, request: Request):
     return request.app.state.bus.publish(body.type, body.payload)

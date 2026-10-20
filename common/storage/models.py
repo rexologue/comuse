@@ -167,30 +167,28 @@ class Run(Base):
     # empty: succeeded, but every step came back empty (a scheduled check found nothing)
     status: Mapped[str] = mapped_column(String, default="queued", index=True)
     dry_run: Mapped[bool] = mapped_column(Boolean, default=False)
-    # What the run produced: step results by key, files, the result.
-    state: Mapped[Any] = mapped_column(JSON, default=dict)
+    # Last step's output and the files the run made; everything else is in run_log.
     result: Mapped[Any] = mapped_column(JSON, nullable=True)
     error: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
-class StepRun(Base):
-    __tablename__ = "step_runs"
+class RunLog(Base):
+    """The one log of a run, append-only: start, every step (arguments, output, error
+    with traceback, the tool's own messages), notifications, end."""
+
+    __tablename__ = "run_log"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_id: Mapped[str] = mapped_column(String, index=True)
-    step_key: Mapped[str] = mapped_column(String)
-    step_id: Mapped[str] = mapped_column(String)
-    tool: Mapped[str | None] = mapped_column(String)
-    attempt: Mapped[int] = mapped_column(Integer, default=1)
-    # ok | error | skipped
-    status: Mapped[str] = mapped_column(String)
-    input: Mapped[Any] = mapped_column(JSON, nullable=True)
-    output: Mapped[Any] = mapped_column(JSON, nullable=True)
-    error: Mapped[str | None] = mapped_column(Text)
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    task_id: Mapped[str] = mapped_column(String, index=True)
+    seq: Mapped[int] = mapped_column(Integer)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # start | step | notify | end
+    kind: Mapped[str] = mapped_column(String)
+    step_key: Mapped[str | None] = mapped_column(String)
+    data: Mapped[Any] = mapped_column(JSON, default=dict)
 
 
 # -----------------------------
@@ -231,31 +229,4 @@ class Account(Base):
     # Non-secret connection settings; the secret itself lives in the keyring.
     config: Mapped[Any] = mapped_column(JSON, default=dict)
     secret_ref: Mapped[str] = mapped_column(String)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-
-class ToolCall(Base):
-    __tablename__ = "tool_calls"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    tool: Mapped[str] = mapped_column(String, index=True)
-    mode: Mapped[str] = mapped_column(String)
-    session_id: Mapped[str | None] = mapped_column(String)
-    run_id: Mapped[str | None] = mapped_column(String, index=True)
-    step_key: Mapped[str | None] = mapped_column(String)
-    args: Mapped[Any] = mapped_column(JSON, nullable=True)
-    status: Mapped[str] = mapped_column(String)
-    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
-    error: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-
-class Artifact(Base):
-    __tablename__ = "artifacts"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    run_id: Mapped[str | None] = mapped_column(String, index=True)
-    session_id: Mapped[str | None] = mapped_column(String)
-    path: Mapped[str] = mapped_column(String)
-    mime: Mapped[str] = mapped_column(String, default="application/octet-stream")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

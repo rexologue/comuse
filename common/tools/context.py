@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar
 
 if TYPE_CHECKING:
     from common.clients.llm_client import LLMClient
@@ -45,7 +45,6 @@ class ToolContext:
     settings: Settings
     paths: PathResolver
     llm: LLMClient
-    publish: Callable[[str, dict[str, Any]], Awaitable[None]]
     session_id: str | None = None
     run_id: str | None = None
     step_key: str | None = None
@@ -57,6 +56,18 @@ class ToolContext:
     # Accounts the executor loaded for the tool's `secrets` arguments, by argument name.
     credentials: dict[str, Credential] = field(default_factory=dict)
     artifacts: list[str] = field(default_factory=list)
+    logs: list[str] = field(default_factory=list)
+    notifications: list[str] = field(default_factory=list)
+
+    def log(self, message: str) -> None:
+        """A line for the run log (or the chat trace) next to this call's result."""
+        self.logs.append(message)
+
+
+    def notify(self, message: str) -> None:
+        """A message for the user: the run log keeps it and it goes to the task's chat."""
+        self.notifications.append(message)
+
 
     def domain_settings(self, model: type[SettingsT]) -> SettingsT:
         """The task's values for this domain; defaults in chat and for anything unset."""

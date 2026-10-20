@@ -12,6 +12,7 @@ from common.storage.models import Run
 from common.utils import utcnow
 from runner.api import runs as runs_api
 from runner.engine import RunEngine
+from runner.retention import sweep_forever
 
 
 log = logging.getLogger("runner")
@@ -20,7 +21,7 @@ log = logging.getLogger("runner")
 def _close_interrupted_runs() -> None:
     """Runs left unfinished by a restart cannot continue mid-step; they are closed."""
     with session() as db:
-        stale = db.query(Run).filter(Run.status.in_(("running", "queued", "waiting"))).all()
+        stale = db.query(Run).filter(Run.status.in_(("running", "queued"))).all()
 
         for run in stale:
             run.status = "failed"
@@ -39,7 +40,7 @@ async def lifespan(app: FastAPI):
     _close_interrupted_runs()
 
     app.state.engine = RunEngine(app.state.main)
-    app.state.background = set()
+    app.state.background = {asyncio.create_task(sweep_forever(app.state.settings))}
 
     try:
         yield
