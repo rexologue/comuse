@@ -167,7 +167,7 @@ AUTO_REPLY = {
     "title": "Ответ на заявки",
     "trigger": {"type": "cron", "expr": "*/5 * * * *"},
     "steps": [
-        {"id": "found", "tool": "mail.search", "args": {"account": "work", "subject": "Заявка", "unseen": True}, "on_empty": "skip"},
+        {"id": "found", "tool": "mail.search", "args": {"account": "work", "subject": "Заявка", "unseen": True, "sender_in": ["*@company.local"]}, "on_empty": "skip"},
         {
             "id": "reply",
             "foreach": "{{ found.output.messages }}",
@@ -176,7 +176,7 @@ AUTO_REPLY = {
                 {
                     "id": "send",
                     "tool": "mail.send",
-                    "args": {"account": "work", "to": ["{{ msg.sender_email }}"], "allow_to": ["*@company.local"], "subject": "Re: {{ msg.subject }}", "body": "Заявка принята."},
+                    "args": {"account": "work", "to": ["{{ msg.sender_email }}"], "subject": "Re: {{ msg.subject }}", "body": "Заявка принята."},
                 }
             ],
         }
@@ -184,14 +184,14 @@ AUTO_REPLY = {
 }
 
 
-def test_recipient_limit_shows_on_the_card_and_in_the_diff():
+def test_sender_limit_shows_on_the_card_and_in_the_diff():
     unlimited = copy.deepcopy(AUTO_REPLY)
-    del unlimited["steps"][1]["steps"][0]["args"]["allow_to"]
+    del unlimited["steps"][0]["args"]["sender_in"]
 
     old, new = validate_spec(unlimited, CATALOG), validate_spec(AUTO_REPLY, CATALOG)
-    card = build_cards(new, CATALOG)[1]["children"][0]["text"]
+    card = build_cards(new, CATALOG)[0]["text"]
 
-    assert "можно только: *@company.local" in card
+    assert "только от *@company.local" in card
     assert any("*@company.local" in line for line in diff_specs(old, new, CATALOG)["lines"])
 
 

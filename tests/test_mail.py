@@ -65,44 +65,37 @@ def test_search_output_describes_sender_email():
 
 
 @pytest.mark.parametrize("entry", ["boss@company.ru", "*@company.local", " *@Corp.LAN "])
-def test_recipient_masks_accept_addresses_and_domains(entry):
-    from internal_tools.mail.send import Input
+def test_sender_masks_accept_addresses_and_domains(entry):
+    from internal_tools.mail.search import Input
 
-    inp = Input(account="w", to=["a@company.local"], subject="s", body="b", allow_to=[entry])
-    assert inp.allow_to == [entry.strip().lower()]
+    assert Input(account="w", sender_in=[entry]).sender_in == [entry.strip().lower()]
 
 
 @pytest.mark.parametrize("entry", ["*", "*@*", "*@", "boss", "a@b@c"])
-def test_recipient_masks_reject_too_broad_or_malformed(entry):
+def test_sender_masks_reject_too_broad_or_malformed(entry):
     from pydantic import ValidationError
 
-    from internal_tools.mail.send import Input
+    from internal_tools.mail.search import Input
 
     with pytest.raises(ValidationError):
-        Input(account="w", to=["a@company.local"], subject="s", body="b", allow_to=[entry])
+        Input(account="w", sender_in=[entry])
 
 
-def test_allow_to_lets_through_only_its_domain_and_addresses():
-    from internal_tools.mail.recipients import check_allowed
+@pytest.mark.parametrize(
+    ("address", "expected"),
+    [
+        ("client@test.local", True),
+        ("Client@TEST.local", True),
+        ("boss@other.ru", True),            # listed exactly
+        ("x@evil-test.local.com", False),   # a substring match would let this through
+        ("test.local@evil.com", False),
+        ("boss2@other.ru", False),
+    ],
+)
+def test_sender_in_compares_the_address_exactly(address, expected):
+    item = {"from": f"Кто-то <{address}>", "from_email": address, "subject": "Заявка"}
 
-    check_allowed(["anyone@company.local", "Client@COMPANY.local", "boss@other.ru"], ["*@company.local", "boss@other.ru"])
-    check_allowed(["anyone@anywhere.ru"], [])  # no limit: the step's own recipients were approved
-
-    with pytest.raises(ToolError, match="stranger@other.ru"):
-        check_allowed(["anyone@company.local", "stranger@other.ru"], ["*@company.local"])
-
-
-async def test_send_refuses_recipients_outside_allow_to(monkeypatch):
-    from internal_tools.mail.send import Input, send
-
-    sent = []
-    monkeypatch.setattr(imap_smtp, "send", lambda *a: sent.append(a))
-
-    inp = Input(account="work", to=["attacker@evil.com"], subject="Re", body="b", allow_to=["*@company.local"])
-    with pytest.raises(ToolError):
-        await send(inp, _send_context("chat", {}))
-
-    assert sent == []
+    assert imap_smtp.matches(item, sender=None, subject=None, sender_in=["*@test.local", "boss@other.ru"]) is expected
 
 
 HEADER = {"from": "Иван Петров <ivan@company.local>", "subject": "Заявка на поставку"}

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from common.tools import ToolError
+from internal_tools.mail.addresses import matches as address_matches
 
 
 _TIMEOUT_SEC = 30
@@ -67,6 +68,7 @@ def search(
     since: date | None,
     unseen: bool,
     limit: int,
+    sender_in: list[str] = (),
 ) -> list[dict[str, Any]]:
     # A message flagged \\Deleted is gone for the user even before the server purges it.
     criteria: list[str] = ["UNDELETED"]
@@ -107,19 +109,23 @@ def search(
                 "date": _iso_date(headers.get("Date")),
             }
 
-            if matches(item, sender=sender, subject=subject):
+            if matches(item, sender=sender, subject=subject, sender_in=sender_in):
                 found.append(item)
 
     return found
 
 
-def matches(item: dict[str, Any], *, sender: str | None, subject: str | None) -> bool:
-    """Case-insensitive substring filters; the sender is matched against the whole
-    From header, so a name, an address or just its domain all work."""
+def matches(item: dict[str, Any], *, sender: str | None, subject: str | None, sender_in: list[str] = ()) -> bool:
+    """`sender` and `subject` are case-insensitive substrings (the sender of the whole
+    From header: a name, an address or a domain); `sender_in` compares the bare address
+    exactly against addresses and `*@domain` masks."""
     if subject and subject.lower() not in item["subject"].lower():
         return False
 
     if sender and sender.lower() not in item["from"].lower():
+        return False
+
+    if sender_in and not address_matches(item["from_email"], sender_in):
         return False
 
     return True

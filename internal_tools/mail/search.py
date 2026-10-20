@@ -7,12 +7,21 @@ from pydantic import BaseModel, Field
 
 from common.tools import ToolContext, ToolError, ToolInput, ToolOutput, tool
 from internal_tools.mail.adapters import imap_smtp
+from internal_tools.mail.addresses import AddressMask
 
 
 class Input(ToolInput):
     account: str = Field(description="Имя почтового аккаунта")
     folder: str = Field(default="INBOX", description="Папка почты")
-    sender: str | None = Field(default=None, description="Отправитель содержит")
+    sender: str | None = Field(default=None, description="Отправитель содержит (подстрока имени или адреса; для удобства поиска, не для ограничений)")
+    sender_in: list[AddressMask] = Field(
+        default_factory=list,
+        description=(
+            "Только письма от этих адресов или доменов (*@company.ru), точное сравнение адреса отправителя. "
+            "Обязательно, если найденным письмам задача отвечает или что-то с ними делает: укажи адреса или "
+            "домен из разговора. Пусто — от кого угодно."
+        ),
+    )
     subject: str | None = Field(default=None, description="Тема содержит")
     since: str | None = Field(default=None, description="Не раньше даты YYYY-MM-DD")
     unseen: bool = Field(default=False, description="Только непрочитанные")
@@ -35,7 +44,7 @@ class Output(ToolOutput):
 @tool(
     name="mail.search",
     title="Найти письма",
-    card="Найти письма в «{account}»: отправитель «{sender}», тема «{subject}»",
+    card="Найти письма в «{account}»: отправитель «{sender}», только от {sender_in}, тема «{subject}»",
     description="Search an IMAP mailbox; newest first. Returns uid, sender, sender_email (bare address for replies), to, subject, date.",
     side_effect="read",
     capabilities=("mail.account:{account}",),
@@ -60,6 +69,7 @@ async def search(inp: Input, ctx: ToolContext) -> Output:
         since=since,
         unseen=inp.unseen,
         limit=inp.limit,
+        sender_in=inp.sender_in,
     )
 
     return Output(messages=[MailHeader.model_validate(item) for item in found])
