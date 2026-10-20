@@ -1,4 +1,6 @@
-"""External API that forwards to agent-loop, compiler and executor."""
+"""External API that forwards to agent-loop, compiler and executor. The compiler is
+reached only through these routes and main/api/tasks.py: approving or editing a task
+must go through the orchestrator (approvals, scheduler reload), never around it."""
 
 from __future__ import annotations
 
@@ -26,11 +28,6 @@ async def compile_task(body: dict[str, Any], request: Request):
 @router.post("/compiler/patch", summary="Instruction → new draft version + diff + approval")
 async def patch_task(body: dict[str, Any], request: Request):
     return await request.app.state.orchestrator.patch(body)
-
-
-@router.api_route("/compiler/{path:path}", methods=METHODS, summary="Proxy to compiler")
-async def compiler_proxy(path: str, request: Request):
-    return await reverse_proxy(request, "compiler", path)
 
 
 @router.api_route("/agent/{path:path}", methods=METHODS, summary="Proxy to agent-loop (chat)")
