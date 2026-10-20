@@ -77,7 +77,7 @@ class TraceEvent(Base):
     tool: Mapped[str] = mapped_column(String)
     args: Mapped[Any] = mapped_column(JSON, default=dict)
     result: Mapped[Any] = mapped_column(JSON, nullable=True)
-    # ok | error | needs_approval | confirmed | rejected
+    # ok | error | needs_approval (waits for the user) | confirmed (ran after their yes)
     status: Mapped[str] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
