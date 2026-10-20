@@ -52,8 +52,27 @@ class RunEngine:
         self._cancelled: set[str] = set()
 
 
-    def cancel(self, run_id: str) -> None:
-        self._cancelled.add(run_id)
+    async def cancel(self, run_id: str) -> str:
+        """A running run stops before its next step; one still queued has nothing to
+        interrupt and is closed right away, with its end in the log like any other."""
+        with session() as db:
+            run = db.get(Run, run_id)
+            task = db.get(Task, run.task_id)
+
+        if run.status != "queued":
+            self._cancelled.add(run_id)
+            return "cancelling"
+
+        state = _State()
+        state.result = {"stopped": "Отменено до начала", "artifacts": []}
+        self._close(run_id, _Journal(run), state, "cancelled", None)
+
+        await self.main.publish(
+            "run.finished",
+            {"run_id": run_id, "task_id": run.task_id, "title": task.title, "status": "cancelled", "error": None, "dry_run": run.dry_run},
+        )
+
+        return "cancelled"
 
 
     async def execute(self, run_id: str) -> dict[str, Any]:

@@ -148,7 +148,9 @@
 второй — 409.
 
 Запуск: `{id, task_id, task_version_id, trigger, status, dry_run, result, error, started_at, finished_at}`;
-`GET /runs/{id}` добавляет `steps` — записи журнала о шагах. Запуски со статусом
+`POST /runs/{id}/cancel` → `{run_id, status}`: `cancelled`, если запуск ещё ждал в
+очереди и уже закрыт, `cancelling` — если он идёт и остановится перед следующим шагом;
+законченный — 409. `GET /runs/{id}` добавляет `steps` — записи журнала о шагах. Запуски со статусом
 `empty` (проверка ничего не нашла, в том числе остановка по `on_empty: skip` на первом
 же шаге) в истории задачи видны только с `include_empty=true`. Статусы, журнал и пробный запуск — в [RUNS.md](RUNS.md).
 

@@ -52,7 +52,7 @@ async def start_run(body: RunBody, request: Request):
             return await asyncio.wait_for(engine.execute(run.id), timeout=_WAIT_TIMEOUT_SEC)
 
         except TimeoutError as e:
-            # wait_for has cancelled the run; it closed itself as failed.
+            # wait_for has cancelled the run's coroutine; the run closed itself as failed.
             raise ApiError(status_code=504, message=f"Run `{run.id}` did not finish in {_WAIT_TIMEOUT_SEC}s") from e
 
     _spawn(request, engine.execute(run.id))
@@ -70,14 +70,7 @@ async def cancel_run(run_id: str, request: Request):
         if run.status in RUN_FINISHED:
             raise ApiError(status_code=409, message=f"Run `{run_id}` is already {run.status}")
 
-        # A queued run has no coroutine to interrupt yet; close it right away.
-        if run.status == "queued":
-            run.status = "cancelled"
-            db.commit()
-
-    request.app.state.engine.cancel(run_id)
-
-    return {"run_id": run_id, "status": "cancelling"}
+    return {"run_id": run_id, "status": await request.app.state.engine.cancel(run_id)}
 
 
 @router.get("/runs/{run_id}", summary="Run with its steps")

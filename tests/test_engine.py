@@ -291,3 +291,28 @@ async def test_a_run_its_caller_stopped_waiting_for_is_closed(settings):
 
     assert run.status == "failed" and run.finished_at is not None
     assert run_log("run_1")[-1]["kind"] == "end"
+
+
+async def test_a_run_cancelled_in_the_queue_is_closed_like_any_other(settings):
+    """It has no coroutine to stop: closed right away, with an end in its log and an event,
+    so retention can sweep it like any finished run."""
+    from runner.api.runs import cancel_run
+    from types import SimpleNamespace
+
+    main = FakeMain(_tools())
+    engine = RunEngine(main)
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(engine=engine)))
+
+    answer = await cancel_run(_make_run(SPEC), request)
+
+    with session() as db:
+        run = db.get(Run, "run_1")
+
+    assert answer == {"run_id": "run_1", "status": "cancelled"}
+    assert run.status == "cancelled" and run.finished_at is not None
+    assert [e["kind"] for e in run_log("run_1")] == ["end"]
+    assert [kind for kind, _ in main.events] == ["run.finished"]
+
+    # The queued run's coroutine, when it gets its turn, finds it closed and does nothing.
+    await engine.execute("run_1")
+    assert main.calls == [] and len(run_log("run_1")) == 1
