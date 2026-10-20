@@ -79,3 +79,22 @@ def test_tools_declare_their_path_and_secret_arguments():
     assert SPECS["xlsx.aggregate"].path_args == {"inputs": "refs"}
     assert SPECS["llm.extract"].path_args == {}  # text or files: checked when a file is opened
     assert SPECS["mail.send"].secrets == ("account",)
+
+
+async def test_what_a_tool_said_before_failing_reaches_the_caller(settings, monkeypatch):
+    from dataclasses import replace
+
+    from common.tools import ToolError
+
+    async def fails(inp, ctx):
+        ctx.log("прочитал 3 файла")
+        ctx.notify("начинаю")
+        raise ToolError("в четвёртом нет колонки «Сумма»")
+
+    runtime = _runtime(settings)
+    monkeypatch.setattr(runtime.registry, "get", lambda name: replace(SPECS["data.map_rows"], fn=fails))
+
+    response = await runtime._execute(ExecuteRequest(tool="data.map_rows", args={"rows": [], "fields": {}}, context=ExecContext(mode="run")))
+
+    assert response.status == "error"
+    assert response.logs == ["прочитал 3 файла"] and response.notifications == ["начинаю"]

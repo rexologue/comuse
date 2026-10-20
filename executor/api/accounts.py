@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from common.errors import ApiError
 from common.storage.db import session
 from common.storage.models import Account
+from common.tools import ToolError
 from common.tools.accounts import AccountKind, account_kinds, get_account_kind
 from common.utils import new_id
 
@@ -73,7 +74,12 @@ async def create_account(body: AccountCreate, request: Request):
 
 @router.post("/accounts/{name}/check", summary="Try to log in with the account")
 async def check_account(name: str, request: Request):
-    account = request.app.state.runtime.load_credential(name)
+    try:
+        account = request.app.state.runtime.load_credential(name)
+
+    except ToolError as e:
+        raise ApiError(status_code=404, message=str(e)) from e
+
     kind = _kind(account.kind)
 
     if kind.check is None:

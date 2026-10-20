@@ -88,6 +88,10 @@ class ExecutorRuntime:
 
         ctx = self._tool_context(req.context, credentials=credentials)
 
+        # Whatever the tool managed to log or tell the user before it failed belongs in
+        # the caller's log too.
+        said = {"logs": ctx.logs, "notifications": ctx.notifications}
+
         try:
             raw = await asyncio.wait_for(
                 spec.fn(inp, ctx),
@@ -96,23 +100,17 @@ class ExecutorRuntime:
             output = _dump_output(spec, raw)
 
         except PermissionDenied as e:
-            return ExecuteResponse(status="error", error=f"Нет доступа: {e}", logs=ctx.logs)
+            return ExecuteResponse(status="error", error=f"Нет доступа: {e}", **said)
 
         except ToolError as e:
-            return ExecuteResponse(status="error", error=str(e), logs=ctx.logs)
+            return ExecuteResponse(status="error", error=str(e), **said)
 
         except TimeoutError:
-            return ExecuteResponse(status="error", error=f"`{spec.name}` не уложился в таймаут")
+            return ExecuteResponse(status="error", error=f"`{spec.name}` не уложился в таймаут", **said)
 
         except Exception as e:
             log.exception("tool %s crashed", spec.name)
-            return ExecuteResponse(
-                status="error",
-                error=f"Сбой `{spec.name}`: {e!r}",
-                traceback=traceback.format_exc(),
-                logs=ctx.logs,
-                notifications=ctx.notifications,
-            )
+            return ExecuteResponse(status="error", error=f"Сбой `{spec.name}`: {e!r}", traceback=traceback.format_exc(), **said)
 
         return ExecuteResponse(
             status="ok",

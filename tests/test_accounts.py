@@ -73,3 +73,14 @@ async def test_check_uses_the_kinds_login(settings, monkeypatch):
 
     assert await check_account("work", _request(runtime=runtime)) == {"status": "ok"}
     assert tried == [({"imap_host": "h"}, "s")]
+
+
+async def test_checking_an_unknown_account_is_not_found(settings):
+    from executor.runtime import ExecutorRuntime
+
+    runtime = ExecutorRuntime.__new__(ExecutorRuntime)
+
+    with pytest.raises(ApiError) as error:
+        await check_account("nope", _request(runtime=runtime))
+
+    assert error.value.status_code == 404
