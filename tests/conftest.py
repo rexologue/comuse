@@ -1,5 +1,5 @@
 """Shared fixtures: an isolated environment (temp data and workspace dirs, no network)
-and a fake main client that plays executor and approvals in memory."""
+and a fake main client that plays the executor in memory."""
 
 from __future__ import annotations
 
@@ -45,13 +45,12 @@ def settings(env) -> Settings:
 
 
 class FakeMain:
-    """Stands in for MainClient: `/executor/execute` goes to `tools`, approvals are
-    recorded, events are collected."""
+    """Stands in for MainClient: `/executor/execute` goes to `tools`, events are collected.
+    Any other call fails the test (a run never asks for an approval)."""
 
     def __init__(self, tools: dict[str, Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]]):
         self.tools     = tools
         self.calls: list[dict[str, Any]] = []
-        self.approvals: list[dict[str, Any]] = []
         self.events: list[tuple[str, dict[str, Any]]] = []
 
 
@@ -60,11 +59,6 @@ class FakeMain:
             self.calls.append(json)
             handler = self.tools[json["tool"]]
             return {"status": "ok", "artifacts": [], **handler(json["args"], json["context"])}
-
-        if path == "/internal/approvals":
-            approval = {"id": f"apr_{len(self.approvals) + 1}", **json}
-            self.approvals.append(approval)
-            return approval
 
         raise AssertionError(f"unexpected POST {path}")
 

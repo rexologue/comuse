@@ -38,8 +38,10 @@ class Step(BaseModel):
     foreach: str | None = None
     as_: str = Field(default="item", alias="as", pattern=STEP_ID_PATTERN)
     steps: list[Step] | None = None
-    on_error: Literal["fail", "retry", "skip", "ask_user"] = "fail"
-    on_empty: Literal["continue", "fail", "skip", "ask_user"] = "continue"
+    # A run never waits for a person: an error fails, retries or skips; an empty result
+    # continues, fails or ends the run quietly.
+    on_error: Literal["fail", "retry", "skip"] = "fail"
+    on_empty: Literal["continue", "fail", "skip"] = "continue"
     retries: int = Field(default=0, ge=0, le=5)
 
     @model_validator(mode="after")

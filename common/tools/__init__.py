@@ -11,7 +11,7 @@ from typing import Any, Awaitable, Callable, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from common.tools.context import Credential, NeedsInput, PermissionDenied, ToolContext, ToolError
+from common.tools.context import Credential, PermissionDenied, ToolContext, ToolError
 from common.tools.domain import DomainSettings, domain_settings, settings_schema
 from common.tools.fields import PATH_ARG
 from common.tools.refs import file_refs
@@ -20,7 +20,6 @@ from common.tools.refs import file_refs
 __all__ = [
     "Credential",
     "DomainSettings",
-    "NeedsInput",
     "PermissionDenied",
     "ToolContext",
     "ToolError",

@@ -18,9 +18,9 @@ log = logging.getLogger("runner")
 
 
 def _close_interrupted_runs() -> None:
-    """Runs left `running` by a crash cannot continue mid-step; waiting ones can."""
+    """Runs left unfinished by a restart cannot continue mid-step; they are closed."""
     with session() as db:
-        stale = db.query(Run).filter(Run.status.in_(("running", "queued"))).all()
+        stale = db.query(Run).filter(Run.status.in_(("running", "queued", "waiting"))).all()
 
         for run in stale:
             run.status = "failed"

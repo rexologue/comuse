@@ -26,11 +26,6 @@ def _fn(name: str, description: str, properties: dict[str, Any], required: list[
 
 _STR = {"type": "string"}
 
-# Turning a task on and sending what a task run drafted are the user's decisions, made
-# outside the chat; the agent only relays answers to questions.
-_AGENT_ANSWERS = {"ask_user"}
-
-
 DEFINITIONS: list[dict[str, Any]] = [
     _fn(
         "task_compile",
@@ -61,13 +56,6 @@ DEFINITIONS: list[dict[str, Any]] = [
         ["task_id", "action"],
     ),
     _fn("run_status", "Состояние запуска задачи: шаги, ошибки, результаты.", {"run_id": _STR}, ["run_id"]),
-    _fn("approvals_list", "Вопросы задач, которые ждут ответа пользователя.", {}),
-    _fn(
-        "approval_answer",
-        "Передать ответ пользователя на вопрос задачи из approvals_list.",
-        {"approval_id": _STR, "approve": {"type": "boolean"}, "answer": _STR},
-        ["approval_id", "approve"],
-    ),
     _fn(
         "action_confirm",
         "Выполнить действие, которое ждало подтверждения (например, отправку письма), после явного согласия пользователя.",
@@ -153,32 +141,6 @@ async def _run_status(main: MainClient, session_id: str, args: dict[str, Any]) -
     }
 
 
-async def _approvals(main: MainClient, session_id: str, args: dict[str, Any]) -> Any:
-    data = await main.get("/approvals", params={"status": "pending"})
-
-    return [
-        {"approval_id": a["id"], "kind": a["kind"], "details": a["payload"]}
-        for a in data["approvals"]
-        if a["kind"] in _AGENT_ANSWERS
-    ]
-
-
-async def _answer(main: MainClient, session_id: str, args: dict[str, Any]) -> Any:
-    data = await main.get("/approvals", params={"status": "pending"})
-    approval = next((a for a in data["approvals"] if a["id"] == args["approval_id"]), None)
-
-    if approval is None:
-        raise ApiError(status_code=404, message=f"Нет ожидающего вопроса `{args['approval_id']}`")
-
-    if approval["kind"] not in _AGENT_ANSWERS:
-        raise ApiError(status_code=403, message="Это подтверждение пользователь даёт сам, не через чат")
-
-    return await main.post(
-        f"/approvals/{args['approval_id']}/answer",
-        json={"approve": args.get("approve", True), "answer": args.get("answer")},
-    )
-
-
 HANDLERS: dict[str, Handler] = {
     "task_compile": _compile,
     "task_reject": _reject,
@@ -187,8 +149,6 @@ HANDLERS: dict[str, Handler] = {
     "task_run_now": _run_now,
     "task_control": _control,
     "run_status": _run_status,
-    "approvals_list": _approvals,
-    "approval_answer": _answer,
 }
 
 

@@ -23,16 +23,6 @@ class PermissionDenied(ToolError):
     """The call reaches outside the user's workspace (or a tool's own limits)."""
 
 
-class NeedsInput(Exception):
-    """The tool needs an answer from the user before it can produce output."""
-
-    def __init__(self, question: str, options: list[str] | None = None) -> None:
-        super().__init__(question)
-
-        self.question = question
-        self.options = options or []
-
-
 class PathResolver(Protocol):
     def read_path(self, ref: str) -> Path: ...
     def write_path(self, ref: str) -> Path: ...

@@ -23,14 +23,13 @@ _PING_SEC = 15
 
 class AnswerBody(BaseModel):
     approve: bool = True
-    answer: Any = None
 
 
 # -----------------------------
 # APPROVALS
 # -----------------------------
 
-@router.get("/approvals", summary="Questions and confirmations for the user")
+@router.get("/approvals", summary="Task versions waiting for the user's approval")
 async def list_approvals(status: str | None = "pending", session_id: str | None = None):
     with session() as db:
         query = db.query(Approval)
@@ -44,9 +43,9 @@ async def list_approvals(status: str | None = "pending", session_id: str | None 
     return {"approvals": [approval_dict(a) for a in rows]}
 
 
-@router.post("/approvals/{approval_id}/answer", summary="Approve, reject or answer")
+@router.post("/approvals/{approval_id}/answer", summary="Approve or reject a task version")
 async def answer(approval_id: str, body: AnswerBody, request: Request):
-    return await request.app.state.orchestrator.answer(approval_id, approve=body.approve, answer=body.answer)
+    return await request.app.state.orchestrator.answer(approval_id, approve=body.approve)
 
 
 # -----------------------------

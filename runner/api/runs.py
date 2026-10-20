@@ -27,12 +27,6 @@ class RunBody(BaseModel):
     wait: bool = False
 
 
-class ResumeBody(BaseModel):
-    approval_id: str
-    approve: bool = True
-    answer: Any = None
-
-
 @router.post("/runs", summary="Start a run (dry runs may target a draft version)")
 async def start_run(body: RunBody, request: Request):
     task, version = _resolve(body)
@@ -68,16 +62,6 @@ async def start_run(body: RunBody, request: Request):
     return run_dict(run)
 
 
-@router.post("/runs/{run_id}/resume", summary="Continue a waiting run with the user's answer")
-async def resume_run(run_id: str, body: ResumeBody, request: Request):
-    engine = request.app.state.engine
-    engine.resume(run_id, body.approval_id, body.approve, body.answer)
-
-    _spawn(request, engine.execute(run_id))
-
-    return {"run_id": run_id, "status": "queued"}
-
-
 @router.post("/runs/{run_id}/cancel", summary="Cancel a run")
 async def cancel_run(run_id: str, request: Request):
     with session() as db:
@@ -88,8 +72,8 @@ async def cancel_run(run_id: str, request: Request):
         if run.status in RUN_FINISHED:
             raise ApiError(status_code=409, message=f"Run `{run_id}` is already {run.status}")
 
-        # A waiting run has no coroutine to interrupt; close it right away.
-        if run.status in ("waiting", "queued"):
+        # A queued run has no coroutine to interrupt yet; close it right away.
+        if run.status == "queued":
             run.status = "cancelled"
             db.commit()
 
@@ -142,7 +126,7 @@ def _ensure_idle(task_id: str) -> None:
     with session() as db:
         busy = (
             db.query(Run)
-            .filter(Run.task_id == task_id, Run.dry_run.is_(False), Run.status.in_(("queued", "running", "waiting")))
+            .filter(Run.task_id == task_id, Run.dry_run.is_(False), Run.status.in_(("queued", "running")))
             .first()
         )
 

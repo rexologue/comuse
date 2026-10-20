@@ -243,7 +243,7 @@ def check_reflects_chat(spec: TaskSpec, chat_tools: set[str]) -> None:
     """A compiled task must redo at least one thing the chat actually did; a spec of
     only notifications means the model lost the conversation."""
     used = {step.tool for step in spec.all_steps() if step.tool}
-    substantive = chat_tools - {"user.notify", "user.ask"}
+    substantive = chat_tools - {"user.notify"}
 
     if substantive and not used & substantive:
         raise SpecError([

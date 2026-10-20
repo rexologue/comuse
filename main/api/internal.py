@@ -24,15 +24,6 @@ class EventBody(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
-class ApprovalBody(BaseModel):
-    kind: str
-    payload: dict[str, Any] = Field(default_factory=dict)
-    run_id: str | None = None
-    task_id: str | None = None
-    task_version_id: str | None = None
-    session_id: str | None = None
-
-
 @router.post("/internal/register", summary="A service announces its address")
 async def register(body: RegisterBody, request: Request):
     request.app.state.registry.register(body.name, body.url)
@@ -43,11 +34,6 @@ async def register(body: RegisterBody, request: Request):
 @router.post("/internal/events", summary="Publish an event")
 async def publish(body: EventBody, request: Request):
     return request.app.state.bus.publish(body.type, body.payload)
-
-
-@router.post("/internal/approvals", summary="Ask the user to approve or answer")
-async def create_approval(body: ApprovalBody, request: Request):
-    return request.app.state.orchestrator.create_approval(**body.model_dump())
 
 
 @router.api_route("/executor/{path:path}", methods=METHODS, summary="Proxy to executor")

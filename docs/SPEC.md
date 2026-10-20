@@ -55,7 +55,7 @@ project/
 ├── main/                  # шлюз: внешний API, реестр, оркестрация, подтверждения, SSE
 │   ├── main.py            # app
 │   ├── registry.py        # какие сервисы живы и по каким адресам
-│   ├── orchestrator.py    # approve → reload, ответ → resume, compile → approval
+│   ├── orchestrator.py    # compile → approval, approve → reload
 │   ├── events.py          # шина событий (таблица events + SSE-подписчики)
 │   ├── proxy.py, auth.py, views.py
 │   └── api/               # internal, gateway, tasks, approvals
@@ -63,7 +63,7 @@ project/
 │   ├── main.py
 │   ├── loop.py            # цикл хода, повторы, «пинок» при пустом ответе
 │   ├── catalog.py         # отбор инструментов по эмбеддингам
-│   ├── meta_tools.py      # task_compile, task_patch, approval_answer (только ask_user), action_confirm…
+│   ├── meta_tools.py      # task_compile, task_patch, task_reject, run_status…
 │   ├── history.py, prompts.py
 │   └── api/chat.py        # /v1/chat/completions, /sessions
 ├── compiler/              # трейс чата → Task, правки → JSON Patch
@@ -126,7 +126,7 @@ project/
 
 - **Реестр сервисов.** Каждый сервис при старте шлёт `POST /internal/register {name, url}`, main периодически проверяет `GET /health`. Так сервисы не знают адресов друг друга, только адрес main.
 - **Оркестрация.** Сценарии, где участвуют несколько сервисов (подтвердить версию, затем перезагрузить триггеры), живут в `main/orchestrator.py`.
-- **Подтверждения и события.** Сервисы создают их через `POST /internal/approvals` и `POST /internal/events`, main хранит и отдаёт клиенту через SSE.
+- **Одобрения и события.** Одобрение одно — версии задачи; main создаёт его после compile или patch. События сервисы шлют через `POST /internal/events`, main хранит и отдаёт клиенту через SSE.
 
 Внешний API (для будущего фронта и curl):
 
@@ -144,13 +144,13 @@ project/
 | `POST /runs` | runner | `{task_id, dry_run?}` → запуск вручную |
 | `GET /runs/{id}`, `GET /tasks/{id}/runs` | storage | Статус запуска и его шаги; запуски `empty` в истории только с `?include_empty=true` |
 | `POST /runs/{id}/cancel` | runner | Отменить запуск |
-| `GET /approvals`, `POST /approvals/{id}/answer` | main, затем compiler или runner | Одобрение версий задач (`version_approve`) и вопросы запусков (`ask_user`) |
+| `GET /approvals`, `POST /approvals/{id}/answer {approve}` | main, затем compiler | Одобрение версий задач (`version_approve`) — единственное, что ждёт пользователя |
 | `GET /tools`, `GET /tools/{name}` | executor | Каталог инструментов со схемами |
 | `GET /accounts`, `POST /accounts`, `GET /accounts/presets`, `POST /accounts/{name}/check`, `DELETE /accounts/{name}` | executor | Почтовые аккаунты; пароль сразу уходит в keyring |
 | `GET /settings`, `PUT /settings` | main | Хранилище «ключ → значение» для будущего UI; сервисы его пока не читают |
 | `GET /events`, `GET /events/recent` | main | Поток событий (SSE) и последние события JSON |
 
-Внутренние маршруты (нужен internal-токен): `POST /internal/register`, `POST /internal/events`, `POST /internal/approvals`, `POST /executor/execute` (вызывают agent-loop и runner), `POST /runner/runs` (вызывает scheduler).
+Внутренние маршруты (нужен internal-токен): `POST /internal/register`, `POST /internal/events`, `POST /executor/execute` (вызывают agent-loop и runner), `POST /runner/runs` (вызывает scheduler).
 
 В исходной схеме был путь `/agent/v1/chat/compatible`. Лучше `/chat/completions`: тогда любой OpenAI-клиент работает с нами без настроек, достаточно указать `base_url`.
 
@@ -160,7 +160,7 @@ project/
 
 - **API:** `POST /v1/chat/completions` (со стримингом), `GET /sessions`, `GET /sessions/{id}`.
 - **Цикл:** история сессии → отбор инструментов (топ-`AGENT_TOOLS_TOP_K`=24 по эмбеддингам плюс уже использованные в сессии и `fs.list`, `docs.read`; без эмбеддингов — все) → LLM → tool calls → `POST main/executor/execute` с `context.mode = "chat"` → результат в историю и в `trace_events` → снова LLM. Остановка, когда ответ пришёл без tool calls, или после `AGENT_MAX_ITERATIONS`=16 итераций.
-- **Мета-инструменты** управляют самой системой, а не компьютером: `task_compile`, `task_patch`, `task_reject`, `task_list`, `task_run_now`, `task_control` (пауза, возобновление, архив), `run_status`, `approvals_list`, `approval_answer`, `action_confirm`. Их обрабатывает agent-loop через main, в executor они не идут. Включить задачу агент не может: такого инструмента нет, а `approval_answer` передаёт только ответы на вопросы `ask_user`.
+- **Мета-инструменты** управляют самой системой, а не компьютером: `task_compile`, `task_patch`, `task_reject`, `task_list`, `task_run_now`, `task_control` (пауза, возобновление, архив), `run_status`, `action_confirm`. Их обрабатывает agent-loop через main, в executor они не идут. Включить задачу агент не может: такого инструмента нет, и отвечать на одобрения он не умеет.
 - **Внешние действия в чате** (`side_effect: external` по каталогу) спрашивает сам agent-loop: в executor такой вызов не уходит. Agent-loop проверяет аргументы по input-схеме, записывает вызов в трейс со статусом `needs_approval` и возвращает модели `action_id`; агент спрашивает пользователя прямо в диалоге и после «да» вызывает `action_confirm` — только тогда вызов идёт в executor, один раз. Зависимые шаги (пометить письмо прочитанным и т. п.) агент делает только после подтверждения.
 
 ### compiler :8002
@@ -168,7 +168,7 @@ project/
 Превращает чат в Task и единственный пишет в `tasks` и `task_versions`.
 
 - `POST /compile {session_id, title?, hint?}`: читает `chat_messages` и `trace_events`, просит LLM собрать Task JSON, проверяет, сохраняет версию `draft` с настройками групп по умолчанию и делает dry run; если пробный запуск упал, показывает LLM ошибку и чинит задачу (до 2 раз). Ответ: `{task_id, version_id, title, summary, trigger, settings, cards, dry_run}`.
-- **Проверки собранной задачи:** схема pydantic; команды и их аргументы есть в каталоге; cron разбирается; переменные и ссылки `шаг.output.поле` существуют в output-схемах; фильтры Jinja известны; задача повторяет хотя бы одно действие из чата; перед внешним действием нет `user.ask` («отправить?» — это настройки задачи, а не вопрос в запуске); тексты из чата перенесены дословно (почти совпадающая строка с опечаткой отклоняется с оригиналом). Ошибки уходят LLM обратно, до `COMPILER_MAX_ATTEMPTS`=3 попыток.
+- **Проверки собранной задачи:** схема pydantic; команды и их аргументы есть в каталоге; cron разбирается; переменные и ссылки `шаг.output.поле` существуют в output-схемах; фильтры Jinja известны; задача повторяет хотя бы одно действие из чата; тексты из чата перенесены дословно (почти совпадающая строка с опечаткой отклоняется с оригиналом). Ошибки уходят LLM обратно, до `COMPILER_MAX_ATTEMPTS`=3 попыток.
 - `POST /patch {task_id, instruction}`: LLM выдаёт JSON Patch к текущей версии → новая версия `draft` и diff.
 - `POST /validate {spec}`: проверки схемы и каталога (без проверок по чату), без LLM.
 - `POST /tasks/{id}/versions/{v}/approve`, `/reject`, `/pause`, `/resume`, `/archive`: меняет статусы; при одобрении версии настройки задачи приводятся к её командам.
@@ -179,9 +179,9 @@ project/
 Исполняет активную версию задачи по шагам, сам ничего не планирует.
 
 - `POST /runs {task_id или task_version_id, trigger, dry_run, wait}`: создаёт запись в `runs`, исполняет в фоне и сразу отвечает `run_id` (с `wait` — ждёт конца; так делает dry run компилятора).
-- `POST /runs/{id}/resume {approval_id}` продолжает после ответа пользователя, `POST /runs/{id}/cancel` отменяет.
+- `POST /runs/{id}/cancel` отменяет.
 - **Движок:** берёт `current_version_id` → считает `variables` → для каждого шага рендерит `args` (Jinja2, StrictUndefined) → `POST main/executor/execute` → пишет `step_runs` → обрабатывает `on_error`.
-- Шаг `user.ask` (и `on_error` / `on_empty: ask_user`): runner создаёт approval `ask_user` в main, запуск переходит в `waiting`. После ответа main вызывает `resume`. Других пауз нет: одобрения действий в запусках не бывает.
+- **Запуск никогда не ждёт человека** и идёт от начала до конца. Ошибка шага по `on_error`: `fail` (запуск упал), `retry`, `skip`; пустой результат по `on_empty`: `continue`, `fail`, `skip` (тихо закончить). Где нужен человек, команда оставляет результат вне запуска: письмо в черновиках, файл в папке на проверку.
 - Один запуск задачи за раз: если предыдущий ещё идёт, runner отвечает 409, scheduler пишет это в лог и ждёт следующего срабатывания.
 - Если все шаги вернули пустой результат (проверка по расписанию ничего не нашла), запуск получает статус `empty`.
 - В каждый вызов executor runner передаёт настройки задачи (`task_settings`).
@@ -190,7 +190,7 @@ project/
 
 Единственное место, где выполняются инструменты. И чат, и runner зовут его одним форматом.
 
-- `POST /execute {tool, args, context}` → `{status, output, artifacts}`, где status: `ok`, `error` или `needs_input`. Executor ничего не спрашивает: кто вызывает, тот уже решил, что вызов нужен (чат спросил пользователя, задачу пользователь одобрил). В `context`: режим (`chat` или `run`), `session_id` или `run_id` + `step_id`, настройки задачи (`task_settings`), `dry_run`.
+- `POST /execute {tool, args, context}` → `{status, output, artifacts}`, где status: `ok` или `error`. Executor ничего не спрашивает: кто вызывает, тот уже решил, что вызов нужен (чат спросил пользователя, задачу пользователь одобрил). В `context`: режим (`chat` или `run`), `session_id` или `run_id` + `step_id`, настройки задачи (`task_settings`), `dry_run`.
 - `GET /tools`, `GET /tools/{name}`, `POST /tools/reload`; аккаунты: `GET`, `POST /accounts`, `GET /accounts/presets`, `POST /accounts/{name}/check`, `DELETE /accounts/{name}`.
 - **Конвейер вызова:** найти инструмент → проверить args по input-схеме → проверить аргументы-пути → пробный запуск по объявлению `dry_run` команды (`skip`, `draft` или `real`) → загрузить аккаунты для аргументов из `secrets` → вызвать с таймаутом и `ToolContext` → проверить output → записать в `tool_calls` без секретов.
 - **Executor знает типы аргументов, а не группы.**
@@ -271,7 +271,7 @@ async def send(inp: Input, ctx: ToolContext) -> Output:
 | `mail` | search, read, mark, create\_draft, send | read, write, external | stdlib imaplib/smtplib |
 | `charts` | bar, line | write | matplotlib → PNG |
 | `llm` | extract, classify, write | none | common.llm, structured output |
-| `user` | ask, notify | none | approvals и events в main |
+| `user` | notify | none | событие в main (ничего не ждёт) |
 
 **Настройки группы.** Группа может объявить одну плоскую pydantic-модель `DomainSettings` (`@domain_settings`): тип, ограничения, подпись и описание каждого поля, значение по умолчанию. Схема попадает в манифест команд группы (`settings_schema`, LLM её не видит). Задача, в шагах которой есть команды группы, получает раздел `tasks.settings[группа]` со значениями по умолчанию; при новой версии значения пользователя сохраняются, раздел ненужной группы убирается. Менять значения может только пользователь (`PUT /tasks/{id}/settings`); команда читает свой раздел через `ctx.domain_settings(Модель)`. Пример — `mail.send_directly` (по умолчанию `false`): `mail.send` в запуске задачи кладёт письмо в черновики, отправляет его человек из своего почтового клиента.
 
@@ -358,8 +358,8 @@ tools:
 | `steps[].tool`, `args` | Команда из каталога и её аргументы; `{{ step_id.output }}` ссылается на результат прошлого шага |
 | `steps[].when` | Условие выполнения шага |
 | `steps[].foreach` | Повторить шаг для каждого элемента списка; нужно для сортировки документов |
-| `steps[].on_error` | `fail`, `retry` (с `retries`), `skip` или `ask_user` |
-| `steps[].on_empty` | `continue`, `fail`, `skip` или `ask_user` |
+| `steps[].on_error` | `fail`, `retry` (с `retries`) или `skip` |
+| `steps[].on_empty` | `continue`, `fail` или `skip` (запуск тихо заканчивается) |
 
 Настроек групп (`mail.send_directly` и т. п.) в сценарии нет: они хранятся в `tasks.settings`, LLM их не видит и не задаёт.
 
@@ -415,7 +415,7 @@ tools:
 
 Значения перечислений:
 
-- `runs.status`: queued, running, waiting, succeeded, empty, failed, cancelled. `empty` — все шаги вернули пустой результат (проверка по расписанию ничего не нашла); `GET /tasks/{id}/runs` их не показывает, `?include_empty=true` показывает.
+- `runs.status`: queued, running, succeeded, empty, failed, cancelled. `empty` — все шаги вернули пустой результат (проверка по расписанию ничего не нашла); `GET /tasks/{id}/runs` их не показывает, `?include_empty=true` показывает.
 - `approvals.kind`: ask\_user, version\_approve, skill\_permissions.
 - `tools.source`: internal (skill и mcp — план).
 - `accounts.kind`: imap\_smtp.
@@ -439,7 +439,7 @@ tools:
 2. agent-loop → `POST main/compiler/compile {session_id, title, hint}`.
 3. compiler читает трейс, собирает Task, проверяет, сохраняет версию `draft` с настройками групп по умолчанию и делает dry run через `main/runner/runs`.
 4. main создаёт approval `version_approve` и возвращает agent-loop карточки шагов, настройки и итог dry run.
-5. Агент показывает пользователю: «Вот задача, вот что получилось на пробном запуске, письма будут сохраняться в черновики». Включить её агент не может: у него нет такого инструмента, а `approval_answer` отвечает только на вопросы `ask_user`.
+5. Агент показывает пользователю: «Вот задача, вот что получилось на пробном запуске, письма будут сохраняться в черновики». Включить её агент не может: у него нет такого инструмента.
 6. Пользователь сам одобряет черновик в списке задач → `POST main/approvals/{id}/answer` (или `POST main/tasks/{id}/versions/{v}/approve`) → main вызывает compiler (статусы), затем scheduler `/reload`.
 
 ### 3. Правка через чат
@@ -455,17 +455,9 @@ tools:
 3. executor выполняет команду с настройками задачи (пароль — через `ToolContext`) и пишет `tool_calls`.
 4. runner пишет `step_runs`, в конце шлёт событие `run.finished` в main, тот отдаёт его клиенту по SSE.
 
-### 5. Вопрос пользователю и отправка писем
+### 5. Отправка писем из задачи
 
-Одобрение одно — задачи целиком, после компиляции. Запуск на внешних действиях не останавливается: `mail.send` по умолчанию (`mail.send_directly = false`) кладёт письмо в черновики и завершает шаг, человек проверяет и отправляет его сам.
-
-Пауза бывает только на вопросе — шаг `user.ask`:
-
-1. executor возвращает `needs_input`, runner → `POST main/internal/approvals` (`ask_user`), run переходит в `waiting`.
-2. Пользователь отвечает в чате или в UI → `POST main/approvals/{id}/answer`.
-3. main → `runner/runs/{id}/resume`: запуск продолжается с ответом или отменяется.
-
-Так же работает `on_empty: ask_user`: не нашлось файлов за неделю → вопрос в чат → ответ продолжает или отменяет запуск.
+Одобрение одно — задачи целиком, после компиляции. Запуск никогда не ждёт человека: `mail.send` по умолчанию (`mail.send_directly = false`) кладёт письмо в черновики и завершает шаг, человек проверяет и отправляет его сам. Не нашлось файлов за неделю — `on_empty: skip`, запуск тихо заканчивается со статусом `empty`.
 
 ## Безопасность и секреты
 
@@ -477,7 +469,7 @@ tools:
 | Prompt injection из письма или документа | Запуск исполняет только одобренные шаги; что берётся из данных, отбирает команда поиска (`mail.search.sender_in: ["*@company.ru"]` — письмо `attacker@evil.com` задача просто не увидит) |
 | Агент написал опасный код | (план) Скиллы будут запускаться только в Deno с явными `--allow-*` и только после одобрения прав пользователем |
 | Доступ к файлам вне задачи | Все пути команд проходят `executor/paths.py`: только рабочая папка и `data:templates` / `data:outputs`, только разрешённые задаче папки; `..` и симлинки наружу отклоняются |
-| Агент сам включил задачу или отправил черновик | Не может: у агента нет `task_approve`, а `approval_answer` принимает только ответы на вопросы `ask_user` |
+| Агент сам включил задачу или отправил черновик | Не может: у агента нет `task_approve` и нет инструментов для ответа на одобрения |
 | Чужой процесс дёргает API | Наружу открыт только main. Токен на внешний API опционален (пустой API\_TOKEN — без проверки), внутренние маршруты закрыты INTERNAL\_TOKEN |
 | Шаблон в Task выполняет произвольный код | Jinja2 SandboxedEnvironment и StrictUndefined |
 | Письмо ушло не тому | Адресаты — одобренные аргументы шага или отобранные `sender_in`; по умолчанию задача кладёт письма в черновики, отправляет их человек. Разрешить отправку сразу (`mail.send_directly`) может только он сам, компилятор настроек не видит |

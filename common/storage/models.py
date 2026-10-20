@@ -27,9 +27,9 @@ class Approval(Base):
     __tablename__ = "approvals"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    # ask_user | version_approve | skill_permissions
+    # version_approve (skill_permissions — planned)
     kind: Mapped[str] = mapped_column(String, index=True)
-    # pending | approved | rejected | answered | cancelled
+    # pending | approved | rejected | cancelled
     status: Mapped[str] = mapped_column(String, default="pending", index=True)
     run_id: Mapped[str | None] = mapped_column(String, index=True)
     task_id: Mapped[str | None] = mapped_column(String, index=True)
@@ -163,11 +163,11 @@ class Run(Base):
     task_id: Mapped[str] = mapped_column(String, index=True)
     task_version_id: Mapped[str] = mapped_column(String)
     trigger: Mapped[str] = mapped_column(String, default="manual")
-    # queued | running | waiting | succeeded | empty | failed | cancelled
+    # queued | running | succeeded | empty | failed | cancelled
     # empty: succeeded, but every step came back empty (a scheduled check found nothing)
     status: Mapped[str] = mapped_column(String, default="queued", index=True)
     dry_run: Mapped[bool] = mapped_column(Boolean, default=False)
-    # Resumable engine state: completed step outputs, answers, the pending approval.
+    # What the run produced: step results by key, files, the result.
     state: Mapped[Any] = mapped_column(JSON, default=dict)
     result: Mapped[Any] = mapped_column(JSON, nullable=True)
     error: Mapped[str | None] = mapped_column(Text)
@@ -184,7 +184,7 @@ class StepRun(Base):
     step_id: Mapped[str] = mapped_column(String)
     tool: Mapped[str | None] = mapped_column(String)
     attempt: Mapped[int] = mapped_column(Integer, default=1)
-    # running | ok | error | skipped | waiting
+    # ok | error | skipped
     status: Mapped[str] = mapped_column(String)
     input: Mapped[Any] = mapped_column(JSON, nullable=True)
     output: Mapped[Any] = mapped_column(JSON, nullable=True)

@@ -195,16 +195,6 @@ def test_sender_limit_shows_on_the_card_and_in_the_diff():
     assert any("*@company.local" in line for line in diff_specs(old, new, CATALOG)["lines"])
 
 
-def test_user_ask_before_sending_is_rejected():
-    asked = copy.deepcopy(AUTO_REPLY)
-    nested = asked["steps"][1]["steps"]
-    nested.insert(0, {"id": "confirm", "tool": "user.ask", "args": {"question": "Отправить?", "options": ["да", "нет"]}})
-    nested[1]["when"] = "{{ confirm.output.answer == 'да' }}"
-
-    with pytest.raises(SpecError, match="решают настройки задачи"):
-        validate_spec(asked, CATALOG)
-
-
 def test_plain_auto_reply_needs_no_confirmation_step():
     validate_spec(AUTO_REPLY, CATALOG)
 

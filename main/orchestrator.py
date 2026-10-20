@@ -1,5 +1,6 @@
-"""Multi-service flows live here, not in the services: approve a version then reload
-triggers, answer an approval then resume the run, compile then ask for approval."""
+"""Multi-service flows live here, not in the services: compile then ask the user to
+approve, approve a version then reload triggers. The only approval is the user's, of
+a task version: runs never wait for anyone."""
 
 from __future__ import annotations
 
@@ -15,9 +16,6 @@ from main.registry import ServiceRegistry
 
 
 log = logging.getLogger("orchestrator")
-
-_RUN_KINDS = ("ask_user",)
-
 
 class Orchestrator:
     def __init__(self, registry: ServiceRegistry, bus: EventBus):
@@ -59,7 +57,7 @@ class Orchestrator:
         return record
 
 
-    async def answer(self, approval_id: str, *, approve: bool, answer: Any = None) -> dict[str, Any]:
+    async def answer(self, approval_id: str, *, approve: bool) -> dict[str, Any]:
         with session() as db:
             approval = db.get(Approval, approval_id)
 
@@ -69,22 +67,13 @@ class Orchestrator:
         if approval.status != "pending":
             raise ApiError(status_code=409, message=f"Approval `{approval_id}` is already {approval.status}")
 
-        if approval.kind == "version_approve":
-            if approve:
-                await self.approve_version(approval.task_id, approval.task_version_id)
-            else:
-                await self.reject_version(approval.task_id, approval.task_version_id)
+        if approval.kind != "version_approve":
+            raise ApiError(status_code=409, message=f"Approval `{approval_id}` of kind `{approval.kind}` cannot be answered")
 
-            return self._get(approval_id)
-
-        status = "answered" if approval.kind == "ask_user" and approve else ("approved" if approve else "rejected")
-        self._resolve(approval_id, status, answer)
-
-        if approval.kind in _RUN_KINDS and approval.run_id:
-            await self.registry.client("runner").post(
-                f"/runs/{approval.run_id}/resume",
-                json={"approval_id": approval_id, "approve": approve, "answer": answer},
-            )
+        if approve:
+            await self.approve_version(approval.task_id, approval.task_version_id)
+        else:
+            await self.reject_version(approval.task_id, approval.task_version_id)
 
         return self._get(approval_id)
 

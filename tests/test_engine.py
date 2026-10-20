@@ -1,5 +1,5 @@
-"""Runner engine against a fake main: step order, references, foreach, pausing for an
-approval and resuming from the saved state."""
+"""Runner engine against a fake main: step order, references, foreach, errors and empty
+results; a run goes start to finish and never waits for anyone."""
 
 from __future__ import annotations
 
@@ -62,41 +62,14 @@ async def test_foreach_passes_outputs_between_steps(settings):
     assert [e[0] for e in main.events] == ["run.started", "run.finished"]
 
 
-async def test_pause_for_a_question_and_resume(settings):
-    spec = {
-        "title": "Отчёт",
-        "steps": [
-            {"id": "month", "tool": "user.ask", "args": {"question": "За какой месяц?"}},
-            {"id": "note", "tool": "llm.write", "args": {"instruction": "Отчёт за {{ month.output.answer }}"}},
-        ],
-    }
+def test_tasks_cannot_ask_the_user():
+    from pydantic import ValidationError
 
-    main = FakeMain({
-        "user.ask": lambda args, ctx: {"status": "needs_input", "message": args["question"]},
-        "llm.write": lambda args, ctx: {"output": {"text": args["instruction"]}},
-    })
-    engine = RunEngine(main)
+    from common.schemas.task import TaskSpec
 
-    paused = await engine.execute(_make_run(spec))
-    assert paused["status"] == "waiting"
-    assert main.approvals[0]["kind"] == "ask_user"
-
-    engine.resume("run_1", main.approvals[0]["id"], approve=True, answer="сентябрь")
-    finished = await engine.execute("run_1")
-
-    assert finished["status"] == "succeeded"
-    assert finished["result"]["outputs"] == {"text": "Отчёт за сентябрь"}
-
-
-async def test_unanswered_question_cancels_the_run(settings):
-    spec = {"title": "Отчёт", "steps": [{"id": "month", "tool": "user.ask", "args": {"question": "?"}}]}
-    main = FakeMain({"user.ask": lambda args, ctx: {"status": "needs_input", "message": "?"}})
-    engine = RunEngine(main)
-
-    await engine.execute(_make_run(spec))
-    engine.resume("run_1", main.approvals[0]["id"], approve=False, answer=None)
-
-    assert (await engine.execute("run_1"))["status"] == "cancelled"
+    for policy in ({"on_error": "ask_user"}, {"on_empty": "ask_user"}):
+        with pytest.raises(ValidationError):
+            TaskSpec.model_validate({"title": "t", "steps": [{"id": "a", "tool": "fs.list", **policy}]})
 
 
 async def test_external_actions_never_pause_a_run(settings):
@@ -106,7 +79,7 @@ async def test_external_actions_never_pause_a_run(settings):
     run = await RunEngine(main).execute(_make_run(spec))
 
     assert run["status"] == "succeeded"
-    assert main.approvals == []
+    assert [e[0] for e in main.events] == ["run.started", "run.finished"]
 
 
 async def test_empty_result_with_skip_stops_quietly(settings):

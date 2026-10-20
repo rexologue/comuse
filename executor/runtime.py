@@ -21,7 +21,7 @@ from common.schemas.execution import ExecContext, ExecuteRequest, ExecuteRespons
 from common.settings import Settings
 from common.storage.db import session
 from common.storage.models import Account, ToolCall
-from common.tools import Credential, NeedsInput, ToolContext, ToolError, ToolSpec, path_refs
+from common.tools import Credential, ToolContext, ToolError, ToolSpec, path_refs
 from common.tools.context import PermissionDenied
 from common.utils import truncate
 from executor.paths import WorkspacePaths
@@ -100,12 +100,6 @@ class ExecutorRuntime:
                 timeout=spec.timeout or self.settings.executor.tool_timeout,
             )
             output = _dump_output(spec, raw)
-
-        except NeedsInput as e:
-            if req.context.dry_run:
-                return ExecuteResponse(status="ok", mode="skipped", message=f"Вопрос пользователю пропущен в пробном запуске: {e.question}")
-
-            return ExecuteResponse(status="needs_input", message=e.question, preview={"options": e.options})
 
         except PermissionDenied as e:
             return ExecuteResponse(status="error", error=f"Нет доступа: {e}")

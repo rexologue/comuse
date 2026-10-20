@@ -26,13 +26,11 @@ class ExecuteRequest(BaseModel):
 
 
 class ExecuteResponse(BaseModel):
-    # needs_input: the tool asks the user a question (user.ask).
-    status: Literal["ok", "error", "needs_input"]
+    status: Literal["ok", "error"]
     output: Any = None
     error: str | None = None
     # real | draft | skipped — what actually happened to a side-effecting tool.
     mode: Literal["real", "draft", "skipped"] = "real"
     message: str | None = None
-    preview: dict[str, Any] | None = None
     artifacts: list[str] = Field(default_factory=list)
     duration_ms: int = 0
