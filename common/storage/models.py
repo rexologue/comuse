@@ -127,9 +127,10 @@ class TaskVersion(Base):
     patch: Mapped[Any] = mapped_column(JSON, nullable=True)
     summary: Mapped[str] = mapped_column(Text, default="")
     cards: Mapped[Any] = mapped_column(JSON, default=list)
-    dry_run: Mapped[Any] = mapped_column(JSON, nullable=True)
     # compile | patch | manual
     created_by: Mapped[str] = mapped_column(String, default="compile")
+    # The chat the version came from (compile, a patch asked in chat); None for manual edits.
+    session_id: Mapped[str | None] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

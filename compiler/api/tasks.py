@@ -32,7 +32,19 @@ async def compile_task(body: CompileBody, request: Request):
 
 @router.post("/patch", summary="Instruction → new draft version and diff")
 async def patch_task(body: PatchBody, request: Request):
-    return await request.app.state.compiler.patch(body.task_id, body.instruction)
+    return await request.app.state.compiler.patch(body.task_id, body.instruction, session_id=body.session_id)
+
+
+class EditBody(BaseModel):
+    # Exactly one: the whole new spec, or a JSON Patch (RFC 6902) to the current one.
+    spec: dict[str, Any] | None = None
+    ops: list[dict[str, Any]] | None = None
+    summary: str | None = None
+
+
+@router.post("/tasks/{task_id}/versions", summary="The user's own edit, no LLM → new draft version and diff")
+async def edit_task(task_id: str, body: EditBody, request: Request):
+    return await request.app.state.compiler.edit(task_id, spec=body.spec, ops=body.ops, summary=body.summary)
 
 
 @router.post("/validate", summary="Check a spec against the tool catalog")

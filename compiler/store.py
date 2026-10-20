@@ -38,6 +38,7 @@ def create_task(
             cards=cards,
             summary=summary,
             created_by="compile",
+            session_id=session_id,
         )
         db.add_all([task, version])
         db.commit()
@@ -50,9 +51,11 @@ def add_version(
     spec: TaskSpec,
     *,
     parent: TaskVersion,
-    patch: list[dict[str, Any]],
+    patch: list[dict[str, Any]] | None,
     cards: list[dict[str, Any]],
     summary: str,
+    created_by: str,
+    session_id: str | None,
 ) -> TaskVersion:
     with session() as db:
         last_no = (
@@ -72,37 +75,13 @@ def add_version(
             patch=patch,
             cards=cards,
             summary=summary,
-            created_by="patch",
+            created_by=created_by,
+            session_id=session_id,
         )
         db.add(version)
         db.commit()
 
     return version
-
-
-def replace_draft(version_id: str, spec: TaskSpec, *, cards: list[dict[str, Any]], summary: str) -> None:
-    """Swap the spec of a draft in place (repairs after a failed dry run)."""
-    with session() as db:
-        version = db.get(TaskVersion, version_id)
-        if version.status != "draft":
-            raise ApiError(status_code=409, message=f"Version `{version_id}` is {version.status}, not a draft")
-
-        version.spec = spec.dump()
-        version.cards = cards
-        version.summary = summary
-
-        task = db.get(Task, version.task_id)
-        task.title = spec.title
-        task.description = spec.description
-
-        db.commit()
-
-
-def set_dry_run(version_id: str, result: dict[str, Any]) -> None:
-    with session() as db:
-        version = db.get(TaskVersion, version_id)
-        version.dry_run = result
-        db.commit()
 
 
 def get_task(task_id: str) -> Task:

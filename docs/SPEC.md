@@ -14,7 +14,7 @@
 - **Права задачи — это её одобренные шаги.** Отдельного списка прав нет: пользователь одобряет конкретные аргументы шагов. Команды простые (`mail.send` отправляет тем, кому сказали), а отбор того, с чем задача работает, делает команда, которая ищет: `mail.search.sender_in: ["*@company.ru"]` отдаёт только письма от этих адресов.
 - **Секреты не попадают в LLM.** Агент и задачи знают только имя аккаунта.
 - **Изменения только через версии.** Каждая правка задачи создаёт новую версию, а активной она становится только после подтверждения.
-- **Одно одобрение — задачи целиком.** Пользователь одобряет собранную задачу (шаги с их аргументами, пробный запуск). Запуски на действиях не останавливаются; как ведёт себя внешнее действие (например, письмо в черновики или сразу), решает команда по настройкам своей группы, которые меняет только пользователь.
+- **Одно одобрение — задачи целиком.** Пользователь одобряет собранную задачу (шаги с их аргументами; пробный запуск — по его просьбе). Запуски на действиях не останавливаются; как ведёт себя внешнее действие (например, письмо в черновики или сразу), решает команда по настройкам своей группы, которые меняет только пользователь.
 - **Каждая сущность знает только своё.** Scheduler знает «когда», runner — «в каком порядке», executor — «чем», а смысл почты, файлов и прочего — только их группы команд в `internal_tools/`.
 
 **Вне рамок v1:** фронтенд, несколько пользователей, OAuth-интеграции (MS Graph, Gmail API), управление GUI (computer use), облачный деплой.
@@ -135,7 +135,8 @@ project/
 | `POST /agent/v1/chat/completions` | agent-loop | Чат в OpenAI-совместимом формате, `session_id` в `metadata` |
 | `GET /agent/sessions`, `GET /agent/sessions/{id}` | agent-loop | Список сессий, история и трейс |
 | `POST /compiler/compile` | compiler | `{session_id, title?, hint?}` → черновик задачи и approval `version_approve` |
-| `POST /compiler/patch` | compiler | `{task_id, instruction}` → черновик новой версии и diff |
+| `POST /compiler/patch` | compiler | `{task_id, instruction, session_id?}` → черновик новой версии и diff (LLM) |
+| `POST /tasks/{id}/versions` | compiler | Ручная правка без LLM: `{spec}` (задача целиком) или `{ops}` (JSON Patch), `summary?` → те же проверки, черновик, diff и approval |
 | `GET /tasks`, `GET /tasks/{id}` | storage | Задачи, текущая версия, карточки шагов |
 | `GET /tasks/{id}/versions/{v}/diff` | compiler | Разница с предыдущей версией |
 | `POST /tasks/{id}/versions/{v}/approve` | compiler, затем scheduler | Сделать версию активной |
@@ -161,16 +162,17 @@ project/
 
 - **API:** `POST /v1/chat/completions` (со стримингом), `GET /sessions`, `GET /sessions/{id}`.
 - **Цикл:** история сессии → отбор инструментов (топ-`AGENT_TOOLS_TOP_K`=24 по эмбеддингам плюс уже использованные в сессии и `fs.list`, `docs.read`; без эмбеддингов — все) → LLM → tool calls → `POST main/executor/execute` с `context.mode = "chat"` → результат в историю и в `trace_events` → снова LLM. Остановка, когда ответ пришёл без tool calls, или после `AGENT_MAX_ITERATIONS`=16 итераций.
-- **Мета-инструменты** управляют самой системой, а не компьютером: `task_compile`, `task_patch`, `task_reject`, `task_list`, `task_run_now`, `task_control` (пауза, возобновление, архив), `run_status`, `action_confirm`. Их обрабатывает agent-loop через main, в executor они не идут. Включить задачу агент не может: такого инструмента нет, и отвечать на одобрения он не умеет.
+- **Мета-инструменты** управляют самой системой, а не компьютером: `task_compile`, `task_dry_run`, `task_patch`, `task_reject`, `task_list`, `task_run_now`, `task_control` (пауза, возобновление, архив), `run_status`, `action_confirm`. Их обрабатывает agent-loop через main, в executor они не идут. Включить задачу агент не может: такого инструмента нет, и отвечать на одобрения он не умеет.
 - **Внешние действия в чате** (`side_effect: external` по каталогу) спрашивает сам agent-loop: в executor такой вызов не уходит. Agent-loop проверяет аргументы по input-схеме, записывает вызов в трейс со статусом `needs_approval` и возвращает модели `action_id`; агент спрашивает пользователя прямо в диалоге и после «да» вызывает `action_confirm` — только тогда вызов идёт в executor, один раз. Зависимые шаги (пометить письмо прочитанным и т. п.) агент делает только после подтверждения.
 
 ### compiler :8002
 
 Превращает чат в Task и единственный пишет в `tasks` и `task_versions`.
 
-- `POST /compile {session_id, title?, hint?}`: читает `chat_messages` и `trace_events`, просит LLM собрать Task JSON, проверяет, сохраняет версию `draft` с настройками групп по умолчанию и делает dry run; если пробный запуск упал, показывает LLM ошибку и чинит задачу (до 2 раз). Ответ: `{task_id, version_id, title, summary, trigger, settings, cards, dry_run}`.
+- `POST /compile {session_id, title?, hint?}`: читает `chat_messages` и `trace_events`, просит LLM собрать Task JSON, проверяет и сохраняет версию `draft` с настройками групп по умолчанию. Ничего не запускает и ничего не чинит по результатам запуска: черновик уходит в чат, дальше решает пользователь. Ответ: `{task_id, version_id, title, summary, trigger, settings, cards}`.
 - **Проверки собранной задачи:** схема pydantic; команды и их аргументы есть в каталоге; cron разбирается; переменные и ссылки `шаг.output.поле` существуют в output-схемах; фильтры Jinja известны; задача повторяет хотя бы одно действие из чата; тексты из чата перенесены дословно (почти совпадающая строка с опечаткой отклоняется с оригиналом). Ошибки уходят LLM обратно, до `COMPILER_MAX_ATTEMPTS`=3 попыток.
-- `POST /patch {task_id, instruction}`: LLM выдаёт JSON Patch к текущей версии → новая версия `draft` и diff.
+- `POST /patch {task_id, instruction, session_id?}`: LLM выдаёт JSON Patch к текущей версии → новая версия `draft` и diff; в версии записан чат, из которого пришла правка.
+- `POST /tasks/{id}/versions {spec | ops, summary?}`: ручная правка без LLM, те же проверки по каталогу (`created_by = manual`).
 - `POST /validate {spec}`: проверки схемы и каталога (без проверок по чату), без LLM.
 - `POST /tasks/{id}/versions/{v}/approve`, `/reject`, `/pause`, `/resume`, `/archive`: меняет статусы; при одобрении версии настройки задачи приводятся к её командам.
 - `GET`, `PUT /tasks/{id}/settings`: настройки групп команд (см. «Настройки группы»).
@@ -179,7 +181,7 @@ project/
 
 Исполняет активную версию задачи по шагам, сам ничего не планирует.
 
-- `POST /runs {task_id или task_version_id, trigger, dry_run, wait}`: создаёт запись в `runs`, исполняет в фоне и сразу отвечает `run_id` (с `wait` — ждёт конца; так делает dry run компилятора).
+- `POST /runs {task_id или task_version_id, trigger, dry_run, wait}`: создаёт запись в `runs`, исполняет в фоне и сразу отвечает `run_id` (с `wait` — ждёт конца; так делает `task_dry_run` агента).
 - `POST /runs/{id}/cancel` отменяет.
 - **Движок:** берёт `current_version_id` → считает `variables` → для каждого шага рендерит `args` (Jinja2, StrictUndefined) → `POST main/executor/execute` → пишет шаг в журнал → обрабатывает `on_error`.
 - **Один журнал на запуск** (`run_log`, по `task_id` + `run_id`, записи только добавляются):
@@ -410,7 +412,7 @@ tools:
 | `chat_messages` | agent-loop | id, session\_id, role, content, tool\_calls\_json, tool\_call\_id, name, created\_at | compiler |
 | `trace_events` | agent-loop | id, session\_id, message\_id, tool, args\_json, result\_json, status, user\_feedback, created\_at | compiler |
 | `tasks` | compiler | id, title, status, settings\_json, current\_version\_id, source\_session\_id, created\_at, updated\_at | все |
-| `task_versions` | compiler | id, task\_id, version\_no, spec\_json, status, parent\_version\_id, patch\_json, summary, created\_by, created\_at, approved\_at | runner, scheduler, main |
+| `task_versions` | compiler | id, task\_id, version\_no, spec\_json, status, parent\_version\_id, patch\_json, summary, created\_by (compile, patch, manual), session\_id (чат версии), created\_at, approved\_at | runner, scheduler, main |
 | `triggers` | scheduler | id, task\_id, type, config\_json, next\_fire\_at, enabled | main |
 | `runs` | runner | id, task\_id, task\_version\_id, trigger, status, dry\_run, result\_json, error, started\_at, finished\_at | main, agent-loop, compiler |
 | `run_log` | runner | id, run\_id, task\_id, seq, at, kind (start, step, notify, end), step\_key, data\_json | main |
@@ -442,16 +444,21 @@ tools:
 
 1. LLM вызывает мета-инструмент `task_compile` с расписанием и пожеланиями в `hint`.
 2. agent-loop → `POST main/compiler/compile {session_id, title, hint}`.
-3. compiler читает трейс, собирает Task, проверяет, сохраняет версию `draft` с настройками групп по умолчанию и делает dry run через `main/runner/runs`.
-4. main создаёт approval `version_approve` и возвращает agent-loop карточки шагов, настройки и итог dry run.
-5. Агент показывает пользователю: «Вот задача, вот что получилось на пробном запуске, письма будут сохраняться в черновики». Включить её агент не может: у него нет такого инструмента.
+3. compiler читает трейс, собирает Task, проверяет и сохраняет версию `draft` с настройками групп по умолчанию. Ничего не запускает.
+4. main создаёт approval `version_approve` и возвращает agent-loop карточки шагов и настройки.
+5. Агент показывает пользователю: «Вот задача, письма будут сохраняться в черновики». Дальше решает пользователь:
+   - **dry-run:** агент вызывает `task_dry_run` → `POST main/runs {task_version_id, dry_run, wait}`; результат, включая ошибки, как есть уходит в чат, ничего не чинится автоматически;
+   - **deny с правками:** пользователь пишет, что не так, агент вызывает `task_patch` (или `task_reject` и собирает заново);
+   - **approve:** только сам пользователь, даже после упавшего dry-run. Включить задачу агент не может: у него нет такого инструмента.
 6. Пользователь сам одобряет черновик в списке задач → `POST main/approvals/{id}/answer` (или `POST main/tasks/{id}/versions/{v}/approve`) → main вызывает compiler (статусы), затем scheduler `/reload`.
 
 ### 3. Правка через чат
 
 1. «Добавь Васю в копию» → мета-инструмент `task_patch {task_id, instruction}`.
 2. compiler строит JSON Patch, сохраняет новую версию `draft` и считает diff по карточкам.
-3. Агент показывает «было → стало», дальше как шаг 6 предыдущего сценария.
+3. Агент показывает «было → стало», дальше как шаги 5–6 предыдущего сценария.
+
+Чат задачи (`source_session_id`) отдаётся в `GET /tasks/{id}`: открыв его, можно продолжить работу над задачей там же. Без LLM задачу правят через `POST /tasks/{id}/versions`.
 
 ### 4. Запуск по расписанию
 
@@ -508,7 +515,7 @@ tools:
 | `KEYRING_BACKEND` | `system` | `file` | Где хранить пароли почты |
 | `KEYRING_PASSWORD` | не нужен | задаётся | Ключ к `secrets.enc` |
 | `AGENT_MAX_ITERATIONS`, `AGENT_TOOLS_TOP_K`, `AGENT_HISTORY_MESSAGES` | 16, 24, 40 | то же | Шаги агента за ход, сколько инструментов видит модель, длина истории |
-| `COMPILER_MAX_ATTEMPTS`, `COMPILER_DRY_RUN_TIMEOUT_SEC` | 3, 300 | то же | Попытки собрать задачу, таймаут пробного запуска |
+| `COMPILER_MAX_ATTEMPTS` | 3 | то же | Попытки собрать задачу |
 | `TOOL_TIMEOUT_SEC`, `LLM_TIMEOUT_SEC` | 300, 300 | то же | Таймауты команды и запроса к LLM |
 | `RUN_RETENTION_DAYS` | 15 | то же | Сколько дней хранить запуски, их журнал и файлы |
 
@@ -569,14 +576,14 @@ tools:
 
 - [x] `common`, main, executor и 23 встроенные команды (включая `data.map_rows` и `mail.mark`)
 - [x] agent-loop: цикл, трейс, мета-инструменты, события прогресса
-- [x] compiler: compile с пробным запуском и починкой, validate, patch, diff
+- [x] compiler: compile (без запуска), validate, patch, ручные правки, diff
 - [x] runner (пауза только на вопросах, статус `empty`) и scheduler (только cron)
 - [x] Настройки групп команд у задачи (`mail.send_directly`), одно одобрение — задачи
 - [x] launcher, Docker, тесты
 - [x] Сквозной сценарий «пример отчёта → такой же отчёт за прошлую неделю» на сервере команды
 - [x] Сквозной сценарий целиком на `qwen3.8-27b-fp8` (vLLM): отчёт по примеру → «формируй задачу» (с первой попытки, пробный запуск верный) → одобрение в чате → запуск по кнопке за ~0,1 с без LLM → правка «топ-5, по пятницам» с diff → новая версия в расписании
 - [x] Почта в сценарии: автоответчик на заявки (cron → `mail.search` → `mail.send` в черновики → `mail.mark`) на локальном GreenMail
-- [ ] Переработка по `docs/PLAN.md` (сделаны шаги 1–2: права как аргументы шагов, секреты и пути в executor по объявлениям)
+- [ ] Переработка по `docs/PLAN.md` (сделаны шаги 1–6; остались аккаунты, инструкции групп, итоговая проверка)
 - [ ] Фронтенд
 - [ ] Скиллы от агента (Deno + MCP)
 - [ ] Alembic-миграции

@@ -81,7 +81,6 @@ class AgentSettings:
 @dataclass(slots=True, frozen=True)
 class CompilerSettings:
     max_attempts: int
-    dry_run_timeout: int
 
 
 @dataclass(slots=True, frozen=True)
@@ -232,11 +231,6 @@ class Settings:
             low=1,
         )
 
-        compiler_dry_run_timeout = int_coercion(
-            os.environ.get("COMPILER_DRY_RUN_TIMEOUT_SEC", "300"),
-            "COMPILER_DRY_RUN_TIMEOUT_SEC",
-            low=1,
-        )
 
         # -----------------------------
         # RUNNER
@@ -301,7 +295,6 @@ class Settings:
             ),
             compiler=CompilerSettings(
                 max_attempts=compiler_max_attempts,
-                dry_run_timeout=compiler_dry_run_timeout,
             ),
             runner=RunnerSettings(
                 retention_days=runner_retention_days,

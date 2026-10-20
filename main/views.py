@@ -80,7 +80,7 @@ def version_dict(version: TaskVersion) -> dict[str, Any]:
         "cards": version.cards,
         "summary": version.summary,
         "patch": version.patch,
-        "dry_run": version.dry_run,
+        "session_id": version.session_id,
         "parent_version_id": version.parent_version_id,
         "created_by": version.created_by,
         "created_at": version.created_at.isoformat(),
@@ -97,6 +97,8 @@ def _task_summary(task: Task, current: TaskVersion | None) -> dict[str, Any]:
         "description": task.description,
         "status": task.status,
         "settings": task.settings or {},
+        # The chat the task was built in: open it to keep working on the task there.
+        "source_session_id": task.source_session_id,
         "current_version_id": task.current_version_id,
         "trigger": spec.get("trigger"),
         "cards": current.cards if current else [],

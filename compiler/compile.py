@@ -19,7 +19,7 @@ from common.schemas.task import TaskSpec
 from common.settings import Settings
 from common.storage.db import session
 from common import templating
-from common.storage.models import ChatMessage, TraceEvent
+from common.storage.models import ChatMessage, TaskVersion, TraceEvent
 from common.utils import truncate
 from compiler import prompts, store, task_settings
 from compiler.cards import build_cards, describe_trigger, diff_specs, summarize
@@ -29,8 +29,6 @@ from compiler.validate import SpecError, validate_spec
 log = logging.getLogger("compiler")
 
 _CATALOG_TTL_SEC = 60
-
-_DRY_RUN_REPAIRS = 2
 
 
 class Compiler:
@@ -63,33 +61,14 @@ class Compiler:
         chat_tools = successful_tools(session_id)
         texts = chat_texts(session_id)
         spec = await self._ask_spec(messages, catalog, chat_tools, texts)
-        version = None
 
-        # A spec that validates can still fail on real data; show the model what the
-        # dry run hit and let it repair the spec a couple of times.
-        for repair in range(_DRY_RUN_REPAIRS + 1):
-            cards = build_cards(spec, catalog)
+        # Only build and check: nothing runs. The draft goes back to the chat, where the
+        # user asks for a dry run, corrections, or approves it.
+        cards = build_cards(spec, catalog)
+        settings = task_settings.sync({}, spec, catalog)
+        version = store.create_task(spec, session_id=session_id, cards=cards, summary=summarize(spec), settings=settings)
 
-            if version is None:
-                settings = task_settings.sync({}, spec, catalog)
-                version = store.create_task(spec, session_id=session_id, cards=cards, summary=summarize(spec), settings=settings)
-            else:
-                store.replace_draft(version.id, spec, cards=cards, summary=summarize(spec))
-
-            dry_run = await self._dry_run(version.id)
-            store.set_dry_run(version.id, dry_run)
-
-            if dry_run["status"] != "failed" or repair == _DRY_RUN_REPAIRS:
-                break
-
-            log.info("dry run of %s failed (%s), repairing", version.id, dry_run.get("error"))
-            messages = messages + [
-                {"role": "assistant", "content": json.dumps(spec.dump(), ensure_ascii=False)},
-                {"role": "user", "content": prompts.repair_request(dry_run)},
-            ]
-            spec = await self._ask_spec(messages, catalog, chat_tools, texts)
-
-        log.info("compiled task %s (%s) from session %s, dry run %s", version.task_id, spec.title, session_id, dry_run["status"])
+        log.info("compiled task %s (%s) from session %s", version.task_id, spec.title, session_id)
 
         return {
             "task_id": version.task_id,
@@ -97,9 +76,8 @@ class Compiler:
             "title": spec.title,
             "summary": summarize(spec),
             "trigger": describe_trigger(spec.trigger),
-            "settings": task_settings.describe(task_settings.sync({}, spec, catalog), catalog),
+            "settings": task_settings.describe(settings, catalog),
             "cards": cards,
-            "dry_run": dry_run,
         }
 
 
@@ -128,7 +106,7 @@ class Compiler:
         )
 
 
-    async def patch(self, task_id: str, instruction: str) -> dict[str, Any]:
+    async def patch(self, task_id: str, instruction: str, *, session_id: str | None = None) -> dict[str, Any]:
         catalog = await self.catalog()
         base = store.base_version(task_id)
 
@@ -153,19 +131,70 @@ class Compiler:
             reasoning_effort=self.settings.llm.chat_reasoning_effort or None,
         )
 
+        return self._new_version(
+            task_id,
+            base,
+            spec,
+            catalog,
+            patch=result["ops"],
+            summary=result.get("summary"),
+            created_by="patch",
+            session_id=session_id,
+        )
+
+
+    async def edit(self, task_id: str, *, spec: dict[str, Any] | None, ops: list[dict[str, Any]] | None, summary: str | None) -> dict[str, Any]:
+        """A user's own edit, no LLM: a whole spec or a JSON Patch to the current one.
+        Same checks as a compiled task; the result is a draft for the user to approve."""
+        if (spec is None) == (ops is None):
+            raise ApiError(status_code=422, message="Нужно одно из двух: spec (задача целиком) или ops (JSON Patch)")
+
+        catalog = await self.catalog()
+        base = store.base_version(task_id)
+
+        if ops is not None:
+            try:
+                spec = jsonpatch.apply_patch(base.spec, ops)
+
+            except (jsonpatch.JsonPatchException, jsonpointer.JsonPointerException) as e:
+                raise ApiError(status_code=422, message=f"JSON Patch не применяется: {e}") from e
+
+        try:
+            checked = validate_spec(spec, catalog)
+
+        except SpecError as e:
+            raise ApiError(status_code=422, message="Задача не прошла проверку", details={"errors": e.errors}) from e
+
+        return self._new_version(task_id, base, checked, catalog, patch=ops, summary=summary, created_by="manual", session_id=None)
+
+
+    def _new_version(
+        self,
+        task_id: str,
+        base: TaskVersion,
+        spec: TaskSpec,
+        catalog: dict[str, dict[str, Any]],
+        *,
+        patch: list[dict[str, Any]] | None,
+        summary: str | None,
+        created_by: str,
+        session_id: str | None,
+    ) -> dict[str, Any]:
         cards = build_cards(spec, catalog)
         diff = diff_specs(TaskSpec.model_validate(base.spec), spec, catalog)
 
         if not diff["changes"]:
-            raise ApiError(status_code=422, message="Изменение ничего не меняет в задаче", details={"instruction": instruction})
+            raise ApiError(status_code=422, message="Изменение ничего не меняет в задаче")
 
         version = store.add_version(
             task_id,
             spec,
             parent=base,
-            patch=result["ops"],
+            patch=patch,
             cards=cards,
-            summary=result.get("summary") or summarize(spec),
+            summary=summary or summarize(spec),
+            created_by=created_by,
+            session_id=session_id,
         )
 
         return {
@@ -197,34 +226,6 @@ class Compiler:
             self._catalog_at = time.monotonic()
 
         return self._catalog
-
-
-    async def _dry_run(self, version_id: str) -> dict[str, Any]:
-        """Run the draft with side effects suppressed so the user sees a real result."""
-        try:
-            run = await self.main.post(
-                "/runner/runs",
-                json={"task_version_id": version_id, "dry_run": True, "wait": True, "trigger": "dry_run"},
-            )
-
-        except ApiError as e:
-            log.warning("dry run of %s failed to start: %s", version_id, e.message)
-            return {"status": "not_run", "error": e.message}
-
-        return {
-            "run_id": run["id"],
-            "status": run["status"],
-            "error": run.get("error"),
-            "steps": [
-                {
-                    "step": step["step_key"],
-                    "status": step["status"],
-                    "error": step["error"],
-                    "output": truncate(step["output"], 600) if step["output"] is not None else None,
-                }
-                for step in run.get("steps", [])
-            ],
-        }
 
 
 def successful_tools(session_id: str) -> set[str]:

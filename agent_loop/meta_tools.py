@@ -35,6 +35,13 @@ DEFINITIONS: list[dict[str, Any]] = [
         {"title": _STR, "hint": _STR},
     ),
     _fn(
+        "task_dry_run",
+        "Пробный запуск черновика задачи по просьбе пользователя: шаги выполняются без настоящих "
+        "внешних действий (письма — в черновики). Покажи пользователю результат как есть, включая ошибки.",
+        {"task_id": _STR, "version_id": _STR},
+        ["task_id", "version_id"],
+    ),
+    _fn(
         "task_reject",
         "Отклонить черновик задачи.",
         {"task_id": _STR, "version_id": _STR},
@@ -82,13 +89,32 @@ async def _compile(main: MainClient, session_id: str, args: dict[str, Any]) -> A
             for domain, items in (result.get("settings") or {}).items()
             for key, item in items.items()
         },
-        "dry_run": result.get("dry_run"),
         "next": (
-            "Покажи пользователю шаги и результат пробного запуска простыми словами. Если есть настройки "
-            "(settings), скажи, как задача будет себя вести с ними сейчас, и что поменять их можно в "
-            "настройках задачи. Задача сохранена черновиком; включает её только сам пользователь — "
-            "в списке задач. Сам ты её не включаешь."
+            "Покажи пользователю шаги задачи простыми словами. Если есть настройки (settings), скажи, как "
+            "задача будет себя вести с ними сейчас и что поменять их можно в настройках задачи. Дальше решает "
+            "пользователь: попросит пробный запуск — вызови task_dry_run; попросит поправить — task_patch; "
+            "включает задачу только он сам, в списке задач. Сам ты её не включаешь и не запускаешь без просьбы."
         ),
+    }
+
+
+async def _dry_run(main: MainClient, session_id: str, args: dict[str, Any]) -> Any:
+    """Just run it and report: no repairs, the user judges the result."""
+    run = await main.post("/runs", json={"task_version_id": args["version_id"], "dry_run": True, "wait": True})
+
+    return {
+        "run_id": run["id"],
+        "status": run["status"],
+        "error": run.get("error"),
+        "steps": [
+            {
+                "step": step["step_key"],
+                "status": step["status"],
+                "error": step.get("error"),
+                "output": truncate(step["output"], 600) if step.get("output") is not None else None,
+            }
+            for step in run.get("steps", [])
+        ],
     }
 
 
@@ -107,8 +133,8 @@ async def _patch(main: MainClient, session_id: str, args: dict[str, Any]) -> Any
         "summary": result.get("summary"),
         "diff": result.get("diff"),
         "next": (
-            "Покажи пользователю, что изменится (было → стало). Новую версию включает только сам "
-            "пользователь — в списке задач. Сам ты её не включаешь."
+            "Покажи пользователю, что изменится (было → стало). Попросит пробный запуск — task_dry_run "
+            "с этим version_id. Новую версию включает только сам пользователь — в списке задач."
         ),
     }
 
@@ -137,12 +163,13 @@ async def _run_status(main: MainClient, session_id: str, args: dict[str, Any]) -
         "status": run["status"],
         "error": run["error"],
         "result": run["result"],
-        "steps": [{"step": s["step_key"], "status": s["status"], "error": s["error"]} for s in run["steps"]],
+        "steps": [{"step": s["step_key"], "status": s["status"], "error": s.get("error")} for s in run["steps"]],
     }
 
 
 HANDLERS: dict[str, Handler] = {
     "task_compile": _compile,
+    "task_dry_run": _dry_run,
     "task_reject": _reject,
     "task_patch": _patch,
     "task_list": _list,

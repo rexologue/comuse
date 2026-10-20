@@ -54,6 +54,11 @@ async def get_diff(task_id: str, version_id: str, request: Request):
     return await reverse_proxy(request, "compiler", f"tasks/{task_id}/versions/{version_id}/diff")
 
 
+@router.post("/tasks/{task_id}/versions", summary="Edit a task by hand (spec or JSON Patch ops) → draft version + diff + approval")
+async def edit_task(task_id: str, request: Request):
+    return await request.app.state.orchestrator.edit(task_id, await request.json())
+
+
 @router.post("/tasks/{task_id}/versions/{version_id}/approve", summary="Make a version active")
 async def approve(task_id: str, version_id: str, request: Request):
     return await request.app.state.orchestrator.approve_version(task_id, version_id)
@@ -86,9 +91,9 @@ async def task_runs(task_id: str, include_empty: bool = False):
 # RUNS
 # -----------------------------
 
-@router.post("/runs", summary="Run a task now")
+@router.post("/runs", summary="Run a task now, or dry-run a version (task_version_id + dry_run)")
 async def start_run(body: RunBody, request: Request) -> Any:
-    payload = {**body.model_dump(exclude_none=True), "trigger": "manual"}
+    payload = {**body.model_dump(exclude_none=True), "trigger": "dry_run" if body.dry_run else "manual"}
 
     return await request.app.state.registry.client("runner").post("/runs", json=payload)
 
