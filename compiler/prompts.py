@@ -187,7 +187,7 @@ def format_catalog(catalog: dict[str, dict[str, Any]]) -> str:
         args = _describe_fields(manifest["input_schema"], with_required=True)
         output = _describe_fields(manifest["output_schema"], with_required=False)
         lines.append(
-            f"- {name} [{manifest['side_effect']}]: {manifest['description']}\n"
+            f"- {name}: {manifest['description']}\n"
             f"    аргументы: {args}\n"
             f"    результат (.output): {output}"
         )

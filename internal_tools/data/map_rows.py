@@ -36,7 +36,7 @@ class Output(ToolOutput):
         "written WITHOUT braces (row.key, row.sums['Sum'] | format_number, row.count). Optional "
         "limit keeps the first N rows. Use it to fit aggregate results to a template's table columns."
     ),
-    side_effect="none",
+    confirm=False,
 )
 async def map_rows(inp: Input, ctx: ToolContext) -> Output:
     rows = inp.rows[: inp.limit] if inp.limit else inp.rows

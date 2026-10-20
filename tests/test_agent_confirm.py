@@ -103,3 +103,14 @@ async def test_other_tools_run_right_away(settings):
 
     assert result["status"] == "ok"
     assert [c["tool"] for c in loop.main.executed] == ["fs.list"]
+
+
+async def test_a_command_that_changes_files_asks_too(settings):
+    """Not only sending mail: moving the user's files is asked about as well."""
+    loop = _loop()
+    session_id, message_id = _asking_turn("Разложи документы")
+
+    asked = await loop._dispatch(session_id, message_id, _call("fs.move", {"src": "a.pdf", "dst": "Счета/"}), {})
+
+    assert asked["status"] == "needs_approval"
+    assert loop.main.executed == []

@@ -94,3 +94,22 @@ def test_aggregate_inputs_have_a_schema():
     schema = discover()["xlsx.aggregate"].manifest()["input_schema"]["properties"]["inputs"]
 
     assert "anyOf" in schema
+
+
+async def test_move_in_a_dry_run_only_says_what_it_would_do(settings):
+    from common.tools import ToolContext
+    from executor.paths import WorkspacePaths
+    from internal_tools.fs.transfer import Input, move_file
+
+    workspace = settings.storage.workspace_dir
+    (workspace / "Входящие").mkdir()
+    (workspace / "Входящие" / "a.pdf").write_bytes(b"%PDF")
+
+    ctx = ToolContext(
+        mode="run", settings=settings, paths=WorkspacePaths(workspace, settings.storage.data_dir), llm=None, dry_run=True,
+    )
+    out = await move_file(Input(src="Входящие/a.pdf", dst="Счета/"), ctx)
+
+    assert out.path == "Счета/a.pdf"
+    assert (workspace / "Входящие" / "a.pdf").exists() and not (workspace / "Счета").exists()
+    assert ctx.logs == ["Пробный запуск: переложил бы «Входящие/a.pdf» в «Счета/a.pdf»"]

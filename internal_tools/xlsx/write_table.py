@@ -26,7 +26,7 @@ class WriteOutput(ToolOutput):
     title="Сохранить таблицу Excel",
     card="Сохранить таблицу в «{output_name}»",
     description="Write rows into a new .xlsx file under data:outputs; returns its path.",
-    side_effect="write",
+    confirm=False,
 )
 async def write_table(inp: WriteInput, ctx: ToolContext) -> WriteOutput:
     name = re.sub(r"[\\/:*?\"<>|]+", "_", inp.output_name)

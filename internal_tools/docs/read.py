@@ -25,7 +25,7 @@ class Output(ToolOutput):
     title="Прочитать документ",
     card="Прочитать «{path}»",
     description="Read a document (docx, xlsx, pdf, txt, md, csv) as text; tables become markdown tables.",
-    side_effect="read",
+    confirm=False,
     core=True,
 )
 async def read(inp: Input, ctx: ToolContext) -> Output:

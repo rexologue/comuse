@@ -30,7 +30,7 @@ class ExtractOutput(ToolOutput):
         "Extract structured data from documents or text with the LLM; the result follows "
         "output_schema (JSON Schema). Inputs may be file paths or the output of fs.list."
     ),
-    side_effect="none",
+    confirm=False,
 )
 async def extract(inp: ExtractInput, ctx: ToolContext) -> ExtractOutput:
     text = await gather_text(inp.inputs, ctx)

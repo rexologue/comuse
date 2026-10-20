@@ -157,9 +157,10 @@ class AgentLoop:
         # slip past the question because the model reached it some other way.
         manifest = by_function.get(name) or (await self.catalog.manifests()).get(tool)
 
-        # Asking before an external action is the chat's rule, not the executor's: the
-        # user is right here. The call waits in the trace until action_confirm.
-        if manifest is not None and manifest["side_effect"] == "external":
+        # Asking first is the chat's rule, not the executor's: the user is right here. The
+        # call waits in the trace until action_confirm. A command that does not say it is
+        # harmless (confirm=False) asks.
+        if manifest is not None and manifest.get("confirm", True) is not False:
             return self._ask_first(session_id, message_id, manifest, args)
 
         output = await self._execute(session_id, tool, args)

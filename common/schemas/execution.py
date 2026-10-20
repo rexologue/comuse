@@ -29,9 +29,6 @@ class ExecuteResponse(BaseModel):
     status: Literal["ok", "error"]
     output: Any = None
     error: str | None = None
-    # real | draft | skipped — what actually happened to a side-effecting tool.
-    mode: Literal["real", "draft", "skipped"] = "real"
-    message: str | None = None
     artifacts: list[str] = Field(default_factory=list)
     duration_ms: int = 0
     # For the caller's log (the executor keeps none): a crash's traceback, what the

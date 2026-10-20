@@ -28,7 +28,7 @@ class ReadOutput(ToolOutput):
     title="Прочитать таблицу Excel",
     card="Прочитать таблицу из «{path}»",
     description="Read an Excel sheet as a list of row objects keyed by the header row.",
-    side_effect="read",
+    confirm=False,
 )
 async def read_table(inp: ReadInput, ctx: ToolContext) -> ReadOutput:
     path = ctx.read_path(inp.path)

@@ -22,14 +22,16 @@ class Output(ToolOutput):
     title="Записать текстовый файл",
     card="Записать текст в «{path}»",
     description="Write a UTF-8 text file (txt, md, csv) into the workspace.",
-    side_effect="write",
-    dry_run="skip",
 )
 async def write_file(inp: Input, ctx: ToolContext) -> Output:
     path = ctx.write_path(inp.path)
 
     if path.exists() and not inp.overwrite:
         raise ToolError(f"Файл `{inp.path}` уже существует")
+
+    if ctx.dry_run:
+        ctx.log(f"Пробный запуск: записал бы {len(inp.content)} символов в «{ctx.to_ref(path)}»")
+        return Output(path=ctx.to_ref(path), size=len(inp.content.encode("utf-8")))
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(inp.content, encoding="utf-8")

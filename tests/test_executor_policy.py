@@ -1,5 +1,5 @@
-"""Executor: dry runs follow each tool's declaration, everything else simply runs (the
-chat asks the user itself); path and secret arguments are handled before the call."""
+"""Executor: validates, checks path arguments, loads declared secrets and runs; what a
+dry run means is each tool's own business (the chat asks the user itself)."""
 
 from __future__ import annotations
 
@@ -15,20 +15,17 @@ from executor.runtime import ExecutorRuntime
 SPECS = discover()
 
 
-def _decide(tool: str, **ctx):
-    runtime = ExecutorRuntime.__new__(ExecutorRuntime)
-    return runtime._decide(SPECS[tool], ExecContext(**ctx))
+def test_every_changing_tool_handles_dry_runs_itself():
+    """The executor runs every call, dry or not: a tool the chat asks about changes
+    something, so it must look at ctx.dry_run itself, or a dry run would really do it."""
+    import inspect
 
+    forgot = sorted(
+        name for name, spec in SPECS.items()
+        if spec.confirm is not False and "dry_run" not in inspect.getsource(spec.fn)
+    )
 
-@pytest.mark.parametrize("mode", ["chat", "run"])
-def test_executor_never_asks(mode):
-    decision = _decide("mail.send", mode=mode)
-    assert not decision.skip and not decision.draft
-
-
-def test_dry_run_send_is_a_draft_and_move_is_skipped():
-    assert _decide("mail.send", mode="run", dry_run=True).draft
-    assert _decide("fs.move", mode="run", dry_run=True).skip
+    assert forgot == []
 
 
 def test_spec_has_no_approval_section():

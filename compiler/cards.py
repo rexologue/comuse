@@ -80,7 +80,7 @@ def _card(step: Step, catalog: dict[str, dict[str, Any]]) -> dict[str, Any]:
     return {
         "id": step.id,
         "tool": step.tool,
-        "side_effect": manifest.get("side_effect"),
+        "confirm": manifest.get("confirm"),
         "text": step.title or _format_card(template, step.args),
         "args": step.args,
         "children": [],

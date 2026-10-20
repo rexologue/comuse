@@ -26,7 +26,7 @@ class Output(ToolOutput):
     title="Столбчатая диаграмма",
     card="Построить диаграмму «{title}»",
     description="Draw a bar chart PNG from rows (label_key on X, value_key on Y); returns the image path.",
-    side_effect="write",
+    confirm=False,
 )
 async def bar(inp: Input, ctx: ToolContext) -> Output:
     return await _draw(inp, ctx, "bar")
@@ -37,7 +37,7 @@ async def bar(inp: Input, ctx: ToolContext) -> Output:
     title="Линейный график",
     card="Построить график «{title}»",
     description="Draw a line chart PNG from rows (label_key on X, value_key on Y); returns the image path.",
-    side_effect="write",
+    confirm=False,
 )
 async def line(inp: Input, ctx: ToolContext) -> Output:
     return await _draw(inp, ctx, "line")

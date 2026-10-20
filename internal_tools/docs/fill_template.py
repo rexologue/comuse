@@ -32,7 +32,7 @@ class Output(ToolOutput):
         "Render a .docx template (Jinja fields like {{ revenue }}, loops {% for row in rows %}) "
         "with the given values; images are inserted from PNG paths. Returns the new file path."
     ),
-    side_effect="write",
+    confirm=False,
 )
 async def fill_template(inp: Input, ctx: ToolContext) -> Output:
     template = ctx.read_path(inp.template)

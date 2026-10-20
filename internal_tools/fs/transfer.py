@@ -27,11 +27,15 @@ class Output(ToolOutput):
     title="Скопировать файл",
     card="Скопировать «{src}» в «{dst}»",
     description="Copy a file inside the workspace; dst may be a folder.",
-    side_effect="write",
-    dry_run="skip",
 )
 async def copy_file(inp: Input, ctx: ToolContext) -> Output:
     src, dst = _endpoints(inp, ctx)
+
+    if ctx.dry_run:
+        ctx.log(f"Пробный запуск: скопировал бы «{ctx.to_ref(src)}» в «{ctx.to_ref(dst)}»")
+        return Output(path=ctx.to_ref(dst))
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dst)
 
     return Output(path=ctx.to_ref(dst))
@@ -42,13 +46,17 @@ async def copy_file(inp: Input, ctx: ToolContext) -> Output:
     title="Переместить файл",
     card="Переместить «{src}» в «{dst}»",
     description="Move a file inside the workspace; dst may be a folder (created if missing).",
-    side_effect="write",
-    dry_run="skip",
 )
 async def move_file(inp: Input, ctx: ToolContext) -> Output:
     # Moving removes the source, so it needs write access to both places.
     ctx.write_path(inp.src)
     src, dst = _endpoints(inp, ctx)
+
+    if ctx.dry_run:
+        ctx.log(f"Пробный запуск: переложил бы «{ctx.to_ref(src)}» в «{ctx.to_ref(dst)}»")
+        return Output(path=ctx.to_ref(dst))
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(src, dst)
 
     return Output(path=ctx.to_ref(dst))
@@ -65,7 +73,5 @@ def _endpoints(inp: Input, ctx: ToolContext) -> tuple[Path, Path]:
 
     if dst.exists() and not inp.overwrite:
         raise ToolError(f"Файл `{ctx.to_ref(dst)}` уже существует")
-
-    dst.parent.mkdir(parents=True, exist_ok=True)
 
     return src, dst

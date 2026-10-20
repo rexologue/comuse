@@ -1,12 +1,13 @@
-"""The call pipeline: validate the arguments → check path arguments → dry-run policy →
-load declared secrets → run with timeout. The executor keeps no log: the response
+"""The call pipeline: validate the arguments → check path arguments → load declared
+secrets → run with timeout. The executor keeps no log: the response
 carries everything (duration, traceback, the tool's log lines and notifications) for
 the caller's own log. Whoever calls has already decided the call should happen (the
 chat asks the user first; a task was approved as a whole).
 
 The executor knows argument types, not domains: a path-typed argument must stay inside
 the workspace, a `secrets` argument names an account it loads. What a task may do is
-its approved steps; what to work on is chosen by the tools themselves."""
+its approved steps; what to work on is chosen by the tools themselves, and so is what a
+dry run means for each of them (the executor only passes the flag on)."""
 
 from __future__ import annotations
 
@@ -82,17 +83,13 @@ class ExecutorRuntime:
         except PermissionDenied as e:
             return ExecuteResponse(status="error", error=f"Нет доступа: {e}")
 
-        decision = self._decide(spec, req.context)
-        if decision.skip:
-            return ExecuteResponse(status="ok", mode="skipped", message=decision.message)
-
         try:
             credentials = {argument: self.load_credential(getattr(inp, argument)) for argument in spec.secrets}
 
         except ToolError as e:
             return ExecuteResponse(status="error", error=str(e))
 
-        ctx = self._tool_context(req.context, draft=decision.draft, credentials=credentials)
+        ctx = self._tool_context(req.context, credentials=credentials)
 
         try:
             raw = await asyncio.wait_for(
@@ -120,32 +117,16 @@ class ExecutorRuntime:
                 notifications=ctx.notifications,
             )
 
-        mode = "draft" if decision.draft else "real"
-
         return ExecuteResponse(
             status="ok",
             output=output,
-            mode=mode,
             artifacts=ctx.artifacts,
             logs=ctx.logs,
             notifications=ctx.notifications,
         )
 
 
-    def _decide(self, spec: ToolSpec, ctx: ExecContext) -> _Decision:
-        """A dry run follows the tool's own `dry_run` declaration; anything else runs.
-        How an external action behaves in a task (draft or real) is up to the tool and
-        its domain settings."""
-        if not ctx.dry_run:
-            return _Decision()
-
-        if spec.side_effect in ("write", "external") and spec.dry_run == "skip":
-            return _Decision(skip=True, message="Пропущено в пробном запуске")
-
-        return _Decision(draft=spec.dry_run == "draft")
-
-
-    def _tool_context(self, ctx: ExecContext, *, draft: bool, credentials: dict[str, Credential]) -> ToolContext:
+    def _tool_context(self, ctx: ExecContext, *, credentials: dict[str, Credential]) -> ToolContext:
         return ToolContext(
             mode=ctx.mode,
             settings=self.settings,
@@ -155,7 +136,6 @@ class ExecutorRuntime:
             run_id=ctx.run_id,
             step_key=ctx.step_key,
             dry_run=ctx.dry_run,
-            draft=draft,
             task_settings=ctx.task_settings,
             credentials=credentials,
         )
@@ -173,15 +153,6 @@ class ExecutorRuntime:
             raise ToolError(f"Для аккаунта `{name}` нет сохранённого пароля")
 
         return Credential(name=account.name, kind=account.kind, config=dict(account.config), secret=secret)
-
-
-class _Decision:
-    __slots__ = ("skip", "draft", "message")
-
-    def __init__(self, *, skip: bool = False, draft: bool = False, message: str | None = None):
-        self.skip    = skip
-        self.draft   = draft
-        self.message = message
 
 
 def _dump_output(spec: ToolSpec, raw: Any) -> Any:

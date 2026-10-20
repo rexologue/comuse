@@ -328,7 +328,6 @@ class _Walk:
             error=response.get("error"),
             attempt=attempt,
             extra={
-                "mode": response.get("mode"),
                 "duration_ms": response.get("duration_ms"),
                 "traceback": response.get("traceback"),
                 "logs": response.get("logs") or [],

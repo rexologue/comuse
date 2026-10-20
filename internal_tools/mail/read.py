@@ -31,7 +31,7 @@ class Output(ToolOutput):
     title="Прочитать письмо",
     card="Прочитать письмо {uid} из «{account}»",
     description="Read one email: text body and attachments (saved to data:outputs, paths returned).",
-    side_effect="read",
+    confirm=False,
     secrets=("account",),
 )
 async def read(inp: Input, ctx: ToolContext) -> Output:

@@ -37,12 +37,16 @@ class Output(ToolOutput):
         "Mark one email read/unread and/or move it to another folder. Use after handling a message "
         "so the next run does not handle it again (e.g. search unseen=true, then seen=true)."
     ),
-    side_effect="write",
     secrets=("account",),
-    dry_run="skip",
 )
 async def mark(inp: Input, ctx: ToolContext) -> Output:
     account = mailbox(ctx)
+
+    if ctx.dry_run:
+        changes = [f"прочитано — {'да' if inp.seen else 'нет'}"] if inp.seen is not None else []
+        changes += [f"переложить в «{inp.move_to}»"] if inp.move_to else []
+        ctx.log(f"Пробный запуск: письмо {inp.uid} в «{inp.folder}» не тронуто; было бы: {', '.join(changes)}")
+        return Output(uid=inp.uid, folder=inp.move_to or inp.folder)
 
     folder = await asyncio.to_thread(
         imap_smtp.mark,

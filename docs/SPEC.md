@@ -164,7 +164,7 @@ project/
 - **API:** `POST /v1/chat/completions` (со стримингом), `GET /sessions`, `GET /sessions/{id}`.
 - **Цикл:** история сессии → отбор инструментов (топ-`AGENT_TOOLS_TOP_K`=24 по эмбеддингам плюс уже использованные в сессии и команды с флагом `core` из `@tool`; без эмбеддингов — все) → LLM → tool calls → `POST main/executor/execute` с `context.mode = "chat"` → результат в историю и в `trace_events` → снова LLM. Остановка, когда ответ пришёл без tool calls, или после `AGENT_MAX_ITERATIONS`=16 итераций.
 - **Мета-инструменты** управляют самой системой, а не компьютером: `task_compile`, `task_dry_run`, `task_patch`, `task_reject`, `task_list`, `task_run_now`, `task_control` (пауза, возобновление, архив), `run_status`, `action_confirm`. Их обрабатывает agent-loop через main, в executor они не идут. Включить задачу агент не может: такого инструмента нет, и отвечать на одобрения он не умеет.
-- **Внешние действия в чате** (`side_effect: external` по каталогу) спрашивает сам agent-loop: в executor такой вызов не уходит. Agent-loop проверяет аргументы по input-схеме, записывает вызов в трейс со статусом `needs_approval` и возвращает модели `action_id`; агент спрашивает пользователя прямо в диалоге и после «да» вызывает `action_confirm` — только тогда вызов идёт в executor, один раз. Зависимые шаги (пометить письмо прочитанным и т. п.) агент делает только после подтверждения.
+- **Команды, которые что-то меняют** (в каталоге `confirm` не `false`), в чате спрашивает сам agent-loop: в executor такой вызов не уходит. Agent-loop проверяет аргументы по input-схеме, записывает вызов в трейс со статусом `needs_approval` и возвращает модели `action_id`; агент спрашивает пользователя прямо в диалоге и после «да» вызывает `action_confirm` — только тогда вызов идёт в executor, один раз. Подтверждение действует, только если после вопроса в чате есть сообщение пользователя: текст, который модель прочитала (письмо, документ), подтвердить за него не может, сообщение задачи (`notice`) — тоже. Зависимые шаги (пометить письмо прочитанным и т. п.) агент делает только после подтверждения.
 
 ### compiler :8002
 
@@ -202,7 +202,7 @@ project/
 
 - `POST /execute {tool, args, context}` → `{status, output, artifacts}`, где status: `ok` или `error`. Executor ничего не спрашивает: кто вызывает, тот уже решил, что вызов нужен (чат спросил пользователя, задачу пользователь одобрил). В `context`: режим (`chat` или `run`), `session_id` или `run_id` + `step_id`, настройки задачи (`task_settings`), `dry_run`.
 - `GET /tools`, `GET /tools/{name}`, `POST /tools/reload`; аккаунты: `GET`, `POST /accounts`, `GET /accounts/kinds`, `POST /accounts/{name}/check`, `DELETE /accounts/{name}`. Executor хранит аккаунт как имя, вид, настройки и пароль в keyring; что нужно виду (пресеты, обязательные настройки, проверка входа), объявляет группа команд, которой этот вид принадлежит (`common/tools/accounts.py`).
-- **Конвейер вызова:** найти инструмент → проверить args по input-схеме → проверить аргументы-пути → пробный запуск по объявлению `dry_run` команды (`skip`, `draft` или `real`) → загрузить аккаунты для аргументов из `secrets` → вызвать с таймаутом и `ToolContext` → проверить output. Своего журнала у executor нет: всё для журнала вызывающего (длительность, traceback, строки `ctx.log`, уведомления `ctx.notify`) уходит в ответе.
+- **Конвейер вызова:** найти инструмент → проверить args по input-схеме → проверить аргументы-пути → загрузить аккаунты для аргументов из `secrets` → вызвать с таймаутом и `ToolContext` → проверить output. Пробный запуск executor только передаёт флагом `ctx.dry_run`: что он значит, решает сама команда. Своего журнала у executor нет: всё для журнала вызывающего (длительность, traceback, строки `ctx.log`, уведомления `ctx.notify`) уходит в ответе.
 - **Executor знает типы аргументов, а не группы.**
   - Аргумент типа `WorkspacePath` (или `FileRefs` — список файлов) executor до вызова проверяет песочницей `executor/paths.py`: только рабочая папка и `data:templates` / `data:outputs`, без `..` и симлинков наружу. Входы `llm.*` (`TextOrFileRefs` — путь или обычный текст) заранее не проверяются; файл из них открывается через тот же `ctx.read_path`.
   - Аргументы из `secrets` называют сохранённый аккаунт: executor сам достаёт его настройки и пароль из keyring и отдаёт команде как `ctx.credential("account")`. Неизвестный аккаунт — отказ до вызова.
@@ -240,17 +240,16 @@ class Output(ToolOutput):
     name="mail.send",
     title="Отправить письмо",
     card="Отправить письмо {to} с темой «{subject}»",
-    description="Send an email ... In a task it saves a draft ... unless the task's mail settings say to send directly.",
-    side_effect="external",
+    description="Send an email ... In a task it saves a draft ... unless the task's mail settings say to send directly; a dry run always saves a draft.",
+    confirm="always",                               # в чате спрашивать перед каждым письмом
     secrets=("account",),                           # executor загрузит аккаунт по имени
-    dry_run="draft",
     timeout=120,
 )
 async def send(inp: Input, ctx: ToolContext) -> Output:
     account = ctx.credential("account")             # настройки и пароль, уже загруженные executor
     message = imap_smtp.build_message(...)
 
-    if ctx.draft or (ctx.mode == "run" and not ctx.domain_settings(MailSettings).send_directly):
+    if ctx.dry_run or (ctx.mode == "run" and not ctx.domain_settings(MailSettings).send_directly):
         folder = await asyncio.to_thread(imap_smtp.append_draft, account.config, account.secret, message)
         return Output(message_id=message["Message-ID"], mode="draft", folder=folder)
 
@@ -264,24 +263,25 @@ async def send(inp: Input, ctx: ToolContext) -> Output:
 | `title`, `card` | Название и шаблон фразы для карточки шага |
 | `description` | Описание для LLM |
 | `Input`, `Output` | Pydantic-модели, из них строятся JSON-схемы для LLM и для валидации |
-| `side_effect` | `none`, `read`, `write` или `external`; `external` в чате требует подтверждения |
+| `confirm` | Спросить ли пользователя в чате перед вызовом: `true` (по умолчанию), `"always"` — перед каждым вызовом, `false` — команда только смотрит или считает (файлы создаёт только в результатах запуска) |
 | `secrets` | Какие аргументы называют сохранённый аккаунт; executor загружает его и отдаёт как `ctx.credential(<аргумент>)` |
 | Типы аргументов | `WorkspacePath`, `FileRefs` — пути, executor проверяет их до вызова; `TextOrFileRefs` — путь или текст, не проверяется заранее |
-| `dry_run` | Что делать в пробном запуске: `skip`, `draft` или `real` |
 | `timeout` | Секунды до отмены |
+
+**Пробный запуск — дело команды.** Executor выполняет каждый вызов и передаёт `ctx.dry_run`. Команда, о которой чат спрашивает (`confirm` не `false`), обязана проверить флаг сама: всё проверить, как при настоящем вызове, и только сказать в журнале (`ctx.log`), что сделала бы — «переложил бы a.pdf → Счета/». `mail.send` в пробном запуске кладёт письмо в черновики, `docs.make_template` сохраняет шаблон в результаты запуска, а не в `data:templates`. Что это правило соблюдено, проверяет тест по всему каталогу: новая команда, забывшая про `ctx.dry_run`, его не пройдёт.
 
 ### Стартовый набор
 
-| Группа | Команды | side\_effect | На чём |
+| Группа | Команды | Спрашивает в чате | На чём |
 | --- | --- | --- | --- |
-| `fs` | list, copy, move, write | read, write | pathlib, только внутри разрешённых папок |
-| `data` | map\_rows | none | готовит строки таблиц шаблона выражениями над `row` |
-| `docs` | read, fill\_template, make\_template | read, write | python-docx, docxtpl, openpyxl, pdfplumber |
-| `xlsx` | read\_table, write\_table, aggregate | read, write | openpyxl; `aggregate` считает суммы, группы и топ-N кодом — числа в отчётах никогда не считает LLM |
-| `mail` | search, read, mark, create\_draft, send | read, write, external | stdlib imaplib/smtplib |
-| `charts` | bar, line | write | matplotlib → PNG |
-| `llm` | extract, classify, write | none | common.llm, structured output |
-| `user` | notify | none | в журнал запуска и сообщением в чат задачи (ничего не ждёт) |
+| `fs` | list, copy, move, write | copy, move, write | pathlib, только внутри разрешённых папок |
+| `data` | map\_rows | — | готовит строки таблиц шаблона выражениями над `row` |
+| `docs` | read, fill\_template, make\_template | make\_template | python-docx, docxtpl, openpyxl, pdfplumber |
+| `xlsx` | read\_table, write\_table, aggregate | — | openpyxl; `aggregate` считает суммы, группы и топ-N кодом — числа в отчётах никогда не считает LLM |
+| `mail` | search, read, mark, create\_draft, send | mark, create\_draft, send (каждый раз) | stdlib imaplib/smtplib |
+| `charts` | bar, line | — | matplotlib → PNG |
+| `llm` | extract, classify, write | — | common.llm, structured output |
+| `user` | notify | — | в журнал запуска и сообщением в чат задачи (ничего не ждёт) |
 
 **Настройки группы.** Группа может объявить одну плоскую pydantic-модель `DomainSettings` (`@domain_settings`): тип, ограничения, подпись и описание каждого поля, значение по умолчанию. Схема попадает в манифест команд группы (`settings_schema`, LLM её не видит). Задача, в шагах которой есть команды группы, получает раздел `tasks.settings[группа]` со значениями по умолчанию; при новой версии значения пользователя сохраняются, раздел ненужной группы убирается. Менять значения может только пользователь (`PUT /tasks/{id}/settings`); команда читает свой раздел через `ctx.domain_settings(Модель)`. Пример — `mail.send_directly` (по умолчанию `false`): `mail.send` в запуске задачи кладёт письмо в черновики, отправляет его человек из своего почтового клиента.
 
@@ -318,7 +318,7 @@ secrets: [bitrix_token]      # executor передаёт через переме
 tools:
   - name: list_deals
     card: "Выгрузить сделки за {date_from}–{date_to}"
-    side_effect: read
+    confirm: false
 ```
 
 Сторонние MCP-серверы будут подключаться тем же механизмом через настройки и по умолчанию выключены.

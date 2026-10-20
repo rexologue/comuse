@@ -42,7 +42,7 @@ class Output(ToolOutput):
         "optional group-by with per-group counts and sums, optional top-N groups. Use this for any numbers "
         "in a report instead of asking the LLM to add them up."
     ),
-    side_effect="read",
+    confirm=False,
 )
 async def aggregate(inp: Input, ctx: ToolContext) -> Output:
     paths = [ctx.read_path(ref) for ref in file_refs(inp.inputs)]

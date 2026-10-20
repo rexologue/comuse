@@ -131,11 +131,16 @@ def test_mark_needs_something_to_do():
     assert Input(account="work", uid=1, seen=True).seen is True
 
 
-def test_mark_is_skipped_in_dry_runs():
-    from common.tools import discover
+async def test_mark_touches_nothing_in_a_dry_run(monkeypatch):
+    from internal_tools.mail.mark import Input, mark
 
-    spec = discover()["mail.mark"]
-    assert (spec.side_effect, spec.dry_run) == ("write", "skip")
+    monkeypatch.setattr(imap_smtp, "mark", lambda *a, **k: pytest.fail("a dry run marked a letter"))
+    ctx = _send_context("run", {}, dry_run=True)
+
+    out = await mark(Input(account="work", uid=7, seen=True, move_to="Обработано"), ctx)
+
+    assert out.folder == "Обработано"
+    assert ctx.logs == ["Пробный запуск: письмо 7 в «INBOX» не тронуто; было бы: прочитано — да, переложить в «Обработано»"]
 
 
 class FakeIMAP:
@@ -180,19 +185,19 @@ def test_move_never_purges_other_mail(monkeypatch, capabilities, commands):
     assert all(c[1] == "7" for c in fake.commands)
 
 
-def _send_context(mode, task_settings, *, draft=False):
+def _send_context(mode, task_settings, *, dry_run=False):
     from common.tools import ToolContext
     from common.tools.context import Credential
 
     return ToolContext(
         mode=mode, settings=None, paths=None, llm=None,
         credentials={"account": Credential(name="work", kind="imap_smtp", config={"email": "agent@company.local"}, secret="")},
-        draft=draft, task_settings=task_settings,
+        dry_run=dry_run, task_settings=task_settings,
     )
 
 
 @pytest.mark.parametrize(
-    ("mode", "task_settings", "draft", "expected"),
+    ("mode", "task_settings", "dry_run", "expected"),
     [
         ("run", {}, False, "draft"),                                     # a task drafts by default
         ("run", {"mail": {"send_directly": False}}, False, "draft"),
@@ -201,13 +206,13 @@ def _send_context(mode, task_settings, *, draft=False):
         ("chat", {}, False, "sent"),                                     # chat: the user just confirmed
     ],
 )
-async def test_send_follows_the_task_mail_settings(monkeypatch, mode, task_settings, draft, expected):
+async def test_send_follows_the_task_mail_settings(monkeypatch, mode, task_settings, dry_run, expected):
     from internal_tools.mail.send import Input, send
 
     monkeypatch.setattr(imap_smtp, "append_draft", lambda *a: "Drafts")
     monkeypatch.setattr(imap_smtp, "send", lambda *a: None)
 
-    out = await send(Input(account="work", to=["boss@company.local"], subject="s", body="b"), _send_context(mode, task_settings, draft=draft))
+    out = await send(Input(account="work", to=["boss@company.local"], subject="s", body="b"), _send_context(mode, task_settings, dry_run=dry_run))
 
     assert out.mode == expected
 

@@ -48,9 +48,9 @@ class ToolContext:
     session_id: str | None = None
     run_id: str | None = None
     step_key: str | None = None
+    # A dry run: a tool that changes anything checks it itself and only reports (in its
+    # log and output) what it would have done; mail.send leaves a draft instead.
     dry_run: bool = False
-    # Dry run: external actions create drafts instead of real effects.
-    draft: bool = False
     # The task's domain settings sections ({"mail": {...}}); empty in chat.
     task_settings: dict[str, dict[str, Any]] = field(default_factory=dict)
     # Accounts the executor loaded for the tool's `secrets` arguments, by argument name.

@@ -47,7 +47,7 @@ class Output(ToolOutput):
     title="Найти письма",
     card="Найти письма в «{account}»: отправитель «{sender}», только от {sender_in}, тема «{subject}»",
     description="Search an IMAP mailbox; newest first. Returns uid, sender, sender_email (bare address for replies), to, subject, date.",
-    side_effect="read",
+    confirm=False,
     secrets=("account",),
 )
 async def search(inp: Input, ctx: ToolContext) -> Output:

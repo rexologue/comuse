@@ -36,8 +36,11 @@ __all__ = [
 ]
 
 
-SideEffect = Literal["none", "read", "write", "external"]
-DryRunPolicy = Literal["real", "draft", "skip"]
+# Whether the chat asks the user before a call: True — yes (the user may let the chat stop
+# asking for this command), "always" — every time, False — never (it only looks or
+# computes; files it creates go to the run's own outputs). A command that asks must
+# also handle ctx.dry_run itself: whatever is worth a question must not happen in a dry run.
+Confirm = bool | Literal["always"]
 
 
 class ToolInput(BaseModel):
@@ -56,13 +59,12 @@ class ToolSpec:
     title: str
     card: str
     description: str
-    side_effect: SideEffect
+    confirm: Confirm
     # Arguments naming a stored account: the executor loads it (config + password from
     # the keyring) and hands it over as ctx.credential(<argument>).
     secrets: tuple[str, ...]
     # Arguments typed as workspace paths: {name: "path" | "refs"} (see common/tools/fields.py).
     path_args: dict[str, str]
-    dry_run: DryRunPolicy
     timeout: int | None
     # Always offered to the chat agent, whatever the request (looking around starts there).
     core: bool
@@ -78,9 +80,8 @@ class ToolSpec:
             "title": self.title,
             "card": self.card,
             "description": self.description,
-            "side_effect": self.side_effect,
+            "confirm": self.confirm,
             "secrets": list(self.secrets),
-            "dry_run": self.dry_run,
             "timeout": self.timeout,
             "input_schema": self.input_model.model_json_schema(),
             # Outputs are dumped by field name (not alias), so describe them the same way.
@@ -103,9 +104,8 @@ def tool(
     title: str,
     card: str,
     description: str,
-    side_effect: SideEffect = "none",
+    confirm: Confirm = True,
     secrets: tuple[str, ...] = (),
-    dry_run: DryRunPolicy = "real",
     timeout: int | None = None,
     core: bool = False,
 ):
@@ -124,10 +124,9 @@ def tool(
             title=title,
             card=card,
             description=description,
-            side_effect=side_effect,
+            confirm=confirm,
             secrets=tuple(secrets),
             path_args=_path_args(hints[params[0]]),
-            dry_run=dry_run,
             timeout=timeout,
             core=core,
             input_model=hints[params[0]],

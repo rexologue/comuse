@@ -33,11 +33,11 @@ class Output(ToolOutput):
     card="Отправить письмо {to} с темой «{subject}»",
     description=(
         "Send an email with attachments from a configured account. In a task it saves a draft "
-        "for the user to send instead, unless the task's mail settings say to send directly."
+        "for the user to send instead, unless the task's mail settings say to send directly; a "
+        "dry run always saves a draft."
     ),
-    side_effect="external",
+    confirm="always",
     secrets=("account",),
-    dry_run="draft",
     timeout=120,
 )
 async def send(inp: Input, ctx: ToolContext) -> Output:
@@ -55,7 +55,7 @@ async def send(inp: Input, ctx: ToolContext) -> Output:
 
     # A dry run, or a task the user has not let send by itself: the letter waits in the
     # account's Drafts, where the user reviews and sends it from their own mail client.
-    if ctx.draft or (ctx.mode == "run" and not ctx.domain_settings(MailSettings).send_directly):
+    if ctx.dry_run or (ctx.mode == "run" and not ctx.domain_settings(MailSettings).send_directly):
         folder = await asyncio.to_thread(imap_smtp.append_draft, account.config, account.secret, message)
         return Output(message_id=message["Message-ID"], mode="draft", folder=folder)
 

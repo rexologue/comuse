@@ -54,7 +54,6 @@ class Output(ToolOutput):
         "{{ fields }}, data tables become row loops. Returns the template path, field names "
         "and the example's values as a ready context for docs.fill_template."
     ),
-    side_effect="write",
 )
 async def make_template(inp: Input, ctx: ToolContext) -> Output:
     if not _NAME_RE.match(inp.name):
@@ -67,7 +66,14 @@ async def make_template(inp: Input, ctx: ToolContext) -> Output:
     outline = await asyncio.to_thread(_outline, source)
     markup = await _ask_markup(ctx, outline, inp.hint)
 
-    target = ctx.write_path(f"data:templates/{inp.name}.docx")
+    # A dry run leaves data:templates alone: the template goes to the run's own outputs,
+    # where it can be looked at (and filled by the next step) all the same.
+    if ctx.dry_run:
+        target = ctx.output_path(f"{inp.name}.docx")
+        ctx.log("Пробный запуск: шаблон не сохранён в data:templates, он в результатах запуска")
+    else:
+        target = ctx.write_path(f"data:templates/{inp.name}.docx")
+
     target.parent.mkdir(parents=True, exist_ok=True)
 
     result = await asyncio.to_thread(_apply_markup, source, target, markup)

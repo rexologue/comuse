@@ -13,11 +13,10 @@ from internal_tools.mail.send import Input, Output
     title="Создать черновик письма",
     card="Черновик письма {to} с темой «{subject}»",
     description="Save an email into the account's Drafts folder without sending it.",
-    side_effect="write",
     secrets=("account",),
-    dry_run="skip",
 )
 async def create_draft(inp: Input, ctx: ToolContext) -> Output:
+    # The same with ctx.dry_run: a draft is exactly what a dry run of mail.send leaves, nothing goes out.
     account = mailbox(ctx)
 
     attachments = [ctx.read_path(ref) for ref in inp.attachments]
