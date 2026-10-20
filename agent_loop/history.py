@@ -118,6 +118,21 @@ def llm_history(session_id: str, limit: int) -> list[dict[str, Any]]:
     return messages + deferred
 
 
+def user_wrote_after(session_id: str, message_id: int | None) -> bool:
+    """Whether the user has written anything since that message (a task notice does not count)."""
+    if message_id is None:
+        return False
+
+    with session() as db:
+        reply = (
+            db.query(ChatMessage.id)
+            .filter(ChatMessage.session_id == session_id, ChatMessage.role == "user", ChatMessage.id > message_id)
+            .first()
+        )
+
+    return reply is not None
+
+
 def add_trace(session_id: str, message_id: int | None, tool: str, args: dict[str, Any], result: Any, status: str) -> int:
     with session() as db:
         event = TraceEvent(

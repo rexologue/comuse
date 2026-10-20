@@ -201,6 +201,14 @@ class AgentLoop:
         if event is None or event.session_id != session_id or event.status != "needs_approval":
             return {"status": "error", "error": "Нет действия, ожидающего подтверждения, с таким action_id"}
 
+        # The user's yes is a message of theirs after the question, not the model's word for
+        # it: text the model has read (a letter, a document) cannot confirm on their behalf.
+        if not history.user_wrote_after(session_id, event.message_id):
+            return {
+                "status": "error",
+                "error": "Пользователь ещё не ответил. Опиши ему действие, закончи ответ и дождись его «да».",
+            }
+
         output = await self._execute(session_id, event.tool, event.args)
         history.update_trace(event.id, status="confirmed" if output["status"] == "ok" else output["status"], result=output)
 
