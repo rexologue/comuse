@@ -58,8 +58,16 @@ class TaskScheduler:
                 removed += self._remove(task.id)
                 continue
 
-            spec = TaskSpec.model_validate(version.spec)
-            self._schedule(task.id, spec)
+            # One task the scheduler cannot read (a spec from an older schema, a bad cron)
+            # must not keep every other task from being scheduled.
+            try:
+                self._schedule(task.id, TaskSpec.model_validate(version.spec))
+
+            except ValueError as e:
+                log.error("cannot schedule %s: %s", task.id, e)
+                removed += self._remove(task.id)
+                continue
+
             scheduled += 1
 
         if task_id is None:
