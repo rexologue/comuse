@@ -103,7 +103,7 @@ uv run pytest
 | `GET`, `PUT /tasks/{id}/settings` | Настройки групп команд у задачи (например, `mail.send_directly`): только значения, ключи не меняются |
 | `POST /runs` | Запустить задачу сейчас или пробно (`task_version_id`, `dry_run`) |
 | `GET /runs/{id}` | Ход запуска по шагам |
-| `GET /runs/{id}/log` | Журнал запуска целиком (хранится `RUN_RETENTION_DAYS`, 15 дней) |
+| `GET /runs/{id}/log` | Журнал запуска целиком (хранится `RETENTION_DAYS`, 15 дней) |
 | `GET /tasks/{id}/runs` | История запусков (пустые проверки — с `?include_empty=true`) |
 | `GET /approvals`, `POST /approvals/{id}/answer` | Одобрение версий задач |
 | `GET /events` | Поток событий (SSE) |

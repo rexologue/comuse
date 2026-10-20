@@ -197,7 +197,7 @@ async def test_dry_run_notifications_stay_in_the_log(settings):
     assert main.notified == []
 
 
-def test_retention_removes_old_runs_with_their_log_and_files(settings):
+def test_retention_removes_old_runs_with_their_log(settings):
     from datetime import timedelta
 
     from common.storage.models import RunLog
@@ -210,17 +210,48 @@ def test_retention_removes_old_runs_with_their_log_and_files(settings):
         db.add(RunLog(run_id="run_old", task_id="t", seq=1, kind="start", data={}))
         db.commit()
 
-    outputs = settings.storage.outputs_dir / "run_old"
-    outputs.mkdir(parents=True)
-    (outputs / "report.docx").write_text("x")
-
     assert sweep(settings) == 1
 
     with session() as db:
         assert [r.id for r in db.query(Run)] == ["run_new"]
         assert db.query(RunLog).count() == 0
 
-    assert not outputs.exists()
+
+def test_old_output_folders_go_whoever_made_them(settings):
+    """Runs' and chats' files alike: a folder nothing changed in for RETENTION_DAYS."""
+    import os
+    import time
+
+    from executor.outputs import sweep
+
+    outputs = settings.storage.outputs_dir
+    for name in ("run_old", "ses_old", "run_new"):
+        (outputs / name).mkdir(parents=True)
+        (outputs / name / "report.docx").write_text("x")
+
+    month_ago = time.time() - 30 * 86400
+    for name in ("run_old", "ses_old"):
+        for path in (outputs / name / "report.docx", outputs / name):
+            os.utime(path, (month_ago, month_ago))
+
+    assert sweep(settings.storage) == 2
+    assert sorted(p.name for p in outputs.iterdir()) == ["run_new"]
+
+
+def test_old_events_go(settings):
+    from datetime import timedelta
+
+    from common.storage.models import Event
+    from common.utils import utcnow
+    from main import events
+
+    with session() as db:
+        db.add(Event(type="run.finished", payload={}, created_at=utcnow() - timedelta(days=30)))
+        db.add(Event(type="run.finished", payload={}))
+        db.commit()
+
+    assert events.sweep(settings.storage) == 1
+    assert len(events.recent()) == 1
 
 
 async def test_runs_endpoint_creates_and_executes_a_run(settings):

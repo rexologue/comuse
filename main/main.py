@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI
 
+from common.retention import sweep_forever
 from common.service import create_service_app
 from main.api import approvals as approvals_api
 from main.api import gateway as gateway_api
 from main.api import internal as internal_api
 from main.api import tasks as tasks_api
+from main import events
 from main.events import EventBus
 from main.orchestrator import Orchestrator
 from main.registry import ServiceRegistry
@@ -30,10 +33,14 @@ async def lifespan(app: FastAPI):
     # Long read timeout: a chat turn may run several LLM calls and tools.
     app.state.http = httpx.AsyncClient(timeout=httpx.Timeout(900, connect=5), trust_env=False)
 
+    sweeper = asyncio.create_task(sweep_forever("events", lambda: events.sweep(settings.storage)))
+
     try:
         yield
 
     finally:
+        sweeper.cancel()
+        await asyncio.gather(sweeper, return_exceptions=True)
         await app.state.http.aclose()
         await registry.close()
 

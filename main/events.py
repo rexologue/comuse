@@ -6,6 +6,8 @@ import asyncio
 import logging
 from typing import Any
 
+from common.retention import cutoff
+from common.settings import StorageSettings
 from common.storage.db import session
 from common.storage.models import Event
 
@@ -48,6 +50,15 @@ class EventBus:
 
     def unsubscribe(self, queue: asyncio.Queue) -> None:
         self._subscribers.discard(queue)
+
+
+def sweep(storage: StorageSettings) -> int:
+    """Events older than RETENTION_DAYS go; a client replays only recent ones anyway."""
+    with session() as db:
+        removed = db.query(Event).filter(Event.created_at < cutoff(storage)).delete(synchronize_session=False)
+        db.commit()
+
+    return removed
 
 
 def recent(since: int | None = None, limit: int = 100) -> list[dict[str, Any]]:

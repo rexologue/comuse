@@ -12,7 +12,8 @@ from common.storage.models import Run
 from common.utils import utcnow
 from runner.api import runs as runs_api
 from runner.engine import RunEngine
-from runner.retention import sweep_forever
+from common.retention import sweep_forever
+from runner.retention import sweep
 
 
 log = logging.getLogger("runner")
@@ -40,7 +41,7 @@ async def lifespan(app: FastAPI):
     _close_interrupted_runs()
 
     app.state.engine = RunEngine(app.state.main)
-    app.state.background = {asyncio.create_task(sweep_forever(app.state.settings))}
+    app.state.background = {asyncio.create_task(sweep_forever("runs", lambda: sweep(app.state.settings)))}
 
     try:
         yield

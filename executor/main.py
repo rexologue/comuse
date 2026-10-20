@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -7,9 +8,11 @@ from fastapi import FastAPI
 
 from common.clients.llm_client import LLMClient
 from common.errors import ApiError
+from common.retention import sweep_forever
 from common.service import create_service_app
 from executor.api import accounts as accounts_api
 from executor.api import execute as execute_api
+from executor.outputs import sweep as sweep_outputs
 from executor.registry import ToolRegistry
 from executor.runtime import ExecutorRuntime
 from executor.secrets import SecretStore
@@ -45,10 +48,14 @@ async def lifespan(app: FastAPI):
     app.state.secrets = secrets
     app.state.runtime = ExecutorRuntime(settings, registry, secrets, llm)
 
+    sweeper = asyncio.create_task(sweep_forever("output folders", lambda: sweep_outputs(settings.storage)))
+
     try:
         yield
 
     finally:
+        sweeper.cancel()
+        await asyncio.gather(sweeper, return_exceptions=True)
         await llm.close()
 
 

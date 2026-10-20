@@ -38,6 +38,8 @@ class ServiceSettings:
 class StorageSettings:
     data_dir: Path
     workspace_dir: Path
+    # Runs and their logs, files under data:outputs and events older than this go.
+    retention_days: int
 
     @property
     def db_path(self) -> Path:
@@ -84,12 +86,6 @@ class CompilerSettings:
 
 
 @dataclass(slots=True, frozen=True)
-class RunnerSettings:
-    # Finished runs older than this go, with their log and data:outputs/<run_id>.
-    retention_days: int
-
-
-@dataclass(slots=True, frozen=True)
 class ExecutorSettings:
     tool_timeout: int
     keyring_backend: str
@@ -103,7 +99,6 @@ class Settings:
     llm: LLMSettings
     agent: AgentSettings
     compiler: CompilerSettings
-    runner: RunnerSettings
     executor: ExecutorSettings
 
     @classmethod
@@ -233,12 +228,12 @@ class Settings:
 
 
         # -----------------------------
-        # RUNNER
+        # RETENTION (runs, output files, events)
         # -----------------------------
 
-        runner_retention_days = int_coercion(
-            os.environ.get("RUN_RETENTION_DAYS", "15"),
-            "RUN_RETENTION_DAYS",
+        retention_days = int_coercion(
+            os.environ.get("RETENTION_DAYS", "15"),
+            "RETENTION_DAYS",
             low=1,
         )
 
@@ -274,6 +269,7 @@ class Settings:
             storage=StorageSettings(
                 data_dir=data_dir,
                 workspace_dir=workspace_dir,
+                retention_days=retention_days,
             ),
             llm=LLMSettings(
                 base_url=llm_base_url,
@@ -295,9 +291,6 @@ class Settings:
             ),
             compiler=CompilerSettings(
                 max_attempts=compiler_max_attempts,
-            ),
-            runner=RunnerSettings(
-                retention_days=runner_retention_days,
             ),
             executor=ExecutorSettings(
                 tool_timeout=executor_tool_timeout,
