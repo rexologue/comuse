@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from sqlalchemy import func
+
 from common.errors import ApiError
 from common.storage.db import session
 from common.storage.models import ChatMessage, ChatSession, TraceEvent
@@ -60,17 +62,23 @@ def add_message(
 
 
 def llm_history(session_id: str, limit: int) -> list[dict[str, Any]]:
-    """Last `limit` messages as OpenAI messages, never starting mid tool-exchange."""
+    """Last `limit` messages as OpenAI messages, never starting mid tool-exchange. The
+    current turn always stays whole, from the user's message on, however many tool calls
+    it has taken: cutting it would leave the model without the request it is working on."""
     with session() as db:
-        rows = (
-            db.query(ChatMessage)
-            .filter(ChatMessage.session_id == session_id)
-            .order_by(ChatMessage.id.desc())
-            .limit(limit)
-            .all()
+        messages = db.query(ChatMessage).filter(ChatMessage.session_id == session_id)
+
+        rows = messages.order_by(ChatMessage.id.desc()).limit(limit).all()
+        rows.reverse()
+
+        last_user = (
+            db.query(func.max(ChatMessage.id))
+            .filter(ChatMessage.session_id == session_id, ChatMessage.role == "user")
+            .scalar()
         )
 
-    rows.reverse()
+        if last_user is not None and (not rows or rows[0].id > last_user):
+            rows = messages.filter(ChatMessage.id >= last_user).order_by(ChatMessage.id).all()
 
     # A window that starts with tool results (or the call that produced them) would
     # be rejected by the API; drop until the first user message.
