@@ -168,11 +168,10 @@ class Settings:
 
         llm_embed_base_url = (os.environ.get("LLM_EMBED_BASE_URL") or llm_base_url).rstrip("/")
 
-        # A separate embeddings server never inherits the chat server's key.
-        if "LLM_EMBED_API_KEY" in os.environ:
-            llm_embed_api_key = os.environ["LLM_EMBED_API_KEY"]
-        else:
-            llm_embed_api_key = llm_api_key if llm_embed_base_url == llm_base_url else ""
+        # Empty means unset, as for every other variable here (the .env templates ship it
+        # empty): the chat server's key then serves embeddings on that same server, and a
+        # separate embeddings server never inherits it.
+        llm_embed_api_key = os.environ.get("LLM_EMBED_API_KEY") or (llm_api_key if llm_embed_base_url == llm_base_url else "")
 
         # low | medium | high for reasoning models; empty = the field is not sent.
         llm_chat_reasoning_effort = os.environ.get("LLM_CHAT_REASONING_EFFORT", "").strip().lower()

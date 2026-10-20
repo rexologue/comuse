@@ -78,3 +78,21 @@ def test_separate_embeddings_server_does_not_get_the_chat_key(env, monkeypatch):
     s = Settings.from_env("agent_loop")
 
     assert (s.llm.embed_base_url, s.llm.embed_api_key) == ("http://old-server/v1", "")
+
+
+def test_an_empty_embeddings_key_means_unset(env, monkeypatch):
+    """The .env templates ship LLM_EMBED_API_KEY= empty: the same server keeps its key."""
+    monkeypatch.setenv("LLM_BASE_URL", "https://chat/v1")
+    monkeypatch.setenv("LLM_API_KEY", "secret")
+    monkeypatch.setenv("LLM_EMBED_API_KEY", "")
+    s = Settings.from_env("agent_loop")
+
+    assert s.llm.embed_api_key == "secret"
+
+
+def test_an_embeddings_key_of_its_own_wins(env, monkeypatch):
+    monkeypatch.setenv("LLM_API_KEY", "secret")
+    monkeypatch.setenv("LLM_EMBED_API_KEY", "other")
+    s = Settings.from_env("agent_loop")
+
+    assert s.llm.embed_api_key == "other"
