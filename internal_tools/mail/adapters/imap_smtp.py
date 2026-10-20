@@ -30,6 +30,10 @@ _DEFAULT_PORTS = {
 }
 _LIST_RE = re.compile(r'\((?P<flags>[^)]*)\) "(?P<sep>[^"]*)" (?P<name>.+)')
 _UTF7_RE = re.compile(r"&([^-]*)-")
+_FETCH_UID_RE = re.compile(rb"\bUID (\d+)")
+
+# Message headers fetched per IMAP round trip while searching.
+_HEADERS_BATCH = 50
 
 
 def connection_security(config: dict[str, Any], protocol: str) -> str:
@@ -86,33 +90,54 @@ def search(
         if status != "OK":
             raise ToolError(f"Поиск в почте не удался: {data}")
 
-        uids = [int(u) for u in data[0].split()]
+        newest_first = [int(u) for u in reversed(data[0].split())]
         found: list[dict[str, Any]] = []
 
-        # Newest first. Sender and subject are matched here, on decoded headers: servers
-        # disagree on FROM/SUBJECT search (substring or not, non-ASCII or not).
-        for uid in reversed(uids):
-            if len(found) >= limit:
-                break
+        # Sender and subject are matched here, on decoded headers: servers disagree on
+        # FROM/SUBJECT search (substring or not, non-ASCII or not). Headers come in
+        # batches: one round trip per message is minutes on a big mailbox.
+        for start in range(0, len(newest_first), _HEADERS_BATCH):
+            batch = newest_first[start : start + _HEADERS_BATCH]
+            headers = _fetch_headers(imap, batch)
 
-            status, parts = imap.uid("FETCH", str(uid), "(BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE)])")
-            if status != "OK" or not parts or parts[0] is None:
-                continue
+            for uid in batch:
+                if uid not in headers:
+                    continue
 
-            headers = message_from_bytes(parts[0][1], policy=policy.default)
-            item = {
-                "uid": uid,
-                "from": _header(headers, "From"),
-                "from_email": address_of(_header(headers, "From")),
-                "to": _header(headers, "To"),
-                "subject": _header(headers, "Subject"),
-                "date": _iso_date(headers.get("Date")),
-            }
+                item = _header_item(uid, headers[uid])
+                if matches(item, sender=sender, subject=subject, sender_in=sender_in):
+                    found.append(item)
 
-            if matches(item, sender=sender, subject=subject, sender_in=sender_in):
-                found.append(item)
+                if len(found) >= limit:
+                    return found
 
     return found
+
+
+def _fetch_headers(imap: imaplib.IMAP4, uids: list[int]) -> dict[int, bytes]:
+    status, parts = imap.uid("FETCH", ",".join(map(str, uids)), "(UID BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE)])")
+    if status != "OK":
+        return {}
+
+    headers: dict[int, bytes] = {}
+    for part in parts or []:
+        if isinstance(part, tuple) and (match := _FETCH_UID_RE.search(part[0])):
+            headers[int(match.group(1))] = part[1]
+
+    return headers
+
+
+def _header_item(uid: int, raw: bytes) -> dict[str, Any]:
+    headers = message_from_bytes(raw, policy=policy.default)
+
+    return {
+        "uid": uid,
+        "from": _header(headers, "From"),
+        "from_email": address_of(_header(headers, "From")),
+        "to": _header(headers, "To"),
+        "subject": _header(headers, "Subject"),
+        "date": _iso_date(headers.get("Date")),
+    }
 
 
 def matches(item: dict[str, Any], *, sender: str | None, subject: str | None, sender_in: list[str] = ()) -> bool:

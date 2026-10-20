@@ -210,3 +210,44 @@ async def test_send_follows_the_task_mail_settings(monkeypatch, mode, task_setti
     out = await send(Input(account="work", to=["boss@company.local"], subject="s", body="b"), _send_context(mode, task_settings, draft=draft))
 
     assert out.mode == expected
+
+
+class FakeMailbox:
+    """INBOX with uids 1..n; every third letter comes from the company."""
+
+    capabilities = ()
+
+    def __init__(self, count):
+        self.count = count
+        self.fetches: list[str] = []
+
+
+    def select(self, folder, readonly=False):
+        return "OK", [str(self.count).encode()]
+
+
+    def uid(self, command, *args):
+        if command == "SEARCH":
+            return "OK", [" ".join(str(u) for u in range(1, self.count + 1)).encode()]
+
+        self.fetches.append(args[0])
+        parts = []
+        # Servers answer in their own order, not the order asked.
+        for uid in sorted(int(u) for u in args[0].split(",")):
+            sender = "boss@company.ru" if uid % 3 == 0 else f"user{uid}@other.ru"
+            raw = f"From: {sender}\r\nTo: agent@company.ru\r\nSubject: Письмо {uid}\r\n\r\n".encode()
+            parts += [(f"{uid} (UID {uid} BODY[HEADER.FIELDS (FROM TO SUBJECT DATE)] {{{len(raw)}}}".encode(), raw), b")"]
+
+        return "OK", parts
+
+
+def test_search_fetches_headers_in_batches_newest_first(monkeypatch):
+    box = FakeMailbox(500)
+    monkeypatch.setattr(imap_smtp._imap, "__enter__", lambda self: box)
+    monkeypatch.setattr(imap_smtp._imap, "__exit__", lambda self, *exc: None)
+
+    found = imap_smtp.search({}, "", folder="INBOX", sender=None, subject=None, since=None, unseen=False, limit=20, sender_in=["*@company.ru"])
+
+    assert [item["uid"] for item in found][:3] == [498, 495, 492]
+    assert len(found) == 20 and all(item["from_email"] == "boss@company.ru" for item in found)
+    assert len(box.fetches) == 2
