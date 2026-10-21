@@ -9,9 +9,9 @@ import time
 from typing import Any
 
 from common import tunables
-from common.clients.llm_client import LLMClient
 from common.clients.main_client import MainClient
 from common.errors import ApiError
+from common.llm import Role
 
 
 log = logging.getLogger("catalog")
@@ -24,15 +24,16 @@ _EMBED_BACKOFF_SEC = 300
 
 
 class ToolCatalog:
-    def __init__(self, main: MainClient, llm: LLMClient, embed_model: str):
+    def __init__(self, main: MainClient, embed: Role):
 
-        self.main        = main
-        self.llm         = llm
-        self.embed_model = embed_model
+        self.main  = main
+        self.embed = embed
 
         self._manifests: dict[str, dict[str, Any]] = {}
         self._loaded_at = 0.0
         self._vectors: dict[str, list[float]] = {}
+        # Which embeddings endpoint made the vectors: another model's are not comparable.
+        self._vectors_by: tuple | None = None
         self._embed_down_until = 0.0
 
 
@@ -54,8 +55,13 @@ class ToolCatalog:
         top_k = tunables.get("agent_tools_top_k")
 
         # Without an embeddings model (or with few tools) the model simply sees them all.
-        if not self.embed_model or len(manifests) <= top_k or time.monotonic() < self._embed_down_until:
+        endpoint = self.embed.endpoint()
+        if endpoint is None or len(manifests) <= top_k or time.monotonic() < self._embed_down_until:
             return list(manifests.values())
+
+        endpoint_id = (endpoint.provider, endpoint.version, endpoint.base_url, endpoint.model)
+        if endpoint_id != self._vectors_by:
+            self._vectors, self._vectors_by = {}, endpoint_id
 
         try:
             ranked = await self._rank(query, manifests)
@@ -84,10 +90,10 @@ class ToolCatalog:
         missing = [name for name in manifests if name not in self._vectors]
         if missing:
             texts = [_tool_text(manifests[name]) for name in missing]
-            vectors = await self.llm.embed(texts, model=self.embed_model)
+            vectors = await self.embed.embed(texts)
             self._vectors.update(zip(missing, vectors))
 
-        [query_vector] = await self.llm.embed([query], model=self.embed_model)
+        [query_vector] = await self.embed.embed([query])
 
         scores = {name: _cosine(query_vector, self._vectors[name]) for name in manifests}
 

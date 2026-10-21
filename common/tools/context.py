@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar
 
 if TYPE_CHECKING:
-    from common.clients.llm_client import LLMClient
+    from common.llm import Role
     from common.settings import Settings
     from common.tools.domain import DomainSettings
 
@@ -44,7 +44,9 @@ class ToolContext:
     mode: Literal["chat", "run"]
     settings: Settings
     paths: PathResolver
-    llm: LLMClient
+    # The instruct role (common/llm.py): resolved on each call, so a tool that never
+    # asks the model works without one.
+    llm: Role
     session_id: str | None = None
     run_id: str | None = None
     step_key: str | None = None

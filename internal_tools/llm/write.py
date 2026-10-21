@@ -27,12 +27,11 @@ class WriteOutput(ToolOutput):
 async def write(inp: WriteInput, ctx: ToolContext) -> WriteOutput:
     context = await gather_text(inp.context, ctx, limit=30000) if inp.context is not None else ""
 
-    message = await ctx.llm.chat(
+    message = await ctx.llm.complete(
         [
             {"role": "system", "content": "Пиши по-русски, деловым и простым языком. Верни только сам текст."},
             {"role": "user", "content": f"{inp.instruction}\n\n{('Данные:\n' + context) if context else ''}"},
         ],
-        model=ctx.settings.llm.model_instruct,
     )
 
     if not message["content"]:

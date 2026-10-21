@@ -13,9 +13,9 @@ import jsonpatch
 import jsonpointer
 
 from common import tunables
-from common.clients.llm_client import LLMClient
 from common.clients.main_client import MainClient
 from common.errors import ApiError
+from common.llm import LLM
 from common.schemas.task import TaskSpec
 from common.settings import Settings
 from common.storage.db import session
@@ -33,7 +33,7 @@ _CATALOG_TTL_SEC = 60
 
 
 class Compiler:
-    def __init__(self, settings: Settings, llm: LLMClient, main: MainClient):
+    def __init__(self, settings: Settings, llm: LLM, main: MainClient):
 
         self.settings = settings
         self.llm      = llm
@@ -96,14 +96,12 @@ class Compiler:
             return spec
 
         # Compiling is multi-step reasoning over the whole chat, so it uses the chat model.
-        return await self.llm.structured(
+        return await self.llm.chat.structured(
             messages,
-            model=self.settings.llm.model_chat,
             schema=TaskSpec.model_json_schema(by_alias=True),
             name="task_spec",
             validate=validate,
             attempts=tunables.get("compiler_max_attempts"),
-            reasoning_effort=self.settings.llm.chat_reasoning_effort or None,
         )
 
 
@@ -122,14 +120,12 @@ class Compiler:
 
             return data, validate_spec(patched, catalog)
 
-        result, spec = await self.llm.structured(
+        result, spec = await self.llm.chat.structured(
             messages,
-            model=self.settings.llm.model_chat,
             schema=prompts.PATCH_SCHEMA,
             name="task_patch",
             validate=validate,
             attempts=tunables.get("compiler_max_attempts"),
-            reasoning_effort=self.settings.llm.chat_reasoning_effort or None,
         )
 
         return self._new_version(

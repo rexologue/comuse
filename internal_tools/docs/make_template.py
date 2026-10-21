@@ -158,7 +158,6 @@ async def _ask_markup(ctx: ToolContext, outline: dict[str, Any], hint: str) -> d
 
     return await ctx.llm.structured(
         [{"role": "user", "content": prompt}],
-        model=ctx.settings.llm.model_instruct,
         schema=_MARKUP_SCHEMA,
         name="template_markup",
         validate=validate,

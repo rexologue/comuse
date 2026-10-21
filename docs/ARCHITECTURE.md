@@ -57,7 +57,7 @@ agent-loop    compiler        runner        executor      scheduler
 
 | Сервис | Порт | Что делает | Пишет в таблицы |
 | --- | --- | --- | --- |
-| `main` | 8000 | Единственная точка входа: внешний API, реестр сервисов, прокси к ним, одобрения версий задач, уведомления запусков в чат, поток событий, рабочие настройки, миграции базы | `approvals`, `events`, `settings` |
+| `main` | 8000 | Единственная точка входа: внешний API, реестр сервисов, прокси к ним, одобрения версий задач, уведомления запусков в чат, поток событий, рабочие настройки, провайдеры LLM, миграции базы | `approvals`, `events`, `settings`, `llm_providers` |
 | `agent_loop` | 8001 | Чат в формате OpenAI: история, отбор команд, вызовы LLM, вопросы перед действиями, мета-инструменты | `chat_sessions`, `chat_messages`, `trace_events` |
 | `compiler` | 8002 | Чат → задача, проверки по каталогу, правки словами (LLM) и вручную, статусы задач, настройки задач | `tasks`, `task_versions` |
 | `runner` | 8003 | Исполнение версии задачи по шагам, журнал запуска, отмена | `runs`, `run_log` |
@@ -66,7 +66,8 @@ agent-loop    compiler        runner        executor      scheduler
 
 Подробно о каждом — в отдельных справочниках: чат — [CHAT.md](CHAT.md), сборка и
 правка задач — [TASKS.md](TASKS.md), scheduler и runner — [RUNS.md](RUNS.md),
-executor и команды — [TOOLS.md](TOOLS.md), таблицы — [DATABASE.md](DATABASE.md).
+executor и команды — [TOOLS.md](TOOLS.md), модели — [LLM.md](LLM.md), таблицы —
+[DATABASE.md](DATABASE.md).
 
 ## Связь через main
 
@@ -115,7 +116,7 @@ main/
   events.py          шина событий: таблица events и подписчики SSE
   views.py           чтение задач и запусков для API
   auth.py            токен внешнего API
-  api/               gateway (чат, каталог, аккаунты), tasks, approvals (и события), settings, internal
+  api/               gateway (чат, каталог, аккаунты), tasks, approvals (и события), settings, llm, internal
 agent_loop/
   loop.py            ход чата: LLM, команды, вопросы, подтверждения
   history.py         сессии, сообщения, трейс; окно истории для модели; поиск чата по переписке
@@ -137,7 +138,6 @@ runner/
 executor/
   runtime.py         конвейер вызова команды
   paths.py           песочница путей
-  secrets.py         хранилище паролей
   outputs.py         удаление старых файлов результатов
   registry.py        каталог команд из internal_tools/
   api/               execute и каталог, accounts
@@ -146,6 +146,8 @@ scheduler/
 common/
   settings.py        настройки для запуска: из окружения
   tunables.py        рабочие настройки: окружение → таблица settings → по умолчанию
+  llm.py             роли моделей: какой провайдер и модель отвечают сейчас
+  secrets.py         хранилища секретов: пароли аккаунтов и ключи LLM
   service.py         каркас сервиса: логи, БД, регистрация, токен, /health
   templating.py      шаблоны задач: Jinja-песочница и фильтры дат
   documents.py       текст из docx, xlsx, pdf, txt

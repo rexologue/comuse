@@ -20,7 +20,8 @@ uv sync --extra dev
 cp .env.example .env
 ```
 
-В `.env` укажите как минимум `LLM_BASE_URL` и `LLM_MODEL`. Рабочую папку с документами
+В `.env` укажите `LLM_BASE_URL` и `LLM_MODEL` — или оставьте `LLM_*` пустыми и
+подключите модель после запуска через `POST /llm/providers` (см. [LLM.md](LLM.md)). Рабочую папку с документами
 пользователя задайте в `WORKSPACE_DIR` (на Windows, например,
 `C:/Users/<имя>/Documents`) или потом через `PATCH /settings` (см.
 [SETTINGS.md](SETTINGS.md)).
@@ -65,7 +66,7 @@ executor.
 - сервисы слушают `127.0.0.1` на портах 8000–8005 (main, agent_loop, compiler, runner,
   executor, scheduler); снаружи нужен только main.
 
-Пароли аккаунтов локально хранятся в системном хранилище: Windows Credential Manager,
+Пароли аккаунтов и ключи провайдеров LLM локально хранятся в системном хранилище: Windows Credential Manager,
 macOS Keychain или Secret Service в Linux (`KEYRING_BACKEND=system`). Если его нет
 (сервер без графической сессии), используйте файл: `KEYRING_BACKEND=file` и
 `KEYRING_PASSWORD`.
@@ -112,7 +113,7 @@ docker compose -f deploy/docker-compose.yaml up -d --build
 
 Настройки для запуска читает `Settings.from_env()` (`common/settings.py`). Неверное
 значение останавливает сервис при старте с понятной ошибкой, а не всплывает позже.
-Обязательна только `LLM_MODEL`.
+Обязательных переменных нет.
 
 Рабочие настройки (рабочая папка, сроки хранения, параметры агента, таймаут команд)
 меняются через API — см. [SETTINGS.md](SETTINGS.md). Их тоже можно задать переменной
@@ -135,7 +136,7 @@ docker compose -f deploy/docker-compose.yaml up -d --build
 
 | Переменная | Значение | По умолчанию |
 | --- | --- | --- |
-| `DATA_DIR` | `app.db`, `templates/`, `outputs/`, `secrets.enc`, `backups/` | `data` |
+| `DATA_DIR` | `app.db`, `templates/`, `outputs/`, `secrets.enc`, `llm_keys.enc`, `backups/` | `data` |
 
 **LLM**
 
@@ -144,7 +145,7 @@ docker compose -f deploy/docker-compose.yaml up -d --build
 | `LLM_BASE_URL` | OpenAI-совместимый `/v1` с вызовом инструментов | `http://127.0.0.1:11434/v1` |
 | `LLM_API_KEY` | Ключ; пусто — без заголовка `Authorization` | не задано |
 | `LLM_NO_PROXY` | Не брать прокси из окружения (`HTTP(S)_PROXY`) | `true` |
-| `LLM_MODEL` | **Обязательная.** Модель на всё | не задано |
+| `LLM_MODEL` | Модель на всё. Задана — все роли берутся из `LLM_*`, а провайдеры из API не используются; пусто — остальные `LLM_*` не читаются (см. [LLM.md](LLM.md)) | не задано |
 | `LLM_MODEL_CHAT` | Агент в чате и сборка задач | `LLM_MODEL` |
 | `LLM_MODEL_INSTRUCT` | Команды `llm.*` и разметка шаблонов | `LLM_MODEL` |
 | `LLM_CHAT_REASONING_EFFORT` | `low`, `medium` или `high` для reasoning-моделей; пусто — не отправляется | не задано |
@@ -158,8 +159,8 @@ docker compose -f deploy/docker-compose.yaml up -d --build
 
 | Переменная | Значение | По умолчанию |
 | --- | --- | --- |
-| `KEYRING_BACKEND` | `system` — системное хранилище, `file` — `DATA_DIR/secrets.enc` | `system` |
-| `KEYRING_PASSWORD` | Ключ к `secrets.enc`; обязателен для `file` | не задано |
+| `KEYRING_BACKEND` | `system` — системное хранилище, `file` — файлы `DATA_DIR/secrets.enc` (пароли аккаунтов) и `DATA_DIR/llm_keys.enc` (ключи провайдеров LLM) | `system` |
+| `KEYRING_PASSWORD` | Ключ к этим файлам; обязателен для `file` | не задано |
 
 **Только Docker** (`deploy/.env`)
 

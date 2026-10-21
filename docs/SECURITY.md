@@ -45,15 +45,21 @@
 
 ## Секреты
 
-Пароли аккаунтов читает только executor, и только в момент вызова команды, которая
-объявила аргумент аккаунта в `secrets`.
+Секретов два вида, и хранятся они раздельно, у каждого хранилища один сервис, который
+в него пишет (`common/secrets.py`):
+
+| Хранилище | Что | Пишет | Читает | Служба в системном хранилище | Файл |
+| --- | --- | --- | --- | --- | --- |
+| пароли аккаунтов | почта и другие аккаунты команд | executor | executor, в момент вызова команды, которая объявила аргумент аккаунта в `secrets` | `fintech2026`, ключ `account:<имя>` | `secrets.enc` |
+| ключи LLM | ключи провайдеров из `/llm/providers` | main | agent-loop, compiler, executor — когда строят клиент провайдера | `fintech2026-llm`, ключ — id провайдера | `llm_keys.enc` |
 
 - `KEYRING_BACKEND=system` — системное хранилище: Windows Credential Manager, macOS
-  Keychain, Secret Service (служба `fintech2026`, ключ `account:<имя>`).
-- `KEYRING_BACKEND=file` — файл `DATA_DIR/secrets.enc`, зашифрованный Fernet ключом из
+  Keychain, Secret Service.
+- `KEYRING_BACKEND=file` — файлы в `DATA_DIR`, зашифрованные Fernet ключом из
   `KEYRING_PASSWORD` (scrypt, новая соль при каждой записи). Так работает Docker.
-- В базе у аккаунта только `secret_ref` — ключ записи; `GET /accounts` пароль не отдаёт.
+- В базе у аккаунта только `secret_ref` — ключ записи, у провайдера — признак
+  `has_key`. Ни `GET /accounts`, ни `GET /llm` секретов не отдают.
 
-Ключ к LLM, если он нужен, задаётся `LLM_API_KEY`; его читает только клиент LLM.
+Ключ LLM из окружения (`LLM_API_KEY`, `LLM_EMBED_API_KEY`) читает только клиент LLM.
 Настоящие значения — только в `.env` и `deploy/.env`, которые в git не попадают;
 шаблоны `.env.example` содержат лишь заглушки.

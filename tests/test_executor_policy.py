@@ -6,6 +6,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from common.llm import LLM
 from common.schemas.execution import ExecContext, ExecuteRequest
 from common.schemas.task import TaskSpec
 from common.tools import discover
@@ -43,7 +44,7 @@ def _runtime(settings):
     runtime.settings = settings
     runtime.registry = _Registry()
     runtime.secrets = None
-    runtime.llm = None
+    runtime.llm = LLM(settings)
 
     return runtime
 

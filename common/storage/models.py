@@ -51,6 +51,32 @@ class Setting(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
+class LLMProvider(Base):
+    """An OpenAI-compatible server and the models it serves per role (common/llm.py).
+    Its key is in the LLM keys store, under the provider's id."""
+
+    __tablename__ = "llm_providers"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String, unique=True)
+    base_url: Mapped[str] = mapped_column(String)
+    has_key: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Ignore HTTP(S)_PROXY from the environment.
+    no_proxy: Mapped[bool] = mapped_column(Boolean, default=True)
+    timeout_sec: Mapped[int] = mapped_column(Integer, default=300)
+    max_retries: Mapped[int] = mapped_column(Integer, default=2)
+    # Empty: a provider for embeddings only; it cannot be the current one.
+    model_chat: Mapped[str | None] = mapped_column(String)
+    # Empty: the chat model serves this role too.
+    model_instruct: Mapped[str | None] = mapped_column(String)
+    # Empty: no embeddings from this provider.
+    model_embed: Mapped[str | None] = mapped_column(String)
+    # low | medium | high for the chat model; empty = not sent.
+    reasoning_effort: Mapped[str | None] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 # -----------------------------
 # AGENT LOOP
 # -----------------------------

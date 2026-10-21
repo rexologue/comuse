@@ -60,7 +60,6 @@ async def extract(inp: ExtractInput, ctx: ToolContext) -> ExtractOutput:
             },
             {"role": "user", "content": f"Задача: {inp.instruction}\n\nДанные:\n{text}"},
         ],
-        model=ctx.settings.llm.model_instruct,
         schema=inp.output_schema,
         name="extract",
         validate=validate,

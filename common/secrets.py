@@ -1,5 +1,9 @@
 """Secret storage: the OS keyring (Windows Credential Manager, macOS Keychain,
-Secret Service) or, in containers, an encrypted file inside DATA_DIR."""
+Secret Service) or, in containers, an encrypted file inside DATA_DIR.
+
+Two separate stores, each with one writer: account passwords (the executor; they never
+leave it) and LLM provider keys (main writes them, the services that call the LLM read
+them)."""
 
 from __future__ import annotations
 
@@ -15,35 +19,47 @@ from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 from keyring.errors import KeyringError
 
 from common.errors import ApiError
-from common.settings import ExecutorSettings, StorageSettings
+from common.settings import Settings
 
 
 log = logging.getLogger("secrets")
 
-KEYRING_SERVICE = "fintech2026"
-
-
 class SecretStore:
-    def __init__(self, backend: str, file_path: Path, password: str):
+    def __init__(self, backend: str, service: str, file_path: Path, password: str):
 
         self.backend   = backend
+        # The keyring's service name; with the file backend, its own file.
+        self.service   = service
         self.file_path = file_path
         self.password  = password
 
 
     @classmethod
-    def from_settings(cls, es: ExecutorSettings, ss: StorageSettings) -> SecretStore:
+    def accounts(cls, settings: Settings) -> SecretStore:
+        """Account passwords: written and read by the executor only."""
+        return cls._of(settings, "fintech2026", "secrets.enc")
+
+
+    @classmethod
+    def llm_keys(cls, settings: Settings) -> SecretStore:
+        """LLM provider keys: written by main, read wherever the LLM is called."""
+        return cls._of(settings, "fintech2026-llm", "llm_keys.enc")
+
+
+    @classmethod
+    def _of(cls, settings: Settings, service: str, file_name: str) -> SecretStore:
         return cls(
-            backend=es.keyring_backend,
-            file_path=ss.data_dir / "secrets.enc",
-            password=es.keyring_password,
+            backend=settings.secrets.keyring_backend,
+            service=service,
+            file_path=settings.storage.data_dir / file_name,
+            password=settings.secrets.keyring_password,
         )
 
 
     def set(self, key: str, value: str) -> None:
         if self.backend == "system":
             try:
-                keyring.set_password(KEYRING_SERVICE, key, value)
+                keyring.set_password(self.service, key, value)
                 return
 
             except KeyringError as e:
@@ -61,7 +77,7 @@ class SecretStore:
     def get(self, key: str) -> str | None:
         if self.backend == "system":
             try:
-                return keyring.get_password(KEYRING_SERVICE, key)
+                return keyring.get_password(self.service, key)
 
             except KeyringError as e:
                 raise ApiError(status_code=503, message="System keyring is unavailable", details={"error": repr(e)}) from e
@@ -72,7 +88,7 @@ class SecretStore:
     def delete(self, key: str) -> None:
         if self.backend == "system":
             try:
-                keyring.delete_password(KEYRING_SERVICE, key)
+                keyring.delete_password(self.service, key)
 
             except KeyringError:
                 pass

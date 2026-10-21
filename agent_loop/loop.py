@@ -15,9 +15,9 @@ from agent_loop.catalog import ToolCatalog, to_function
 from agent_loop.prompts import system_prompt
 from common.tools.guides import collect
 from common import tunables
-from common.clients.llm_client import LLMClient
 from common.clients.main_client import MainClient
 from common.errors import ApiError
+from common.llm import LLM, LLMNotConfigured
 from common.settings import Settings
 from common.tools import tool_name
 from common.utils import truncate
@@ -41,7 +41,7 @@ class TurnResult:
 
 
 class AgentLoop:
-    def __init__(self, settings: Settings, llm: LLMClient, main: MainClient, catalog: ToolCatalog):
+    def __init__(self, settings: Settings, llm: LLM, main: MainClient, catalog: ToolCatalog):
 
         self.settings = settings
         self.llm      = llm
@@ -56,6 +56,12 @@ class AgentLoop:
     async def run_turn(self, session_id: str | None, user_text: str) -> TurnResult:
         session_id = history.ensure_session(session_id, user_text)
         history.add_message(session_id, "user", user_text)
+
+        # Without a model there is no turn; the answer says how to connect one.
+        if self.llm.chat.endpoint() is None:
+            content = LLMNotConfigured("chat").message
+            history.add_message(session_id, "assistant", content)
+            return TurnResult(session_id=session_id, content=content)
 
         manifests = await self.catalog.select(user_text, always=history.used_tools(session_id))
         by_function = {m["function_name"]: m for m in manifests}
@@ -111,16 +117,9 @@ class AgentLoop:
     async def _complete(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> dict[str, Any]:
         """One model step. Ollama answers 500 when a model emits a malformed tool call;
         sampling again usually fixes it."""
-        llm = self.settings.llm
-
         for attempt in range(1, _MODEL_ATTEMPTS + 1):
             try:
-                return await self.llm.chat(
-                    messages,
-                    model=llm.model_chat,
-                    tools=tools,
-                    reasoning_effort=llm.chat_reasoning_effort or None,
-                )
+                return await self.llm.chat.complete(messages, tools=tools)
 
             except ApiError as e:
                 if e.status_code != 502 or attempt == _MODEL_ATTEMPTS:

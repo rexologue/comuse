@@ -20,8 +20,9 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 
 from common import tunables
-from common.clients.llm_client import LLMClient
+from common.llm import LLM
 from common.schemas.execution import ExecContext, ExecuteRequest, ExecuteResponse
+from common.secrets import SecretStore
 from common.settings import Settings
 from common.storage.db import session
 from common.storage.models import Account
@@ -29,7 +30,6 @@ from common.tools import Credential, ToolContext, ToolError, ToolSpec, path_refs
 from common.tools.context import PermissionDenied
 from executor.paths import WorkspacePaths
 from executor.registry import ToolRegistry
-from executor.secrets import SecretStore
 
 
 log = logging.getLogger("runtime")
@@ -41,7 +41,7 @@ class ExecutorRuntime:
         settings: Settings,
         registry: ToolRegistry,
         secrets: SecretStore,
-        llm: LLMClient,
+        llm: LLM,
     ):
 
         self.settings = settings
@@ -125,7 +125,7 @@ class ExecutorRuntime:
             mode=ctx.mode,
             settings=self.settings,
             paths=paths,
-            llm=self.llm,
+            llm=self.llm.instruct,
             session_id=ctx.session_id,
             run_id=ctx.run_id,
             step_key=ctx.step_key,

@@ -8,7 +8,6 @@ from typing import Any, Callable
 import httpx
 
 from common.errors import ApiError
-from common.settings import LLMSettings
 from common.utils import error_body, extract_json, strip_think, truncate
 
 
@@ -66,56 +65,23 @@ class LLMClient:
         return {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
 
 
-    @classmethod
-    def from_settings(cls, ls: LLMSettings) -> LLMClient:
-        return cls(
-            base_url=ls.base_url,
-            api_key=ls.api_key,
-            timeout=ls.timeout,
-            no_proxy=ls.no_proxy,
-            max_retries=ls.max_retries,
-        )
-
-
-    @classmethod
-    def embeddings_from_settings(cls, ls: LLMSettings) -> LLMClient:
-        """Client for the embeddings server, which may differ from the chat one."""
-        return cls(
-            base_url=ls.embed_base_url,
-            api_key=ls.embed_api_key,
-            timeout=ls.timeout,
-            no_proxy=ls.no_proxy,
-            max_retries=ls.max_retries,
-        )
-
-
     async def close(self) -> None:
         await self._client.aclose()
 
 
-    async def check_connection(self, required_models: list[str]) -> None:
-        """Verify the server answers and serves the configured models."""
+    async def models(self) -> list[str]:
+        """Model ids the server lists at /models."""
         data = await self._send("GET", self.models_route)
 
         try:
-            models = [model["id"] for model in data["data"]]
+            return [model["id"] for model in data["data"]]
 
         except (KeyError, TypeError) as e:
             raise ApiError(
-                status_code=422,
+                status_code=502,
                 message=f"Unexpected response structure from {self.models_route}",
                 details={"base_message": str(e)},
             ) from e
-
-        # Ollama lists `bge-m3:latest` but serves plain `bge-m3` too.
-        served = set(models) | {m.removesuffix(":latest") for m in models}
-        missing = [m for m in required_models if m not in served]
-        if missing:
-            raise ApiError(
-                status_code=404,
-                message=f"Models {missing} are not served at {self.base_url}",
-                details={"models": models},
-            )
 
 
     async def chat(

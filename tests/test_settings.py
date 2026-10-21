@@ -1,4 +1,4 @@
-"""Settings.from_env — required vars, role fallbacks, coercion and bounds."""
+"""Settings.from_env — role fallbacks, coercion and bounds."""
 
 from __future__ import annotations
 
@@ -33,11 +33,12 @@ def test_role_overrides(env, monkeypatch):
     assert (s.llm.model_chat, s.llm.model_instruct) == ("big", "fast")
 
 
-def test_llm_model_is_required(env, monkeypatch):
+def test_without_llm_model_the_environment_has_no_llm(env, monkeypatch):
+    """The LLM then comes from the providers configured through the API (common/llm.py)."""
     monkeypatch.delenv("LLM_MODEL")
+    monkeypatch.setenv("LLM_BASE_URL", "http://llm-host:8000/v1")
 
-    with pytest.raises(SettingsError):
-        Settings.from_env("main")
+    assert Settings.from_env("main").llm is None
 
 
 @pytest.mark.parametrize(
