@@ -25,11 +25,12 @@ log = logging.getLogger("tunables")
 @dataclass(slots=True, frozen=True)
 class Tunable:
     key: str
-    kind: str          # "int" | "dir"
+    kind: str          # "int" | "bool" | "choice" | "dir"
     default: Any
     description: str
     low: int | None = None
     high: int | None = None
+    choices: tuple[str, ...] | None = None
 
     @property
     def env(self) -> str:
@@ -40,6 +41,12 @@ class Tunable:
         """The value as code uses it; ValueError says what is wrong in words."""
         if self.kind == "dir":
             return _parse_dir(value)
+
+        if self.kind == "bool":
+            return _parse_bool(value)
+
+        if self.kind == "choice":
+            return _parse_choice(value, self.choices)
 
         return _parse_int(value, self.low, self.high)
 
@@ -65,6 +72,15 @@ TUNABLES = {
                 "Сколько попыток у компилятора собрать задачу, проходящую проверки", low=1),
         Tunable("tool_timeout_sec", "int", 300,
                 "Сколько секунд может выполняться одна команда", low=1),
+        Tunable("llm_timeout_sec", "int", 300,
+                "Сколько секунд ждать ответа LLM", low=1),
+        Tunable("llm_max_retries", "int", 2,
+                "Сколько раз повторить запрос к LLM при сетевом сбое", low=0),
+        Tunable("llm_no_proxy", "bool", True,
+                "Ходить к LLM напрямую, не через прокси из HTTP(S)_PROXY"),
+        Tunable("llm_chat_reasoning_effort", "choice", "",
+                "Глубина рассуждений модели роли chat (для reasoning-моделей); пусто — не отправляется",
+                choices=("", "low", "medium", "high")),
     )
 }
 
@@ -112,6 +128,7 @@ def describe() -> list[dict[str, Any]]:
             "type": tunable.kind,
             "min": tunable.low,
             "max": tunable.high,
+            "choices": list(tunable.choices) if tunable.choices else None,
             "description": tunable.description,
         })
 
@@ -156,6 +173,28 @@ def _parse_int(value: Any, low: int | None, high: int | None) -> int:
         raise ValueError(f"не больше {high}")
 
     return number
+
+
+def _parse_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+
+    if isinstance(value, str) and value.strip().lower() in ("1", "true", "yes", "on"):
+        return True
+
+    if isinstance(value, str) and value.strip().lower() in ("0", "false", "no", "off"):
+        return False
+
+    raise ValueError(f"нужно да или нет (true/false), а не {value!r}")
+
+
+def _parse_choice(value: Any, choices: tuple[str, ...]) -> str:
+    normalized = value.strip().lower() if isinstance(value, str) else value
+
+    if normalized not in choices:
+        raise ValueError(f"одно из {[c for c in choices if c]} или пусто")
+
+    return normalized
 
 
 def _parse_dir(value: Any) -> Path:

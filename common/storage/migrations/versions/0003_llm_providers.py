@@ -1,4 +1,4 @@
-"""LLM providers configured through the API."""
+"""LLM providers: one model at an OpenAI-compatible server each."""
 
 from __future__ import annotations
 
@@ -18,14 +18,8 @@ def upgrade() -> None:
     sa.Column('id', sa.String(), nullable=False),
     sa.Column('name', sa.String(), nullable=False),
     sa.Column('base_url', sa.String(), nullable=False),
+    sa.Column('model', sa.String(), nullable=False),
     sa.Column('has_key', sa.Boolean(), nullable=False),
-    sa.Column('no_proxy', sa.Boolean(), nullable=False),
-    sa.Column('timeout_sec', sa.Integer(), nullable=False),
-    sa.Column('max_retries', sa.Integer(), nullable=False),
-    sa.Column('model_chat', sa.String(), nullable=True),
-    sa.Column('model_instruct', sa.String(), nullable=True),
-    sa.Column('model_embed', sa.String(), nullable=True),
-    sa.Column('reasoning_effort', sa.String(), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
     sa.PrimaryKeyConstraint('id'),

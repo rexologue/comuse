@@ -36,7 +36,7 @@ async def test_a_change_applies_on_the_next_use(client):
     assert response.status_code == 200
     assert _item(response, "agent_max_iterations") | {"description": ""} == {
         "key": "agent_max_iterations", "value": 5, "default": 16, "source": "db", "locked": False,
-        "type": "int", "min": 1, "max": None, "description": "",
+        "type": "int", "min": 1, "max": None, "choices": None, "description": "",
     }
     assert tunables.get("agent_max_iterations") == 5
 
@@ -66,7 +66,7 @@ async def test_the_environment_locks_a_setting(client, monkeypatch):
     assert "TOOL_TIMEOUT_SEC" in response.json()["error"]["details"]["tool_timeout_sec"]
     assert _item(await client.get("/settings"), "tool_timeout_sec") | {"description": ""} == {
         "key": "tool_timeout_sec", "value": 60, "default": 300, "source": "env", "locked": True,
-        "type": "int", "min": 1, "max": None, "description": "",
+        "type": "int", "min": 1, "max": None, "choices": None, "description": "",
     }
 
 
@@ -83,8 +83,12 @@ async def test_the_workspace_is_a_full_path(client, monkeypatch, tmp_path):
     assert tunables.get("workspace_dir") == folder.resolve()
 
 
-def test_a_bad_environment_value_stops_the_start(env, monkeypatch):
-    monkeypatch.setenv("RETENTION_DAYS", "two weeks")
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [("RETENTION_DAYS", "two weeks"), ("LLM_CHAT_REASONING_EFFORT", "max"), ("LLM_NO_PROXY", "maybe")],
+)
+def test_a_bad_environment_value_stops_the_start(env, monkeypatch, key, value):
+    monkeypatch.setenv(key, value)
 
-    with pytest.raises(SettingsError, match="RETENTION_DAYS"):
+    with pytest.raises(SettingsError, match=key):
         tunables.check_env()

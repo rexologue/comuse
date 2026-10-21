@@ -1,41 +1,39 @@
-"""Which provider and model serve each role:
+"""Which model serves each role:
 
-- chat — the agent in the chat and the compiler (multi-step work);
-- instruct — llm.* tools and template markup (single structured calls); the chat model
-  when the provider names none;
+- chat — the agent in the chat and the compiler (multi-step work, calls tools);
+- instruct — llm.* tools and template markup (single structured calls); the chat
+  model when no other is set;
 - embed — ranking tools for a request; none = the agent sees every tool.
 
-With LLM_MODEL in the environment, the environment decides every role
-(common/settings.py) and the API cannot change it. Otherwise one provider from
-`llm_providers` is current and serves chat and instruct; embeddings come from it too
-unless another provider is chosen for them. Both choices are rows of the `settings`
-table, which main writes through /llm.
+A provider is one model at an OpenAI-compatible server (`llm_providers`); a role points
+at any of them by id from the `settings` table. main writes both through /llm, and
+registers the models of LLM_* variables as providers on start (main/providers.py).
+Timeouts, retries, proxy and reasoning effort are settings (common/tunables.py).
 
-A role is resolved on every call, so switching the provider applies without a restart.
-Clients are kept per provider version: a changed provider gets a new client, and its
-key is read from the store only then."""
+A role is resolved on every call, so a change applies without a restart. Clients are
+kept per provider version and transport settings: a changed provider gets a new client,
+and its key is read from the store only then."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
 
+from common import tunables
 from common.clients.llm_client import LLMClient
 from common.errors import ApiError
 from common.secrets import SecretStore
-from common.settings import LLMSettings, Settings
+from common.settings import Settings
 from common.storage.db import session
 from common.storage.models import LLMProvider, Setting
 
 
 ROLES = ("chat", "instruct", "embed")
 
-# Rows of the `settings` table: the current provider and the one for embeddings.
-CURRENT_KEY = "llm_provider"
-EMBED_KEY = "llm_embed_provider"
 
-# The provider made of LLM_* variables.
-ENV_PROVIDER = "env"
+def role_key(role: str) -> str:
+    """The `settings` row that names the role's provider."""
+    return f"llm_{role}"
 
 
 class LLMNotConfigured(ApiError):
@@ -43,8 +41,8 @@ class LLMNotConfigured(ApiError):
         super().__init__(
             status_code=503,
             message=(
-                f"Модель для роли {role} не подключена: добавьте провайдера (POST /llm/providers) "
-                f"и сделайте его текущим (PATCH /llm)"
+                f"Модель для роли {role} не назначена: добавьте провайдера (POST /llm/providers) "
+                f"и назначьте его на роль (PATCH /llm)"
             ),
         )
 
@@ -52,66 +50,46 @@ class LLMNotConfigured(ApiError):
 @dataclass(slots=True, frozen=True)
 class Endpoint:
     provider: str
-    # Changes with every change of the provider: the client cache key.
+    # Changes with every change of the provider: part of the client cache key.
     version: str
     base_url: str
-    no_proxy: bool
-    timeout: int
-    max_retries: int
     model: str
+    has_key: bool
     reasoning_effort: str | None = None
-    # The env provider carries its key; a stored provider's key is in the store.
-    api_key: str | None = None
-    has_key: bool = False
 
 
-def resolve(role: str, settings: Settings) -> Endpoint | None:
-    """The endpoint serving `role` now; None when nothing is configured for it."""
-    if settings.llm is not None:
-        return _from_env(role, settings.llm)
+def assigned(role: str) -> str | None:
+    """Id of the provider set for the role; instruct falls back to chat."""
+    with session() as db:
+        rows = {row.key: row.value for row in db.query(Setting).filter(Setting.key.in_([role_key(r) for r in ROLES]))}
+
+    provider_id = rows.get(role_key(role))
+    if provider_id is None and role == "instruct":
+        provider_id = rows.get(role_key("chat"))
+
+    return provider_id
+
+
+def resolve(role: str) -> Endpoint | None:
+    """The endpoint serving `role` now; None when no provider is set for it."""
+    provider_id = assigned(role)
+    if provider_id is None:
+        return None
 
     with session() as db:
-        chosen = {row.key: row.value for row in db.query(Setting).filter(Setting.key.in_((CURRENT_KEY, EMBED_KEY)))}
-        provider_id = (chosen.get(EMBED_KEY) if role == "embed" else None) or chosen.get(CURRENT_KEY)
-        provider = db.get(LLMProvider, provider_id) if provider_id else None
+        provider = db.get(LLMProvider, provider_id)
 
-    if provider is None or not (model := role_model(provider, role)):
+    if provider is None:
         return None
 
     return Endpoint(
         provider=provider.id,
         version=provider.updated_at.isoformat(),
         base_url=provider.base_url,
-        no_proxy=provider.no_proxy,
-        timeout=provider.timeout_sec,
-        max_retries=provider.max_retries,
-        model=model,
-        reasoning_effort=provider.reasoning_effort if role == "chat" else None,
+        model=provider.model,
         has_key=provider.has_key,
+        reasoning_effort=(tunables.get("llm_chat_reasoning_effort") or None) if role == "chat" else None,
     )
-
-
-def role_model(provider: LLMProvider, role: str) -> str | None:
-    return {
-        "chat": provider.model_chat,
-        "instruct": provider.model_instruct or provider.model_chat,
-        "embed": provider.model_embed,
-    }[role]
-
-
-def _from_env(role: str, ls: LLMSettings) -> Endpoint | None:
-    common = {"provider": ENV_PROVIDER, "version": ENV_PROVIDER, "no_proxy": ls.no_proxy, "timeout": ls.timeout, "max_retries": ls.max_retries}
-
-    if role == "embed":
-        if not ls.model_embed:
-            return None
-
-        return Endpoint(**common, base_url=ls.embed_base_url, model=ls.model_embed, api_key=ls.embed_api_key)
-
-    if role == "chat":
-        return Endpoint(**common, base_url=ls.base_url, model=ls.model_chat, reasoning_effort=ls.chat_reasoning_effort or None, api_key=ls.api_key)
-
-    return Endpoint(**common, base_url=ls.base_url, model=ls.model_instruct, api_key=ls.api_key)
 
 
 class LLM:
@@ -119,10 +97,8 @@ class LLM:
 
     def __init__(self, settings: Settings):
 
-        self.settings = settings
-
         self._keys = SecretStore.llm_keys(settings)
-        self._clients: dict[tuple[str, str, str], LLMClient] = {}
+        self._clients: dict[tuple, LLMClient] = {}
 
         self.chat     = Role(self, "chat")
         self.instruct = Role(self, "instruct")
@@ -130,19 +106,16 @@ class LLM:
 
 
     def client(self, endpoint: Endpoint) -> LLMClient:
-        key = (endpoint.provider, endpoint.version, endpoint.base_url)
+        timeout, retries, no_proxy = (tunables.get(k) for k in ("llm_timeout_sec", "llm_max_retries", "llm_no_proxy"))
+        key = (endpoint.provider, endpoint.version, timeout, retries, no_proxy)
 
         if key not in self._clients:
-            api_key = endpoint.api_key
-            if api_key is None:
-                api_key = (self._keys.get(endpoint.provider) or "") if endpoint.has_key else ""
-
             self._clients[key] = LLMClient(
                 base_url=endpoint.base_url,
-                api_key=api_key,
-                timeout=endpoint.timeout,
-                no_proxy=endpoint.no_proxy,
-                max_retries=endpoint.max_retries,
+                api_key=(self._keys.get(endpoint.provider) or "") if endpoint.has_key else "",
+                timeout=timeout,
+                no_proxy=no_proxy,
+                max_retries=retries,
             )
 
         return self._clients[key]
@@ -161,7 +134,7 @@ class Role:
 
 
     def endpoint(self) -> Endpoint | None:
-        return resolve(self.name, self.llm.settings)
+        return resolve(self.name)
 
 
     async def complete(self, messages: list[dict[str, Any]], **kwargs) -> dict[str, Any]:

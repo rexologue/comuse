@@ -51,7 +51,7 @@
 | Хранилище | Что | Пишет | Читает | Служба в системном хранилище | Файл |
 | --- | --- | --- | --- | --- | --- |
 | пароли аккаунтов | почта и другие аккаунты команд | executor | executor, в момент вызова команды, которая объявила аргумент аккаунта в `secrets` | `fintech2026`, ключ `account:<имя>` | `secrets.enc` |
-| ключи LLM | ключи провайдеров из `/llm/providers` | main | agent-loop, compiler, executor — когда строят клиент провайдера | `fintech2026-llm`, ключ — id провайдера | `llm_keys.enc` |
+| ключи LLM | ключи провайдеров: из `/llm/providers` и из `LLM_API_KEY`, `LLM_EMBED_API_KEY` при старте | main | agent-loop, compiler, executor — когда строят клиент провайдера | `fintech2026-llm`, ключ — id провайдера | `llm_keys.enc` |
 
 - `KEYRING_BACKEND=system` — системное хранилище: Windows Credential Manager, macOS
   Keychain, Secret Service.
@@ -60,6 +60,7 @@
 - В базе у аккаунта только `secret_ref` — ключ записи, у провайдера — признак
   `has_key`. Ни `GET /accounts`, ни `GET /llm` секретов не отдают.
 
-Ключ LLM из окружения (`LLM_API_KEY`, `LLM_EMBED_API_KEY`) читает только клиент LLM.
+Ключи LLM из окружения main при старте переносит в хранилище ключей LLM вместе с
+провайдерами `default…`; дальше их читают оттуда.
 Настоящие значения — только в `.env` и `deploy/.env`, которые в git не попадают;
 шаблоны `.env.example` содержат лишь заглушки.

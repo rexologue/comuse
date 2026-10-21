@@ -57,19 +57,16 @@ class StorageSettings:
 
 @dataclass(slots=True, frozen=True)
 class LLMSettings:
+    """Models from LLM_* variables; main registers them as providers on start."""
     base_url: str
     api_key: str
-    no_proxy: bool
     model_chat: str
     model_instruct: str
-    # Empty = no embeddings: the agent sees every tool instead of the top-k.
+    # Empty = no embeddings model.
     model_embed: str
     # Embeddings may live on another server than chat (defaults to the same one).
     embed_base_url: str
     embed_api_key: str
-    chat_reasoning_effort: str
-    timeout: int
-    max_retries: int
 
 
 @dataclass(slots=True, frozen=True)
@@ -82,7 +79,7 @@ class SecretsSettings:
 class Settings:
     service: ServiceSettings
     storage: StorageSettings
-    # None: no LLM_MODEL, the LLM is configured through the API (common/llm.py).
+    # None: no LLM_MODEL in the environment, nothing to register.
     llm: LLMSettings | None
     secrets: SecretsSettings
 
@@ -161,71 +158,33 @@ class Settings:
 
 
 def _llm_from_env() -> LLMSettings | None:
-    """The LLM from LLM_* variables when LLM_MODEL is set: then the environment decides
-    every role and the providers configured through the API stay unused (common/llm.py).
-    Without LLM_MODEL there is nothing here and the LLM comes from the database."""
+    """Models named by LLM_* variables, when LLM_MODEL is set. They are not used
+    directly: main registers them as providers on start (main/providers.py), and
+    roles point at providers. Timeouts, retries, proxy and reasoning effort are
+    settings of their own (common/tunables.py)."""
     llm_model = os.environ.get("LLM_MODEL")
     if not llm_model:
         return None
 
-    llm_base_url = os.environ.get(
-        "LLM_BASE_URL",
-        "http://127.0.0.1:11434/v1",
-    ).rstrip("/")
+    base_url = os.environ.get("LLM_BASE_URL", "http://127.0.0.1:11434/v1").rstrip("/")
+    api_key = os.environ.get("LLM_API_KEY", "")
 
-    llm_api_key = os.environ.get("LLM_API_KEY", "")
-
-    llm_no_proxy = bool_coercion(
-        os.environ.get("LLM_NO_PROXY", "true"),
-        "LLM_NO_PROXY",
-    )
-
-    # One model serves everything unless a role overrides it: CHAT drives the
-    # multi-step agent loop and the compiler, INSTRUCT does single structured calls
-    # (llm.* tools, template markup).
-    llm_model_chat = os.environ.get("LLM_MODEL_CHAT") or llm_model
-    llm_model_instruct = os.environ.get("LLM_MODEL_INSTRUCT") or llm_model
-    llm_model_embed = os.environ.get("LLM_MODEL_EMBED", "")
-
-    llm_embed_base_url = (os.environ.get("LLM_EMBED_BASE_URL") or llm_base_url).rstrip("/")
+    embed_base_url = (os.environ.get("LLM_EMBED_BASE_URL") or base_url).rstrip("/")
 
     # Empty means unset, as for every other variable here (the .env templates ship it
     # empty): the chat server's key then serves embeddings on that same server, and a
     # separate embeddings server never inherits it.
-    llm_embed_api_key = os.environ.get("LLM_EMBED_API_KEY") or (llm_api_key if llm_embed_base_url == llm_base_url else "")
-
-    # low | medium | high for reasoning models; empty = the field is not sent.
-    llm_chat_reasoning_effort = os.environ.get("LLM_CHAT_REASONING_EFFORT", "").strip().lower()
-    if llm_chat_reasoning_effort not in ("", "low", "medium", "high"):
-        raise SettingsError(
-            f"Incorrect `LLM_CHAT_REASONING_EFFORT`: {llm_chat_reasoning_effort!r}. "
-            f"Must be empty or one of ['low', 'medium', 'high']."
-        )
-
-    llm_timeout = int_coercion(
-        os.environ.get("LLM_TIMEOUT_SEC", "300"),
-        "LLM_TIMEOUT_SEC",
-        low=1,
-    )
-
-    llm_max_retries = int_coercion(
-        os.environ.get("LLM_MAX_RETRIES", "2"),
-        "LLM_MAX_RETRIES",
-        low=0,
-    )
+    embed_api_key = os.environ.get("LLM_EMBED_API_KEY") or (api_key if embed_base_url == base_url else "")
 
     return LLMSettings(
-        base_url=llm_base_url,
-        api_key=llm_api_key,
-        no_proxy=llm_no_proxy,
-        model_chat=llm_model_chat,
-        model_instruct=llm_model_instruct,
-        model_embed=llm_model_embed,
-        embed_base_url=llm_embed_base_url,
-        embed_api_key=llm_embed_api_key,
-        chat_reasoning_effort=llm_chat_reasoning_effort,
-        timeout=llm_timeout,
-        max_retries=llm_max_retries,
+        base_url=base_url,
+        api_key=api_key,
+        # One model serves every role unless a role names its own.
+        model_chat=os.environ.get("LLM_MODEL_CHAT") or llm_model,
+        model_instruct=os.environ.get("LLM_MODEL_INSTRUCT") or llm_model,
+        model_embed=os.environ.get("LLM_MODEL_EMBED", ""),
+        embed_base_url=embed_base_url,
+        embed_api_key=embed_api_key,
     )
 
 
@@ -260,19 +219,6 @@ def path_coercion(value: str) -> Path:
         path = ROOT_DIR / path
 
     return path.resolve()
-
-
-def bool_coercion(value: str, name: str) -> bool:
-    """Convert a string to a boolean, accepting the usual truthy/falsy spellings."""
-    normalized = value.strip().lower()
-
-    if normalized in ("1", "true", "yes", "on"):
-        return True
-
-    if normalized in ("0", "false", "no", "off"):
-        return False
-
-    raise SettingsError(f"`{name}` must be a boolean (got {value!r}).")
 
 
 def int_coercion(

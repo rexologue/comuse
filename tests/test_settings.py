@@ -22,7 +22,6 @@ def test_one_model_serves_every_role(env):
     assert s.llm.model_chat == "test-model"
     assert s.llm.model_instruct == "test-model"
     assert s.llm.model_embed == ""
-    assert s.llm.chat_reasoning_effort == ""
 
 
 def test_role_overrides(env, monkeypatch):
@@ -34,7 +33,7 @@ def test_role_overrides(env, monkeypatch):
 
 
 def test_without_llm_model_the_environment_has_no_llm(env, monkeypatch):
-    """The LLM then comes from the providers configured through the API (common/llm.py)."""
+    """Nothing to register as a provider then (main/providers.py)."""
     monkeypatch.delenv("LLM_MODEL")
     monkeypatch.setenv("LLM_BASE_URL", "http://llm-host:8000/v1")
 
@@ -43,7 +42,7 @@ def test_without_llm_model_the_environment_has_no_llm(env, monkeypatch):
 
 @pytest.mark.parametrize(
     ("key", "value"),
-    [("PORT", "70000"), ("KEYRING_BACKEND", "vault"), ("LLM_CHAT_REASONING_EFFORT", "max"), ("LLM_NO_PROXY", "maybe")],
+    [("PORT", "70000"), ("KEYRING_BACKEND", "vault")],
 )
 def test_invalid_values(env, monkeypatch, key, value):
     monkeypatch.setenv(key, value)

@@ -14,7 +14,7 @@ from main.api import internal as internal_api
 from main.api import llm as llm_api
 from main.api import settings as settings_api
 from main.api import tasks as tasks_api
-from main import events
+from main import events, providers
 from main.events import EventBus
 from main.orchestrator import Orchestrator
 from main.registry import ServiceRegistry
@@ -24,6 +24,9 @@ from main.registry import ServiceRegistry
 async def lifespan(app: FastAPI):
 
     settings = app.state.settings
+
+    # Models named by LLM_* variables become providers (once; later they are ordinary).
+    providers.register_env_models(settings)
 
     registry = ServiceRegistry(settings.service.internal_token)
     bus = EventBus()
