@@ -1,5 +1,6 @@
-"""Where every service lives. Services announce themselves; main never guesses
-addresses except the local default used before the first registration."""
+"""Where every service lives. Services announce themselves (their port may be any:
+the launcher hands out free ones); main never guesses. Until a service has registered,
+calls to it get 503."""
 
 from __future__ import annotations
 
@@ -41,7 +42,11 @@ class ServiceRegistry:
         if name not in SERVICE_PORTS:
             raise ApiError(status_code=404, message=f"Unknown service `{name}`")
 
-        return self._urls.get(name) or f"http://127.0.0.1:{SERVICE_PORTS[name]}"
+        url = self._urls.get(name)
+        if url is None:
+            raise ApiError(status_code=503, message=f"Сервис `{name}` ещё не зарегистрировался в main: он запускается или упал")
+
+        return url
 
 
     def client(self, name: str) -> MainClient:

@@ -22,8 +22,8 @@ from common.storage.db import init_engine
 
 log = logging.getLogger("service")
 
-# Services re-register periodically so a restarted main relearns their addresses.
-_REGISTER_INTERVAL_SEC = 30
+# Services re-register periodically so a restarted main relearns their addresses soon.
+_REGISTER_INTERVAL_SEC = 10
 
 # How long a service waits for main to bring the database schema up to date.
 _SCHEMA_WAIT_SEC = 60

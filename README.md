@@ -86,8 +86,11 @@ uv run python misc/make_demo_data.py workspace
 uv run python launcher.py
 ```
 
-API — `http://127.0.0.1:8000`, интерактивная документация — `http://127.0.0.1:8000/docs`.
-Первое сообщение:
+Адрес API launcher печатает при старте (`API at http://127.0.0.1:<порт>`) и пишет в
+`data/runtime.json`. Порт у main постоянный: свободный, выбранный при первом запуске,
+или `MAIN_PORT` из `.env`. Остальные сервисы берут любые свободные порты. Второй
+launcher с той же папкой данных не запустится. Интерактивная документация —
+`<адрес>/docs`. Первое сообщение (с `MAIN_PORT=8000`):
 
 ```bash
 curl -s -X POST localhost:8000/agent/v1/chat/completions -H 'content-type: application/json' -d '{"messages":[{"role":"user","content":"В папке Отчёты/Пример лежит пример еженедельного отчёта. Сделай такой же за прошлую неделю по выгрузкам из Отчёты/Продажи."}]}'
