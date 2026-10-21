@@ -2,18 +2,11 @@
 
 from __future__ import annotations
 
-import logging
-import time
-
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
-from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import DeclarativeBase, Session
 
 from common.settings import StorageSettings
-
-
-log = logging.getLogger("storage")
 
 
 class Base(DeclarativeBase):
@@ -24,7 +17,8 @@ _engine: Engine | None = None
 
 
 def init_engine(storage: StorageSettings) -> Engine:
-    """Create the process-wide engine (WAL, busy timeout) and the tables if missing."""
+    """Create the process-wide engine (WAL, busy timeout). The tables come from the
+    migrations (common/storage/migrate.py), not from here."""
     global _engine
 
     storage.data_dir.mkdir(parents=True, exist_ok=True)
@@ -43,16 +37,6 @@ def init_engine(storage: StorageSettings) -> Engine:
 
     # Importing the models registers them on Base.metadata.
     from common.storage import models  # noqa: F401
-
-    # Several processes start at once and may race on CREATE TABLE; retry briefly.
-    for attempt in range(1, 6):
-        try:
-            Base.metadata.create_all(engine)
-            break
-
-        except OperationalError as e:
-            log.warning("create_all attempt %d failed: %s", attempt, e)
-            time.sleep(0.5 * attempt)
 
     _engine = engine
 

@@ -101,6 +101,9 @@ docker compose -f deploy/docker-compose.yaml up -d --build
 - **данные — в именованном томе `agent-data`**, а не в папке хоста: блокировки SQLite в
   режиме WAL ненадёжны на bind mount из Windows. Папка пользователя монтируется обычным
   bind mount.
+- **обновление** — та же команда `up -d --build`: main при старте сам доводит базу до
+  новой схемы, предварительно сохранив копию в `/data/backups` (см.
+  [DATABASE.md](DATABASE.md#схема-и-миграции)), остальные контейнеры ждут его.
 
 ## Переменные окружения
 
@@ -125,7 +128,7 @@ docker compose -f deploy/docker-compose.yaml up -d --build
 | Переменная | Значение | По умолчанию |
 | --- | --- | --- |
 | `WORKSPACE_DIR` | Папка документов пользователя; пути в задачах — от неё | `workspace` |
-| `DATA_DIR` | `app.db`, `templates/`, `outputs/`, `secrets.enc` | `data` |
+| `DATA_DIR` | `app.db`, `templates/`, `outputs/`, `secrets.enc`, `backups/` | `data` |
 | `RETENTION_DAYS` | Сколько дней хранить законченные запуски с журналом, файлы в `outputs/` (запусков и чатов) и события | `15` |
 
 **LLM**

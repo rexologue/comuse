@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, FastAPI, Request
 from common.clients.main_client import INTERNAL_TOKEN_HEADER, MainClient
 from common.errors import ApiError, install_error_handlers
 from common.settings import Settings
+from common.storage import migrate
 from common.storage.db import init_engine
 
 
@@ -22,6 +23,9 @@ log = logging.getLogger("service")
 
 # Services re-register periodically so a restarted main relearns their addresses.
 _REGISTER_INTERVAL_SEC = 30
+
+# How long a service waits for main to bring the database schema up to date.
+_SCHEMA_WAIT_SEC = 60
 
 LifespanHook = Callable[[FastAPI], AbstractAsyncContextManager[None]]
 
@@ -82,7 +86,13 @@ def create_service_app(
         configure_logging()
 
         settings = Settings.from_env(name)
-        init_engine(settings.storage)
+        engine = init_engine(settings.storage)
+
+        # main owns the schema: it migrates before serving, the others wait for it.
+        if name == "main":
+            migrate.upgrade(engine, settings.storage)
+        else:
+            await asyncio.to_thread(migrate.wait_current, engine, _SCHEMA_WAIT_SEC)
 
         main = MainClient.from_settings(settings.service)
 

@@ -9,6 +9,7 @@ from typing import Any, Callable
 import pytest
 
 from common.settings import Settings
+from common.storage import migrate
 from common.storage.db import init_engine
 
 
@@ -39,7 +40,7 @@ def env(monkeypatch, tmp_path: Path) -> Path:
 @pytest.fixture
 def settings(env) -> Settings:
     settings = Settings.from_env("runner")
-    init_engine(settings.storage)
+    migrate.upgrade(init_engine(settings.storage), settings.storage)
 
     return settings
 
