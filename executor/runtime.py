@@ -19,6 +19,7 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
+from common import tunables
 from common.clients.llm_client import LLMClient
 from common.schemas.execution import ExecContext, ExecuteRequest, ExecuteResponse
 from common.settings import Settings
@@ -48,11 +49,6 @@ class ExecutorRuntime:
         self.secrets  = secrets
         self.llm      = llm
 
-        self.paths = WorkspacePaths(
-            workspace_dir=settings.storage.workspace_dir,
-            data_dir=settings.storage.data_dir,
-        )
-
 
     async def execute(self, req: ExecuteRequest) -> ExecuteResponse:
         started = time.monotonic()
@@ -73,9 +69,12 @@ class ExecutorRuntime:
         except ValidationError as e:
             return ExecuteResponse(status="error", error=f"Неверные аргументы `{req.tool}`: {_short_errors(e)}")
 
+        # Per call: the workspace may change through /settings while the executor runs.
+        paths = WorkspacePaths(tunables.get("workspace_dir"), self.settings.storage.data_dir)
+
         try:
             for ref in path_refs(spec, inp):
-                self.paths.read_path(ref)
+                paths.read_path(ref)
 
         except PermissionDenied as e:
             return ExecuteResponse(status="error", error=f"Нет доступа: {e}")
@@ -86,7 +85,7 @@ class ExecutorRuntime:
         except ToolError as e:
             return ExecuteResponse(status="error", error=str(e))
 
-        ctx = self._tool_context(req.context, credentials=credentials)
+        ctx = self._tool_context(req.context, paths=paths, credentials=credentials)
 
         # Whatever the tool managed to log or tell the user before it failed belongs in
         # the caller's log too.
@@ -95,7 +94,7 @@ class ExecutorRuntime:
         try:
             raw = await asyncio.wait_for(
                 spec.fn(inp, ctx),
-                timeout=spec.timeout or self.settings.executor.tool_timeout,
+                timeout=spec.timeout or tunables.get("tool_timeout_sec"),
             )
             output = _dump_output(spec, raw)
 
@@ -121,11 +120,11 @@ class ExecutorRuntime:
         )
 
 
-    def _tool_context(self, ctx: ExecContext, *, credentials: dict[str, Credential]) -> ToolContext:
+    def _tool_context(self, ctx: ExecContext, *, paths: WorkspacePaths, credentials: dict[str, Credential]) -> ToolContext:
         return ToolContext(
             mode=ctx.mode,
             settings=self.settings,
-            paths=self.paths,
+            paths=paths,
             llm=self.llm,
             session_id=ctx.session_id,
             run_id=ctx.run_id,

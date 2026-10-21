@@ -1,5 +1,5 @@
 """data:outputs/<run or chat>/ — the files tools make. The executor writes them, so it
-sweeps them: a folder nothing in has changed for RETENTION_DAYS goes."""
+sweeps them: a folder nothing in has changed for `retention_days` goes."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ def sweep(storage: StorageSettings) -> int:
     if not storage.outputs_dir.is_dir():
         return 0
 
-    limit = cutoff(storage)
+    limit = cutoff()
     removed = 0
 
     for folder in storage.outputs_dir.iterdir():

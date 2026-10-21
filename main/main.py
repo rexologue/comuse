@@ -11,6 +11,7 @@ from common.service import create_service_app
 from main.api import approvals as approvals_api
 from main.api import gateway as gateway_api
 from main.api import internal as internal_api
+from main.api import settings as settings_api
 from main.api import tasks as tasks_api
 from main import events
 from main.events import EventBus
@@ -33,7 +34,7 @@ async def lifespan(app: FastAPI):
     # Long read timeout: a chat turn may run several LLM calls and tools.
     app.state.http = httpx.AsyncClient(timeout=httpx.Timeout(900, connect=5), trust_env=False)
 
-    sweeper = asyncio.create_task(sweep_forever("events", lambda: events.sweep(settings.storage)))
+    sweeper = asyncio.create_task(sweep_forever("events", events.sweep))
 
     try:
         yield
@@ -54,6 +55,7 @@ app = create_service_app(
         (internal_api.router, "internal"),
         (tasks_api.router, "tasks"),
         (approvals_api.router, "approvals"),
+        (settings_api.router, "settings"),
         (gateway_api.router, "gateway"),
     ],
     lifespan_hook=lifespan,

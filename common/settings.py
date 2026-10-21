@@ -1,4 +1,6 @@
-"""Shared settings for every service, read from environment variables."""
+"""Shared settings for every service, read from environment variables: what a service
+needs before the database opens. Settings the user changes while the agent runs live in
+common/tunables.py."""
 
 from __future__ import annotations
 
@@ -37,9 +39,6 @@ class ServiceSettings:
 @dataclass(slots=True, frozen=True)
 class StorageSettings:
     data_dir: Path
-    workspace_dir: Path
-    # Runs and their logs, files under data:outputs and events older than this go.
-    retention_days: int
 
     @property
     def db_path(self) -> Path:
@@ -74,20 +73,7 @@ class LLMSettings:
 
 
 @dataclass(slots=True, frozen=True)
-class AgentSettings:
-    max_iterations: int
-    tools_top_k: int
-    history_messages: int
-
-
-@dataclass(slots=True, frozen=True)
-class CompilerSettings:
-    max_attempts: int
-
-
-@dataclass(slots=True, frozen=True)
 class ExecutorSettings:
-    tool_timeout: int
     keyring_backend: str
     keyring_password: str
 
@@ -97,8 +83,6 @@ class Settings:
     service: ServiceSettings
     storage: StorageSettings
     llm: LLMSettings
-    agent: AgentSettings
-    compiler: CompilerSettings
     executor: ExecutorSettings
 
     @classmethod
@@ -140,7 +124,6 @@ class Settings:
         # -----------------------------
 
         data_dir = path_coercion(os.environ.get("DATA_DIR", "data"))
-        workspace_dir = path_coercion(os.environ.get("WORKSPACE_DIR", "workspace"))
 
         # -----------------------------
         # LLM (OpenAI-compatible)
@@ -194,57 +177,8 @@ class Settings:
         )
 
         # -----------------------------
-        # AGENT LOOP
-        # -----------------------------
-
-        agent_max_iterations = int_coercion(
-            os.environ.get("AGENT_MAX_ITERATIONS", "16"),
-            "AGENT_MAX_ITERATIONS",
-            low=1,
-        )
-
-        agent_tools_top_k = int_coercion(
-            os.environ.get("AGENT_TOOLS_TOP_K", "24"),
-            "AGENT_TOOLS_TOP_K",
-            low=1,
-        )
-
-        agent_history_messages = int_coercion(
-            os.environ.get("AGENT_HISTORY_MESSAGES", "40"),
-            "AGENT_HISTORY_MESSAGES",
-            low=2,
-        )
-
-        # -----------------------------
-        # COMPILER
-        # -----------------------------
-
-        compiler_max_attempts = int_coercion(
-            os.environ.get("COMPILER_MAX_ATTEMPTS", "3"),
-            "COMPILER_MAX_ATTEMPTS",
-            low=1,
-        )
-
-
-        # -----------------------------
-        # RETENTION (runs, output files, events)
-        # -----------------------------
-
-        retention_days = int_coercion(
-            os.environ.get("RETENTION_DAYS", "15"),
-            "RETENTION_DAYS",
-            low=1,
-        )
-
-        # -----------------------------
         # EXECUTOR
         # -----------------------------
-
-        executor_tool_timeout = int_coercion(
-            os.environ.get("TOOL_TIMEOUT_SEC", "300"),
-            "TOOL_TIMEOUT_SEC",
-            low=1,
-        )
 
         keyring_backend = os.environ.get("KEYRING_BACKEND", "system").strip().lower()
         if keyring_backend not in ("system", "file"):
@@ -267,8 +201,6 @@ class Settings:
             ),
             storage=StorageSettings(
                 data_dir=data_dir,
-                workspace_dir=workspace_dir,
-                retention_days=retention_days,
             ),
             llm=LLMSettings(
                 base_url=llm_base_url,
@@ -283,16 +215,7 @@ class Settings:
                 timeout=llm_timeout,
                 max_retries=llm_max_retries,
             ),
-            agent=AgentSettings(
-                max_iterations=agent_max_iterations,
-                tools_top_k=agent_tools_top_k,
-                history_messages=agent_history_messages,
-            ),
-            compiler=CompilerSettings(
-                max_attempts=compiler_max_attempts,
-            ),
             executor=ExecutorSettings(
-                tool_timeout=executor_tool_timeout,
                 keyring_backend=keyring_backend,
                 keyring_password=keyring_password,
             ),

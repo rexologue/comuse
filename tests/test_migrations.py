@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import pytest
+from alembic import command
+from sqlalchemy import text
 
 from common.settings import Settings
 from common.storage import migrate
-from common.storage.db import Base, init_engine, session
+from common.storage.db import init_engine, session
 from common.storage.models import Event
 
 
@@ -21,7 +23,11 @@ def test_the_migrations_build_what_the_models_describe(settings):
 def test_a_database_from_before_migrations_is_taken_as_the_baseline(env):
     storage = Settings.from_env("main").storage
     engine = init_engine(storage)
-    Base.metadata.create_all(engine)
+
+    # What create_all made then: the baseline schema with no version recorded.
+    migrate._alembic(engine, command.upgrade, migrate.BASELINE)
+    with engine.begin() as connection:
+        connection.execute(text("DROP TABLE alembic_version"))
 
     with session() as db:
         db.add(Event(type="run.finished", payload={}))
@@ -30,6 +36,7 @@ def test_a_database_from_before_migrations_is_taken_as_the_baseline(env):
     migrate.upgrade(engine, storage)
 
     assert migrate.current_revision(engine) == migrate.head()
+    assert list((storage.data_dir / "backups").glob(f"app-{migrate.BASELINE}-*.db"))
 
     with session() as db:
         assert db.query(Event).count() == 1

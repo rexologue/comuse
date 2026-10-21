@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from common import tunables
 from common.clients.llm_client import LLMClient
 from common.errors import ApiError
 from common.retention import sweep_forever
@@ -40,7 +41,7 @@ async def lifespan(app: FastAPI):
     except ApiError as e:
         log.warning("llm check failed: %s | details=%s", e.message, e.details)
 
-    settings.storage.workspace_dir.mkdir(parents=True, exist_ok=True)
+    tunables.get("workspace_dir").mkdir(parents=True, exist_ok=True)
     settings.storage.templates_dir.mkdir(parents=True, exist_ok=True)
     settings.storage.outputs_dir.mkdir(parents=True, exist_ok=True)
 

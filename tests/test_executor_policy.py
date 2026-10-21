@@ -39,12 +39,9 @@ class _Registry:
 
 
 def _runtime(settings):
-    from executor.paths import WorkspacePaths
-
     runtime = ExecutorRuntime.__new__(ExecutorRuntime)
     runtime.settings = settings
     runtime.registry = _Registry()
-    runtime.paths = WorkspacePaths(settings.storage.workspace_dir, settings.storage.data_dir)
     runtime.secrets = None
     runtime.llm = None
 

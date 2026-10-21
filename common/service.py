@@ -12,6 +12,7 @@ from typing import Callable
 
 from fastapi import APIRouter, Depends, FastAPI, Request
 
+from common import tunables
 from common.clients.main_client import INTERNAL_TOKEN_HEADER, MainClient
 from common.errors import ApiError, install_error_handlers
 from common.settings import Settings
@@ -86,6 +87,7 @@ def create_service_app(
         configure_logging()
 
         settings = Settings.from_env(name)
+        tunables.check_env()
         engine = init_engine(settings.storage)
 
         # main owns the schema: it migrates before serving, the others wait for it.

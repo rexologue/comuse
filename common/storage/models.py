@@ -41,6 +41,16 @@ class Event(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class Setting(Base):
+    """A value the user set through the API (common/tunables.py); no row = the default."""
+
+    __tablename__ = "settings"
+
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    value: Mapped[Any] = mapped_column(JSON)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 # -----------------------------
 # AGENT LOOP
 # -----------------------------

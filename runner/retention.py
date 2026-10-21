@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 from common.retention import cutoff
-from common.settings import Settings
 from common.storage.db import session
 from common.storage.models import Run, RunLog
 
 
-def sweep(settings: Settings) -> int:
-    """Delete finished runs older than RETENTION_DAYS; returns how many went."""
+def sweep() -> int:
+    """Delete finished runs older than `retention_days`; returns how many went."""
     with session() as db:
-        old = [run_id for (run_id,) in db.query(Run.id).filter(Run.finished_at.is_not(None), Run.finished_at < cutoff(settings.storage))]
+        old = [run_id for (run_id,) in db.query(Run.id).filter(Run.finished_at.is_not(None), Run.finished_at < cutoff())]
 
         if old:
             db.query(RunLog).filter(RunLog.run_id.in_(old)).delete(synchronize_session=False)

@@ -8,6 +8,7 @@ import math
 import time
 from typing import Any
 
+from common import tunables
 from common.clients.llm_client import LLMClient
 from common.clients.main_client import MainClient
 from common.errors import ApiError
@@ -23,12 +24,11 @@ _EMBED_BACKOFF_SEC = 300
 
 
 class ToolCatalog:
-    def __init__(self, main: MainClient, llm: LLMClient, embed_model: str, top_k: int):
+    def __init__(self, main: MainClient, llm: LLMClient, embed_model: str):
 
         self.main        = main
         self.llm         = llm
         self.embed_model = embed_model
-        self.top_k       = top_k
 
         self._manifests: dict[str, dict[str, Any]] = {}
         self._loaded_at = 0.0
@@ -51,9 +51,10 @@ class ToolCatalog:
         # Tools marked core (looking around is how every request starts) are never ranked out.
         core = {name for name, manifest in manifests.items() if manifest.get("core")}
         always = {name for name in (always or set()) | core if name in manifests}
+        top_k = tunables.get("agent_tools_top_k")
 
         # Without an embeddings model (or with few tools) the model simply sees them all.
-        if not self.embed_model or len(manifests) <= self.top_k or time.monotonic() < self._embed_down_until:
+        if not self.embed_model or len(manifests) <= top_k or time.monotonic() < self._embed_down_until:
             return list(manifests.values())
 
         try:
@@ -66,7 +67,7 @@ class ToolCatalog:
 
         chosen = list(always)
         for name in ranked:
-            if len(chosen) >= self.top_k + len(always):
+            if len(chosen) >= top_k + len(always):
                 break
 
             if name not in chosen:

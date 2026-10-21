@@ -12,6 +12,7 @@ from typing import Any
 import jsonpatch
 import jsonpointer
 
+from common import tunables
 from common.clients.llm_client import LLMClient
 from common.clients.main_client import MainClient
 from common.errors import ApiError
@@ -101,7 +102,7 @@ class Compiler:
             schema=TaskSpec.model_json_schema(by_alias=True),
             name="task_spec",
             validate=validate,
-            attempts=self.settings.compiler.max_attempts,
+            attempts=tunables.get("compiler_max_attempts"),
             reasoning_effort=self.settings.llm.chat_reasoning_effort or None,
         )
 
@@ -127,7 +128,7 @@ class Compiler:
             schema=prompts.PATCH_SCHEMA,
             name="task_patch",
             validate=validate,
-            attempts=self.settings.compiler.max_attempts,
+            attempts=tunables.get("compiler_max_attempts"),
             reasoning_effort=self.settings.llm.chat_reasoning_effort or None,
         )
 

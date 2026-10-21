@@ -20,8 +20,10 @@ uv sync --extra dev
 cp .env.example .env
 ```
 
-В `.env` укажите как минимум `LLM_BASE_URL` и `LLM_MODEL`; `WORKSPACE_DIR` — папка
-документов пользователя (на Windows, например, `C:/Users/<имя>/Documents`).
+В `.env` укажите как минимум `LLM_BASE_URL` и `LLM_MODEL`. Рабочую папку с документами
+пользователя задайте в `WORKSPACE_DIR` (на Windows, например,
+`C:/Users/<имя>/Documents`) или потом через `PATCH /settings` (см.
+[SETTINGS.md](SETTINGS.md)).
 `launcher.py` читает `.env` из корня репозитория; переменные, уже заданные в оболочке,
 главнее.
 
@@ -97,7 +99,8 @@ docker compose -f deploy/docker-compose.yaml up -d --build
   как main стал здоровым;
 - отличия от локального запуска заданы в `environment` compose: `MAIN_URL=http://main:8000`,
   `SERVICE_HOST=0.0.0.0`, свой `SELF_URL` у каждого сервиса, `DATA_DIR=/data`,
-  `WORKSPACE_DIR=/workspace`, `KEYRING_BACKEND=file`;
+  `WORKSPACE_DIR=/workspace` (поэтому рабочая папка в Docker закреплена и через API не
+  меняется), `KEYRING_BACKEND=file`;
 - **данные — в именованном томе `agent-data`**, а не в папке хоста: блокировки SQLite в
   режиме WAL ненадёжны на bind mount из Windows. Папка пользователя монтируется обычным
   bind mount.
@@ -107,9 +110,14 @@ docker compose -f deploy/docker-compose.yaml up -d --build
 
 ## Переменные окружения
 
-Все настройки читает `Settings.from_env()` (`common/settings.py`). Неверное значение
-останавливает сервис при старте с понятной ошибкой, а не всплывает позже. Обязательна
-только `LLM_MODEL`.
+Настройки для запуска читает `Settings.from_env()` (`common/settings.py`). Неверное
+значение останавливает сервис при старте с понятной ошибкой, а не всплывает позже.
+Обязательна только `LLM_MODEL`.
+
+Рабочие настройки (рабочая папка, сроки хранения, параметры агента, таймаут команд)
+меняются через API — см. [SETTINGS.md](SETTINGS.md). Их тоже можно задать переменной
+окружения с тем же именем в верхнем регистре; тогда значение закреплено и через API не
+меняется.
 
 **Сервисы**
 
@@ -127,9 +135,7 @@ docker compose -f deploy/docker-compose.yaml up -d --build
 
 | Переменная | Значение | По умолчанию |
 | --- | --- | --- |
-| `WORKSPACE_DIR` | Папка документов пользователя; пути в задачах — от неё | `workspace` |
 | `DATA_DIR` | `app.db`, `templates/`, `outputs/`, `secrets.enc`, `backups/` | `data` |
-| `RETENTION_DAYS` | Сколько дней хранить законченные запуски с журналом, файлы в `outputs/` (запусков и чатов) и события | `15` |
 
 **LLM**
 
@@ -148,20 +154,10 @@ docker compose -f deploy/docker-compose.yaml up -d --build
 | `LLM_TIMEOUT_SEC` | Таймаут запроса к LLM | `300` |
 | `LLM_MAX_RETRIES` | Повторы запроса к LLM при сетевых сбоях | `2` |
 
-**Агент и компилятор**
+**Секреты**
 
 | Переменная | Значение | По умолчанию |
 | --- | --- | --- |
-| `AGENT_MAX_ITERATIONS` | Шагов агента за один ход | `16` |
-| `AGENT_TOOLS_TOP_K` | Сколько команд показывать модели при отборе по смыслу | `24` |
-| `AGENT_HISTORY_MESSAGES` | Сколько последних сообщений видит модель (текущий ход — всегда целиком) | `40` |
-| `COMPILER_MAX_ATTEMPTS` | Попыток собрать задачу, проходящую проверки | `3` |
-
-**Executor и секреты**
-
-| Переменная | Значение | По умолчанию |
-| --- | --- | --- |
-| `TOOL_TIMEOUT_SEC` | Таймаут команды, если она не задала свой | `300` |
 | `KEYRING_BACKEND` | `system` — системное хранилище, `file` — `DATA_DIR/secrets.enc` | `system` |
 | `KEYRING_PASSWORD` | Ключ к `secrets.enc`; обязателен для `file` | не задано |
 

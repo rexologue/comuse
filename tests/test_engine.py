@@ -210,7 +210,7 @@ def test_retention_removes_old_runs_with_their_log(settings):
         db.add(RunLog(run_id="run_old", task_id="t", seq=1, kind="start", data={}))
         db.commit()
 
-    assert sweep(settings) == 1
+    assert sweep() == 1
 
     with session() as db:
         assert [r.id for r in db.query(Run)] == ["run_new"]
@@ -218,7 +218,7 @@ def test_retention_removes_old_runs_with_their_log(settings):
 
 
 def test_old_output_folders_go_whoever_made_them(settings):
-    """Runs' and chats' files alike: a folder nothing changed in for RETENTION_DAYS."""
+    """Runs' and chats' files alike: a folder nothing changed in for `retention_days`."""
     import os
     import time
 
@@ -250,7 +250,7 @@ def test_old_events_go(settings):
         db.add(Event(type="run.finished", payload={}))
         db.commit()
 
-    assert events.sweep(settings.storage) == 1
+    assert events.sweep() == 1
     assert len(events.recent()) == 1
 
 

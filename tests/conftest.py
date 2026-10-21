@@ -9,6 +9,7 @@ from typing import Any, Callable
 import pytest
 
 from common.settings import Settings
+from common.tunables import TUNABLES
 from common.storage import migrate
 from common.storage.db import init_engine
 
@@ -19,6 +20,7 @@ _ENV_KEYS = (
     "LLM_MODEL_CHAT", "LLM_MODEL_INSTRUCT", "LLM_MODEL_EMBED", "LLM_CHAT_REASONING_EFFORT",
     "LLM_EMBED_BASE_URL", "LLM_EMBED_API_KEY",
     "KEYRING_BACKEND", "KEYRING_PASSWORD",
+    *(tunable.env for tunable in TUNABLES.values()),
 )
 
 

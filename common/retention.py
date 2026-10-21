@@ -1,6 +1,6 @@
 """Old data goes on a schedule. Each service sweeps only what it writes: runner its runs
 and their logs, executor the files under data:outputs (runs' and chats' alike), main its
-events. One age for all of them: RETENTION_DAYS."""
+events. One age for all of them: the `retention_days` setting (common/tunables.py)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Callable
 
-from common.settings import StorageSettings
+from common import tunables
 from common.utils import utcnow
 
 
@@ -18,8 +18,8 @@ log = logging.getLogger("retention")
 _SWEEP_EVERY_SEC = 6 * 3600
 
 
-def cutoff(storage: StorageSettings) -> datetime:
-    return utcnow() - timedelta(days=storage.retention_days)
+def cutoff() -> datetime:
+    return utcnow() - timedelta(days=tunables.get("retention_days"))
 
 
 async def sweep_forever(what: str, sweep: Callable[[], int]) -> None:

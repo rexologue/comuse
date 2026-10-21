@@ -7,7 +7,6 @@ import logging
 from typing import Any
 
 from common.retention import cutoff
-from common.settings import StorageSettings
 from common.storage.db import session
 from common.storage.models import Event
 
@@ -52,10 +51,10 @@ class EventBus:
         self._subscribers.discard(queue)
 
 
-def sweep(storage: StorageSettings) -> int:
-    """Events older than RETENTION_DAYS go; a client replays only recent ones anyway."""
+def sweep() -> int:
+    """Events older than `retention_days` go; a client replays only recent ones anyway."""
     with session() as db:
-        removed = db.query(Event).filter(Event.created_at < cutoff(storage)).delete(synchronize_session=False)
+        removed = db.query(Event).filter(Event.created_at < cutoff()).delete(synchronize_session=False)
         db.commit()
 
     return removed

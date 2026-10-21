@@ -30,7 +30,7 @@ async def lifespan(app: FastAPI):
     except ApiError as e:
         log.warning("llm check failed: %s | details=%s", e.message, e.details)
 
-    catalog = ToolCatalog(app.state.main, embedder, settings.llm.model_embed, settings.agent.tools_top_k)
+    catalog = ToolCatalog(app.state.main, embedder, settings.llm.model_embed)
 
     if settings.llm.model_embed:
         try:

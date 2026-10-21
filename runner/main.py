@@ -41,7 +41,7 @@ async def lifespan(app: FastAPI):
     _close_interrupted_runs()
 
     app.state.engine = RunEngine(app.state.main)
-    app.state.background = {asyncio.create_task(sweep_forever("runs", lambda: sweep(app.state.settings)))}
+    app.state.background = {asyncio.create_task(sweep_forever("runs", sweep))}
 
     try:
         yield

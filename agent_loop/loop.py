@@ -14,6 +14,7 @@ from agent_loop import history, meta_tools
 from agent_loop.catalog import ToolCatalog, to_function
 from agent_loop.prompts import system_prompt
 from common.tools.guides import collect
+from common import tunables
 from common.clients.llm_client import LLMClient
 from common.clients.main_client import MainClient
 from common.errors import ApiError
@@ -63,9 +64,9 @@ class AgentLoop:
         result = TurnResult(session_id=session_id, content="")
         nudged = False
 
-        for _ in range(self.settings.agent.max_iterations):
+        for _ in range(tunables.get("agent_max_iterations")):
             messages = [{"role": "system", "content": system_prompt(date.today(), collect(manifests, "agent"))}]
-            messages += history.llm_history(session_id, self.settings.agent.history_messages)
+            messages += history.llm_history(session_id, tunables.get("agent_history_messages"))
 
             # Turn-local only: the nudge never becomes part of the stored chat.
             if nudged:
