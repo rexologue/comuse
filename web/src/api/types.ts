@@ -10,6 +10,9 @@ export type TaskSummary = {
   source_session_id: string | null;
   current_version_id: string | null;
   trigger: { type: "cron" | "manual"; expr?: string } | null;
+  // The trigger in words: «по будням в 09:00», «только вручную».
+  schedule: string | null;
+  cards: Card[];
   created_at: string;
   updated_at: string | null;
 };
@@ -68,3 +71,67 @@ export type ChatReply = {
   choices: { message: { role: "assistant"; content: string } }[];
   tool_events: { tool: string; status: string }[];
 };
+
+// A step as the user reads it (compiler/cards.py); foreach steps have children.
+export type Card = { id: string; tool: string | null; text: string; args: Record<string, unknown>; confirm?: boolean | "always"; children: Card[] };
+
+export type VersionStatus = "draft" | "approved" | "rejected" | "superseded";
+
+export type VersionItem = { id: string; version_no: number; status: VersionStatus; created_by: string; summary: string; created_at: string };
+
+export type Version = VersionItem & {
+  task_id: string;
+  spec: Record<string, unknown>;
+  cards: Card[];
+  schedule: string | null;
+  session_id: string | null;
+  parent_version_id: string | null;
+  approved_at: string | null;
+};
+
+export type TaskDetail = TaskSummary & { current_version: Version | null; versions: VersionItem[] };
+
+export type Change = { kind: "added" | "removed" | "changed" | "trigger" | "title"; step?: string; before?: string; after?: string };
+
+export type Diff = { changes: Change[]; lines: string[] };
+
+export type RunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "empty";
+
+export type Run = {
+  id: string;
+  task_id: string;
+  task_version_id: string;
+  trigger: string;
+  status: RunStatus;
+  dry_run: boolean;
+  result: unknown;
+  error: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+};
+
+// One record of a run's log (docs/RUNS.md#журнал-запуска): start, step, notify, end.
+export type LogEntry = {
+  seq: number;
+  at: string;
+  kind: "start" | "step" | "notify" | "end";
+  step_key: string | null;
+  [field: string]: unknown;
+};
+
+export type SettingField = { value: unknown; title: string; description?: string; schema: Record<string, unknown> };
+
+export type TaskSettings = { task_id: string; settings: Record<string, Record<string, SettingField>> };
+
+export type Approval = {
+  id: string;
+  status: "pending" | "approved" | "rejected" | "cancelled";
+  task_id: string;
+  task_version_id: string;
+  session_id: string | null;
+  payload: { title?: string; summary?: string; cards?: Card[] };
+  created_at: string;
+};
+
+// POST /compiler/patch: the new draft with what changed.
+export type PatchResult = { task_id: string; version_id: string; title: string; summary: string; diff: string[]; cards: Card[]; approval_id: string };

@@ -205,6 +205,7 @@ docker compose -f deploy/compose.dev.yaml up --build
 | `AGENT_DEV_HOST` | Адрес публикации | `127.0.0.1` |
 | `AGENT_DEV_WORKSPACE_PATH` | Рабочая папка на хосте | `../workspace` |
 | `AGENT_DEV_UID`, `AGENT_DEV_GID` | uid и gid пользователя в образе (`id -u`, `id -g`) | `1000` |
+| `AGENT_DEV_TZ` | Часовой пояс контейнера: в нём срабатывает cron | `Europe/Moscow` |
 | `AGENT_DEV_POLLING` | `true` — следить за файлами опросом, если события файловой системы не доходят до контейнера (бывает в Docker Desktop) | `false` |
 | `AGENT_DEV_KEYRING_PASSWORD` | Ключ к файлам секретов в томе | `dev-only` |
 

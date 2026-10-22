@@ -13,6 +13,7 @@ import { keys, useChat, useChats, useTools } from "@/api/queries";
 import type { ChatDetail, ChatReply, TraceItem } from "@/api/types";
 import { ConfirmBar } from "@/chat/ConfirmBar";
 import { Composer } from "@/chat/Composer";
+import { DraftCards } from "@/chat/DraftCard";
 import { MessageList, UserBubble } from "@/chat/MessageList";
 import { toolTitle } from "@/chat/tools";
 import { Button } from "@/components/ui/button";
@@ -65,6 +66,7 @@ export function ChatPage() {
 
       await queryClient.invalidateQueries({ queryKey: keys.chat(reply.session_id) });
       queryClient.invalidateQueries({ queryKey: keys.chats });
+      queryClient.invalidateQueries({ queryKey: ["approvals"] });
 
       if (isNew) navigate(`/chat/${reply.session_id}`, { replace: true });
     } catch (e) {
@@ -94,6 +96,7 @@ export function ChatPage() {
         <div className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-6">
           {isNew && sending === null && <p className="text-center text-sm text-muted-foreground">Опишите, что нужно сделать: с файлами, документами, таблицами или почтой.</p>}
           {chat.data && <MessageList messages={chat.data.messages} trace={chat.data.trace} />}
+          {!isNew && sessionId && sending === null && <DraftCards sessionId={sessionId} />}
 
           {sending !== null && (
             <>

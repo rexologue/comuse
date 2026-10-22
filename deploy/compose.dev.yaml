@@ -8,8 +8,8 @@
 #
 # Optional, from the shell or deploy/.env: AGENT_DEV_PORT (8000), AGENT_DEV_HOST
 # (127.0.0.1), AGENT_DEV_WORKSPACE_PATH (../workspace), AGENT_DEV_UID / AGENT_DEV_GID
-# (1000: your user's ids, `id -u` / `id -g`), AGENT_DEV_POLLING (false; true where
-# file events do not reach the container).
+# (1000: your user's ids, `id -u` / `id -g`), AGENT_DEV_TZ (Europe/Moscow: cron's time
+# zone), AGENT_DEV_POLLING (false; true where file events do not reach the container).
 
 name: fintech2026-dev
 
@@ -29,6 +29,8 @@ services:
     command: ["python", "launcher.py", "--reload"]
     environment:
       RUN_MODE: single
+      # cron fires in this time zone (the container's own is UTC).
+      TZ: ${AGENT_DEV_TZ:-Europe/Moscow}
       MAIN_PORT: "8000"
       SERVICE_HOST: 0.0.0.0
       DATA_DIR: /data

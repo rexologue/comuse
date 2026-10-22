@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from common.cron import describe_schedule
 from common.storage.db import session
 from common.storage.models import Run, Task, TaskVersion
 from common.storage.queries import run_dict
@@ -78,6 +79,7 @@ def version_dict(version: TaskVersion) -> dict[str, Any]:
         "status": version.status,
         "spec": version.spec,
         "cards": version.cards,
+        "schedule": _schedule(version.spec),
         "summary": version.summary,
         "patch": version.patch,
         "session_id": version.session_id,
@@ -101,7 +103,13 @@ def _task_summary(task: Task, current: TaskVersion | None) -> dict[str, Any]:
         "source_session_id": task.source_session_id,
         "current_version_id": task.current_version_id,
         "trigger": spec.get("trigger"),
+        "schedule": _schedule(spec),
         "cards": current.cards if current else [],
         "created_at": task.created_at.isoformat(),
         "updated_at": task.updated_at.isoformat() if task.updated_at else None,
     }
+
+
+def _schedule(spec: dict[str, Any]) -> str | None:
+    trigger = spec.get("trigger") or {}
+    return describe_schedule(trigger.get("type"), trigger.get("expr")) if trigger else None

@@ -6,16 +6,11 @@ import re
 import string
 from typing import Any
 
+from common.cron import describe_schedule
 from common.schemas.task import Step, TaskSpec, Trigger
 
 
 _EXPR = re.compile(r"\{\{\s*(.*?)\s*\}\}")
-
-# Days of week are names only (common/cron.py refuses numbers).
-_DAYS = {
-    "MON": "понедельникам", "TUE": "вторникам", "WED": "средам", "THU": "четвергам",
-    "FRI": "пятницам", "SAT": "субботам", "SUN": "воскресеньям",
-}
 
 
 def build_cards(spec: TaskSpec, catalog: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
@@ -23,10 +18,7 @@ def build_cards(spec: TaskSpec, catalog: dict[str, dict[str, Any]]) -> list[dict
 
 
 def describe_trigger(trigger: Trigger) -> str:
-    if trigger.type == "cron":
-        return _describe_cron(trigger.expr or "")
-
-    return "только вручную"
+    return describe_schedule(trigger.type, trigger.expr)
 
 
 def summarize(spec: TaskSpec) -> str:
@@ -106,34 +98,6 @@ def _readable(value: Any) -> str:
 
     # `{{ week_start }}` reads as ‹week_start› on a card.
     return _EXPR.sub(lambda m: f"‹{m.group(1)}›", str(value))
-
-
-def _describe_cron(expr: str) -> str:
-    parts = expr.split()
-    if len(parts) != 5:
-        return f"по расписанию «{expr}»"
-
-    minute, hour, dom, month, dow = parts
-
-    if not (minute.isdigit() and hour.isdigit()):
-        return f"по расписанию «{expr}»"
-
-    at = f"в {int(hour):02d}:{int(minute):02d}"
-
-    if dom == "*" and month == "*" and dow == "*":
-        return f"каждый день {at}"
-
-    if dom == "*" and month == "*":
-        days = [_DAYS.get(d.upper(), d) for d in dow.split(",")]
-        if dow.upper() == "MON-FRI":
-            return f"по будням {at}"
-
-        return f"по {', '.join(days)} {at}"
-
-    if dom.isdigit() and month == "*" and dow == "*":
-        return f"каждый месяц {int(dom)}-го числа {at}"
-
-    return f"по расписанию «{expr}»"
 
 
 def _flatten(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:

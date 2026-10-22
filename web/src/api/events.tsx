@@ -94,10 +94,15 @@ function refresh(queryClient: QueryClient, event: AgentEvent): void {
   if (group === "approval" || group === "task") {
     queryClient.invalidateQueries({ queryKey: keys.tasks });
     queryClient.invalidateQueries({ queryKey: keys.chats });
+    queryClient.invalidateQueries({ queryKey: ["task"] });
+    queryClient.invalidateQueries({ queryKey: ["approvals"] });
+    queryClient.invalidateQueries({ queryKey: keys.jobs });
   }
 
   if (group === "run") {
     queryClient.invalidateQueries({ queryKey: keys.tasks });
+    queryClient.invalidateQueries({ queryKey: ["runs"] });
+    queryClient.invalidateQueries({ queryKey: ["run"] });
   }
 
   // A run's message lands in its task's chat.
