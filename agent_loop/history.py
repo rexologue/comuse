@@ -237,7 +237,8 @@ def session_view(session_id: str) -> dict[str, Any]:
             for m in messages
         ],
         "trace": [
-            {"id": t.id, "tool": t.tool, "args": t.args, "status": t.status, "result": t.result}
+            # message_id: the assistant message whose tool call this was.
+            {"id": t.id, "message_id": t.message_id, "tool": t.tool, "args": t.args, "status": t.status, "result": t.result}
             for t in trace
         ],
     }

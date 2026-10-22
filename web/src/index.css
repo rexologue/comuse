@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@plugin "@tailwindcss/typography";
 
 /* Dark theme: the `dark` class on <html> (src/theme.tsx picks it from the system or the user). */
 @custom-variant dark (&:is(.dark *));

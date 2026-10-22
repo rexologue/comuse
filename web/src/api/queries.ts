@@ -3,13 +3,15 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "@/api/client";
-import type { ChatSummary, Job, TaskSummary } from "@/api/types";
+import type { ChatDetail, ChatSummary, Job, TaskSummary, ToolManifest } from "@/api/types";
 
 export const keys = {
   health: ["health"] as const,
   tasks: ["tasks"] as const,
   chats: ["chats"] as const,
   jobs: ["jobs"] as const,
+  tools: ["tools"] as const,
+  chat: (id: string) => ["chat", id] as const,
 };
 
 export function useHealth() {
@@ -32,4 +34,24 @@ export function useChats() {
 
 export function useJobs() {
   return useQuery({ queryKey: keys.jobs, queryFn: async () => (await api<{ jobs: Job[] }>("/jobs")).jobs });
+}
+
+export function useChat(id: string | undefined) {
+  return useQuery({
+    queryKey: keys.chat(id ?? ""),
+    queryFn: () => api<ChatDetail>(`/agent/sessions/${id}`),
+    enabled: Boolean(id),
+  });
+}
+
+// The catalog changes only with the code: titles and `confirm` of every command.
+export function useTools() {
+  return useQuery({
+    queryKey: keys.tools,
+    queryFn: async () => {
+      const tools = (await api<{ tools: ToolManifest[] }>("/tools")).tools;
+      return new Map(tools.flatMap((tool) => [[tool.name, tool] as const, [tool.function_name, tool] as const]));
+    },
+    staleTime: Infinity,
+  });
 }
