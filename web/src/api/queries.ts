@@ -82,6 +82,8 @@ export function useChat(id: string | undefined) {
     queryKey: keys.chat(id ?? ""),
     queryFn: () => api<ChatDetail>(`/agent/sessions/${id}`),
     enabled: Boolean(id),
+    // While a turn runs, ask again until it ends: its answer is the next state.
+    refetchInterval: (query) => (query.state.data?.busy ? 2000 : false),
   });
 }
 

@@ -3,7 +3,7 @@ reports comes from each group, only for the groups at hand."""
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import datetime, timedelta, timezone
 
 from agent_loop.prompts import system_prompt
 from common.tools import discover
@@ -11,12 +11,15 @@ from common.tools.guides import collect
 from compiler.prompts import RULES, rules
 
 
+NOW = datetime(2026, 10, 20, 12, 12, tzinfo=timezone(timedelta(hours=3), "MSK"))
+
+
 MANIFESTS = {name: spec.manifest() for name, spec in discover().items()}
 GROUPS = ("fs.", "docs.", "xlsx.", "mail.", "data.", "charts.", "llm.")
 
 
 def test_shared_prompts_name_no_group_tools():
-    agent = system_prompt(date(2026, 10, 20), [])
+    agent = system_prompt(NOW, [])
     rules_without_examples = RULES[: RULES.index("6. Для обработки")] + RULES[RULES.index("7. Пути") : RULES.index("Пример задачи")]
 
     assert not any(group in agent for group in GROUPS)
@@ -26,7 +29,7 @@ def test_shared_prompts_name_no_group_tools():
 def test_agent_sees_guides_of_the_offered_tools_only():
     mail_only = [m for name, m in MANIFESTS.items() if name.startswith("mail.")]
 
-    prompt = system_prompt(date(2026, 10, 20), collect(mail_only, "agent"))
+    prompt = system_prompt(NOW, collect(mail_only, "agent"))
 
     assert "подтверждения отправки" in prompt
     assert "xlsx.aggregate" not in prompt
@@ -47,3 +50,11 @@ def test_compiler_rules_carry_the_groups_task_guides():
 
 def test_core_tools_come_from_the_tools_themselves():
     assert {name for name, m in MANIFESTS.items() if m["core"]} == {"fs.list", "docs.read"}
+
+
+def test_the_agent_knows_the_time_not_only_the_date():
+    """Without it the agent invents the time for a file name («12:00:00» at 12:12)."""
+    prompt = system_prompt(NOW, [])
+
+    assert "2026-10-20 12:12" in prompt
+    assert "MSK (UTC+0300)" in prompt

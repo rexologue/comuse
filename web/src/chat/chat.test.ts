@@ -8,7 +8,7 @@ const message = (id: number, role: ChatMessage["role"]): ChatMessage => ({ id, r
 const call = (id: number, message_id: number, status: TraceItem["status"]): TraceItem => ({ id, message_id, tool: "fs.move", args: {}, status, result: null });
 
 function chat(messages: ChatMessage[], trace: TraceItem[]): ChatDetail {
-  return { id: "ses_1", title: "", created_at: "", messages, trace };
+  return { id: "ses_1", title: "", created_at: "", messages, trace, busy: false };
 }
 
 describe("pendingQuestions", () => {

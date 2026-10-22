@@ -54,7 +54,8 @@ export type TraceItem = {
   result: unknown;
 };
 
-export type ChatDetail = { id: string; title: string; created_at: string; messages: ChatMessage[]; trace: TraceItem[] };
+// busy: a turn runs in the chat now (maybe sent from another tab, or before a reload).
+export type ChatDetail = { id: string; title: string; created_at: string; messages: ChatMessage[]; trace: TraceItem[]; busy: boolean };
 
 export type ToolManifest = {
   name: string;

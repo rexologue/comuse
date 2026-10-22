@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import datetime
 from typing import Any
 
 from jsonschema import Draft202012Validator
@@ -52,15 +53,37 @@ class AgentLoop:
         # fact of one conversation, gone with a restart (the chat simply asks again).
         self._consent: dict[str, set[str]] = {}
 
+        # One turn at a time per chat: a message sent while the agent still works waits
+        # for that turn to end, so two turns never write into one history at once.
+        self._turns: dict[str, asyncio.Lock] = {}
+
 
     def forget(self, session_ids: list[str]) -> None:
         """Deleted chats take their consents along."""
         for session_id in session_ids:
             self._consent.pop(session_id, None)
 
+            lock = self._turns.get(session_id)
+            if lock is not None and not lock.locked():
+                del self._turns[session_id]
+
+
+    def busy(self, session_id: str) -> bool:
+        """A turn runs in the chat now (or waits for the one before)."""
+        lock = self._turns.get(session_id)
+        return lock is not None and lock.locked()
+
 
     async def run_turn(self, session_id: str | None, user_text: str) -> TurnResult:
         session_id = history.ensure_session(session_id, user_text)
+
+        async with self._turns.setdefault(session_id, asyncio.Lock()):
+            return await self._turn(session_id, user_text)
+
+
+    async def _turn(self, session_id: str, user_text: str) -> TurnResult:
+        # Written only now: a turn still running reads the history from the latest user
+        # message on, and must not find this one there.
         history.add_message(session_id, "user", user_text)
 
         # Without a model there is no turn; the answer says how to connect one.
@@ -77,7 +100,7 @@ class AgentLoop:
         nudged = False
 
         for _ in range(tunables.get("agent_max_iterations")):
-            messages = [{"role": "system", "content": system_prompt(date.today(), collect(manifests, "agent"))}]
+            messages = [{"role": "system", "content": system_prompt(datetime.now().astimezone(), collect(manifests, "agent"))}]
             messages += history.llm_history(session_id, tunables.get("agent_history_messages"))
 
             # Turn-local only: the nudge never becomes part of the stored chat.

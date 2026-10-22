@@ -34,7 +34,7 @@
 | `POST /agent/v1/chat/completions` | Ход чата в формате OpenAI, со стримингом (`stream: true`) |
 | `GET /agent/v1/models` | Единственная «модель» агента: `office-agent` |
 | `GET /agent/sessions` | Последние 50 чатов: `id`, `title`, `updated_at`, `task_id` (у чата задачи; `null` — временный) |
-| `GET /agent/sessions/{id}` | Чат целиком: сообщения и трейс вызовов команд |
+| `GET /agent/sessions/{id}` | Чат целиком: сообщения, трейс вызовов команд и `busy` — идёт ли в нём сейчас ход агента |
 | `DELETE /agent/sessions/{id}` | Удалить временный чат; чат задачи — `409`. Временные и так удаляются через `chat_idle_hours` без сообщений ([CHAT.md](CHAT.md#сессии)) |
 
 Запрос — обычный OpenAI `chat/completions`. Из `messages` берётся последнее

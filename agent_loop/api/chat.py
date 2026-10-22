@@ -67,9 +67,9 @@ async def sessions():
     return {"sessions": history.session_list()}
 
 
-@router.get("/sessions/{session_id}", summary="Messages and tool trace of a session")
-async def session_detail(session_id: str):
-    return history.session_view(session_id)
+@router.get("/sessions/{session_id}", summary="Messages and tool trace of a session; busy: a turn runs in it now")
+async def session_detail(session_id: str, request: Request):
+    return {**history.session_view(session_id), "busy": request.app.state.loop.busy(session_id)}
 
 
 @router.delete("/sessions/{session_id}", summary="Delete a temporary chat now (a task's chat stays)")

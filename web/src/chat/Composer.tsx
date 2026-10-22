@@ -4,7 +4,8 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 
-// Enter sends, Shift+Enter breaks the line.
+// Enter sends, Shift+Enter breaks the line. While the agent answers, the next message
+// can be typed; it goes once the turn is over.
 export function Composer({ disabled, onSend, initial = "" }: { disabled: boolean; onSend: (text: string) => void; initial?: string }) {
   const [text, setText] = useState(initial);
 
@@ -27,7 +28,7 @@ export function Composer({ disabled, onSend, initial = "" }: { disabled: boolean
             send();
           }
         }}
-        placeholder="Что сделать? Enter — отправить, Shift+Enter — новая строка"
+        placeholder={disabled ? "Агент отвечает — следующее сообщение можно набрать заранее" : "Что сделать? Enter — отправить, Shift+Enter — новая строка"}
         className="max-h-48 min-h-10 resize-none"
         rows={1}
       />

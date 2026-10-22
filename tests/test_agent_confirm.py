@@ -146,3 +146,37 @@ async def test_sending_mail_asks_every_time_whatever_the_user_said(settings):
     again = await loop._dispatch(session_id, message_id, _call("mail.send", SEND), {})
     assert again["status"] == "needs_approval"
     assert len(loop.main.executed) == 1
+
+
+async def test_a_message_sent_during_a_turn_waits_for_it(settings, monkeypatch):
+    """Two turns in one chat at once wrote one history in turns: one at a time now."""
+    import asyncio
+
+    loop = _loop()
+    loop._turns = {}
+    order: list[str] = []
+    release = asyncio.Event()
+
+    async def turn(session_id, text):
+        order.append(f"start {text}")
+        if text == "first":
+            await release.wait()
+        order.append(f"end {text}")
+        return text
+
+    monkeypatch.setattr(loop, "_turn", turn)
+    session_id = history.ensure_session(None, "first")
+
+    first = asyncio.create_task(loop.run_turn(session_id, "first"))
+    await asyncio.sleep(0)
+    second = asyncio.create_task(loop.run_turn(session_id, "Ало?"))
+    await asyncio.sleep(0)
+
+    assert loop.busy(session_id)
+    assert order == ["start first"]
+
+    release.set()
+    await asyncio.gather(first, second)
+
+    assert order == ["start first", "end first", "start Ало?", "end Ало?"]
+    assert not loop.busy(session_id)

@@ -36,9 +36,17 @@ export function ChatPage() {
   const [error, setError] = useState<{ text: string; message: string } | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
 
+  // A turn this page did not start (another tab, before a reload) still runs: wait for it.
+  const elsewhere = sending === null && Boolean(chat.data?.busy);
+  const working = sending !== null || elsewhere;
+
+  useEffect(() => {
+    if (!elsewhere) setLive([]);
+  }, [elsewhere]);
+
   // A new chat has no id until the first answer: then any session's progress is ours.
   useEvents((event) => {
-    if (event.type !== "agent.tool" || sending === null) return;
+    if (event.type !== "agent.tool" || !working) return;
     if (!isNew && event.payload.session_id !== sessionId) return;
 
     setLive((items) => [...items, { tool: String(event.payload.tool), status: String(event.payload.status) }]);
@@ -79,7 +87,7 @@ export function ChatPage() {
   };
 
   const summary = chats.data?.find((item) => item.id === sessionId);
-  const waiting = sending === null && chat.data ? pendingQuestions(chat.data) : [];
+  const waiting = !working && chat.data ? pendingQuestions(chat.data) : [];
 
   if (chat.isError) {
     return <p className="p-6 text-sm text-muted-foreground">{chat.error instanceof ApiError && chat.error.status === 404 ? "Такого чата нет: возможно, он удалён." : chat.error.message}</p>;
@@ -97,7 +105,7 @@ export function ChatPage() {
         <div className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-6">
           {isNew && sending === null && <p className="text-center text-sm text-muted-foreground">Опишите, что нужно сделать: с файлами, документами, таблицами или почтой.</p>}
           {chat.data && <MessageList messages={chat.data.messages} trace={chat.data.trace} />}
-          {!isNew && sessionId && sending === null && <DraftCards sessionId={sessionId} />}
+          {!isNew && sessionId && !working && <DraftCards sessionId={sessionId} />}
 
           {sending !== null && (
             <>
@@ -116,6 +124,19 @@ export function ChatPage() {
             </>
           )}
 
+          {elsewhere && (
+            <div className="flex flex-col gap-1 text-sm text-muted-foreground">
+              <div className="flex items-center gap-2">
+                <LoaderCircle className="size-4 animate-spin" /> Агент ещё отвечает на последнее сообщение…
+              </div>
+              {live.map((item, index) => (
+                <div key={index} className="pl-6 text-xs">
+                  {toolTitle(item.tool, tools.data)}
+                </div>
+              ))}
+            </div>
+          )}
+
           {error && (
             <div className="flex flex-col gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm">
               <p className="text-destructive">{error.message}</p>
@@ -130,8 +151,8 @@ export function ChatPage() {
       </div>
 
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-4 pb-4">
-        {waiting.length > 0 && <ConfirmBar items={waiting} disabled={sending !== null} onAnswer={send} />}
-        <Composer disabled={sending !== null} onSend={send} />
+        {waiting.length > 0 && <ConfirmBar items={waiting} disabled={working} onAnswer={send} />}
+        <Composer disabled={working} onSend={send} />
       </div>
     </div>
   );

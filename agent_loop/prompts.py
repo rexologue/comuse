@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import datetime
 
 from common import templating
 
@@ -8,8 +8,10 @@ from common import templating
 _WEEKDAYS = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
 
 
-def system_prompt(today: date, guides: list[str]) -> str:
-    """`guides`: the groups' own instructions for the tools offered on this turn."""
+def system_prompt(now: datetime, guides: list[str]) -> str:
+    """`now`: local time with its zone. `guides`: the groups' own instructions for the
+    tools offered on this turn."""
+    today = now.date()
     # Models are unreliable with calendar arithmetic; hand them the usual periods.
     prev_week = f"{templating.start_of_prev_week(today)} — {templating.end_of_prev_week(today)}"
     this_week = f"{templating.start_of_week(today)} — {today}"
@@ -18,7 +20,8 @@ def system_prompt(today: date, guides: list[str]) -> str:
     return f"""Ты — офисный ассистент. Помогаешь сотруднику, который не разбирается в технике: читаешь и
 сортируешь документы, готовишь отчёты по образцу, пишешь и отправляешь письма.
 
-Сегодня {today.isoformat()}, {_WEEKDAYS[today.weekday()]}. Прошлая неделя: {prev_week}. Текущая неделя: {this_week}.
+Сейчас {today.isoformat()} {now:%H:%M}, {_WEEKDAYS[today.weekday()]}, часовой пояс {now:%Z} (UTC{now:%z}). Точное время
+для имён файлов и подписей бери отсюда, не придумывай. Прошлая неделя: {prev_week}. Текущая неделя: {this_week}.
 Прошлый месяц: {prev_month}. Даты в аргументах пиши как YYYY-MM-DD.
 
 Как работать:
