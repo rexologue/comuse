@@ -253,3 +253,19 @@ def test_a_template_may_use_only_what_a_run_has():
     and fail every run with an undefined name."""
     errors = _bad(lambda s: s["variables"].update(source="{{ trigger }}"))
     assert "trigger" in errors[0]
+
+
+def test_a_template_reads_as_words_on_a_card():
+    from compiler.cards import _readable
+
+    message = (
+        "Файлов во Входящих: {{ incoming.output.files | length | format_number }}\n"
+        "{% for f in incoming.output.files %}{{ loop.index }}. {{ f.name }} (изменён {{ f.modified | format_date('%Y-%m-%d') }})\n{% endfor %}"
+    )
+
+    assert _readable(message) == (
+        "Файлов во Входящих: ‹число incoming.output.files› для каждого из ‹incoming.output.files›: "
+        "№. ‹f.name› (изменён ‹f.modified›)"
+    )
+    # A filter that changes the meaning stays.
+    assert _readable("{{ today | start_of_prev_week }}") == "‹today | start_of_prev_week›"

@@ -10,7 +10,11 @@ from common.cron import describe_schedule
 from common.schemas.task import Step, TaskSpec, Trigger
 
 
-_EXPR = re.compile(r"\{\{\s*(.*?)\s*\}\}")
+_EXPR = re.compile(r"\{\{-?\s*(.*?)\s*-?\}\}", re.S)
+_STATEMENT = re.compile(r"\{%-?\s*(.*?)\s*-?%\}", re.S)
+
+# Filters that only shape how a value is printed: a card names the value without them.
+_PRESENTATION = {"format_date", "format_number", "round", "trim", "string", "int", "float", "upper", "lower", "title", "default", "join"}
 
 
 def build_cards(spec: TaskSpec, catalog: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
@@ -96,8 +100,43 @@ def _readable(value: Any) -> str:
         # Field mappings read best as their names: «client, amount».
         return ", ".join(str(key) for key in value) if value else "—"
 
-    # `{{ week_start }}` reads as ‹week_start› on a card.
-    return _EXPR.sub(lambda m: f"‹{m.group(1)}›", str(value))
+    return _template_text(str(value))
+
+
+def _template_text(text: str) -> str:
+    """A template as a card reads it: `{{ week_start }}` → ‹week_start›, `{% for f in
+    files %}…{% endfor %}` → «для каждого из ‹files›: …», printing filters dropped."""
+
+    def statement(match: re.Match) -> str:
+        words = match.group(1).split()
+
+        if words[:1] == ["for"] and "in" in words:
+            return f"для каждого из ‹{_value(' '.join(words[words.index('in') + 1:]))}›: "
+
+        if words[:1] in (["if"], ["elif"]):
+            return f"если ‹{_value(' '.join(words[1:]))}›: "
+
+        if words[:1] == ["else"]:
+            return " иначе: "
+
+        return " "
+
+    def expression(match: re.Match) -> str:
+        value = _value(match.group(1))
+        return "№" if value == "loop.index" else f"‹{value}›"
+
+    text = _EXPR.sub(expression, _STATEMENT.sub(statement, text))
+
+    return " ".join(text.split())
+
+
+def _value(expression: str) -> str:
+    """The expression without its printing filters; `| length` reads as «число …»."""
+    head, *filters = [part.strip() for part in expression.split("|")]
+    kept = [f for f in filters if f.split("(")[0].strip() not in _PRESENTATION | {"length"}]
+    text = " | ".join([head, *kept])
+
+    return f"число {text}" if any(f.split("(")[0].strip() == "length" for f in filters) else text
 
 
 def _flatten(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
