@@ -53,6 +53,12 @@ class AgentLoop:
         self._consent: dict[str, set[str]] = {}
 
 
+    def forget(self, session_ids: list[str]) -> None:
+        """Deleted chats take their consents along."""
+        for session_id in session_ids:
+            self._consent.pop(session_id, None)
+
+
     async def run_turn(self, session_id: str | None, user_text: str) -> TurnResult:
         session_id = history.ensure_session(session_id, user_text)
         history.add_message(session_id, "user", user_text)

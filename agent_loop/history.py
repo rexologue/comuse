@@ -1,14 +1,18 @@
-"""Chat sessions, messages and the tool-call trace; agent-loop is their only writer."""
+"""Chat sessions, messages and the tool-call trace; agent-loop is their only writer.
+
+A chat a task was built or edited in stays as long as the task does: its runs report
+there. Any other chat is temporary: idle for `chat_idle_hours`, it goes."""
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 
 from sqlalchemy import func
 
 from common.errors import ApiError
 from common.storage.db import session
-from common.storage.models import ChatMessage, ChatSession, TraceEvent
+from common.storage.models import ChatMessage, ChatSession, Task, TaskVersion, TraceEvent
 from common.utils import new_id, utcnow
 
 
@@ -240,7 +244,48 @@ def session_view(session_id: str) -> dict[str, Any]:
 
 
 def session_list(limit: int = 50) -> list[dict[str, Any]]:
+    """Latest chats; `task_id` is the task of a chat that stays, null for a temporary one."""
     with session() as db:
         rows = db.query(ChatSession).order_by(ChatSession.updated_at.desc()).limit(limit).all()
 
-    return [{"id": r.id, "title": r.title, "updated_at": r.updated_at.isoformat()} for r in rows]
+    tasks = task_chats()
+
+    return [{"id": r.id, "title": r.title, "updated_at": r.updated_at.isoformat(), "task_id": tasks.get(r.id)} for r in rows]
+
+
+# -----------------------------
+# TEMPORARY CHATS
+# -----------------------------
+
+def task_chats() -> dict[str, str]:
+    """Chat → task, for the chats a task was built or edited in (read from the
+    compiler's tables)."""
+    with session() as db:
+        built = db.query(Task.source_session_id, Task.id).filter(Task.source_session_id.is_not(None)).all()
+        edited = db.query(TaskVersion.session_id, TaskVersion.task_id).filter(TaskVersion.session_id.is_not(None)).all()
+
+    return {session_id: task_id for session_id, task_id in [*edited, *built]}
+
+
+def delete_session(session_id: str) -> None:
+    with session() as db:
+        db.query(TraceEvent).filter(TraceEvent.session_id == session_id).delete(synchronize_session=False)
+        db.query(ChatMessage).filter(ChatMessage.session_id == session_id).delete(synchronize_session=False)
+        db.query(ChatSession).filter(ChatSession.id == session_id).delete(synchronize_session=False)
+        db.commit()
+
+
+def sweep_idle(idle_hours: int) -> list[str]:
+    """Delete temporary chats nobody has written in for `idle_hours`; returns their ids."""
+    cutoff = utcnow() - timedelta(hours=idle_hours)
+
+    with session() as db:
+        idle = [chat_id for (chat_id,) in db.query(ChatSession.id).filter(ChatSession.updated_at < cutoff)]
+
+    kept = task_chats()
+    gone = [chat_id for chat_id in idle if chat_id not in kept]
+
+    for chat_id in gone:
+        delete_session(chat_id)
+
+    return gone

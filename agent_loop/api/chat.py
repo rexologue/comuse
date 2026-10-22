@@ -72,6 +72,20 @@ async def session_detail(session_id: str):
     return history.session_view(session_id)
 
 
+@router.delete("/sessions/{session_id}", summary="Delete a temporary chat now (a task's chat stays)")
+async def delete_session(session_id: str, request: Request):
+    if not history.session_exists(session_id):
+        raise ApiError(status_code=404, message=f"Session `{session_id}` not found")
+
+    if task_id := history.task_chats().get(session_id):
+        raise ApiError(status_code=409, message=f"Это чат задачи `{task_id}`: он живёт, пока жива задача")
+
+    history.delete_session(session_id)
+    request.app.state.loop.forget([session_id])
+
+    return {"deleted": session_id}
+
+
 class PostedMessage(BaseModel):
     content: str = Field(min_length=1)
 

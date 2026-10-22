@@ -22,8 +22,8 @@ def cutoff() -> datetime:
     return utcnow() - timedelta(days=tunables.get("retention_days"))
 
 
-async def sweep_forever(what: str, sweep: Callable[[], int]) -> None:
-    """Run `sweep` at start and every few hours; it returns how many items went."""
+async def sweep_forever(what: str, sweep: Callable[[], int], every_sec: int = _SWEEP_EVERY_SEC) -> None:
+    """Run `sweep` at start and then every `every_sec`; it returns how many items went."""
     while True:
         try:
             removed = await asyncio.to_thread(sweep)
@@ -33,4 +33,4 @@ async def sweep_forever(what: str, sweep: Callable[[], int]) -> None:
         except Exception:
             log.exception("sweeping old %s failed", what)
 
-        await asyncio.sleep(_SWEEP_EVERY_SEC)
+        await asyncio.sleep(every_sec)

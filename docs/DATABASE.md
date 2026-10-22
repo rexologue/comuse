@@ -23,8 +23,8 @@
 | [`chat_sessions`](#chat_sessions) | agent-loop | — | Чаты |
 | [`chat_messages`](#chat_messages) | agent-loop | compiler | Сообщения чатов |
 | [`trace_events`](#trace_events) | agent-loop | compiler | Вызовы команд в чатах |
-| [`tasks`](#tasks) | compiler | main, runner, scheduler | Задачи |
-| [`task_versions`](#task_versions) | compiler | main, runner, scheduler | Версии задач |
+| [`tasks`](#tasks) | compiler | main, runner, scheduler, agent-loop | Задачи |
+| [`task_versions`](#task_versions) | compiler | main, runner, scheduler, agent-loop | Версии задач |
 | [`runs`](#runs) | runner | main | Запуски |
 | [`run_log`](#run_log) | runner | main | Журналы запусков |
 | [`accounts`](#accounts) | executor | — | Аккаунты (без паролей) |
@@ -129,6 +129,11 @@ SQLite почти ничего не умеет менять в колонках 
 | `created_at`, `updated_at` | время | Создан, изменён. `updated_at` меняется при любой правке, в том числе ключа: по нему сервисы понимают, что клиент надо пересоздать |
 
 ## chat_sessions
+
+Чат задачи живёт, пока жива задача; временный agent-loop удаляет через
+`chat_idle_hours` без сообщений вместе с его `chat_messages` и `trace_events` (см.
+[CHAT.md](CHAT.md#сессии)). Чтобы отличить одно от другого, agent-loop читает `tasks` и
+`task_versions`.
 
 | Поле | Тип | Что это |
 | --- | --- | --- |
