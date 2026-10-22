@@ -133,3 +133,23 @@ async def test_a_new_draft_voids_the_older_drafts_approval(settings):
 
     assert orchestrator._get(first["approval_id"])["status"] == "cancelled"
     assert orchestrator._get(second["approval_id"])["status"] == "pending"
+
+
+async def test_archiving_a_task_voids_its_drafts_approval(settings):
+    from main.events import EventBus
+    from main.orchestrator import Orchestrator
+
+    class Client:
+        async def post(self, path, json=None, **_):
+            return {"task_id": "task_1", "version_id": "ver_1", "status": "archived"}
+
+    class Registry:
+        def client(self, name):
+            return Client()
+
+    orchestrator = Orchestrator(Registry(), EventBus())
+    draft = await orchestrator.edit("task_1", {"ops": []})
+
+    await orchestrator.set_task_status("task_1", "archive")
+
+    assert orchestrator._get(draft["approval_id"])["status"] == "cancelled"

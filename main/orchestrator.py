@@ -120,6 +120,10 @@ class Orchestrator:
     async def set_task_status(self, task_id: str, action: str) -> dict[str, Any]:
         result = await self.registry.client("compiler").post(f"/tasks/{task_id}/{action}")
 
+        # An archived task's drafts wait for nobody.
+        if action == "archive":
+            self._cancel_task_approvals(task_id)
+
         await self._reload_triggers(task_id)
         self.bus.publish(f"task.{action}", {"task_id": task_id})
 
