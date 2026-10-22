@@ -94,3 +94,11 @@ def test_a_bad_environment_value_stops_the_start(env, monkeypatch, key, value):
 
     with pytest.raises(SettingsError, match=key):
         tunables.check_env()
+
+
+def test_a_comment_taken_for_a_value_stops_the_start(env, monkeypatch):
+    """Docker's env_file turns `API_TOKEN= # empty = …` into the token "# empty = …"."""
+    monkeypatch.setenv("API_TOKEN", "# empty = main makes one")
+
+    with pytest.raises(SettingsError, match="API_TOKEN"):
+        tunables.check_env()

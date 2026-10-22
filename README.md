@@ -114,6 +114,13 @@ cp deploy/.env.example deploy/.env
 docker compose -f deploy/docker-compose.yaml up -d --build
 ```
 
+Для разработки — весь агент в одном контейнере с перезапуском при правке кода, настройки
+из `.env` в корне:
+
+```bash
+docker compose -f deploy/compose.dev.yaml up --build
+```
+
 Тесты:
 
 ```bash

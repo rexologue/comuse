@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from common.settings import SettingsError, path_coercion
+from common.settings import ENV_NAMES, SettingsError, path_coercion
 from common.storage.db import session
 from common.storage.models import Setting
 
@@ -136,7 +136,17 @@ def describe() -> list[dict[str, Any]]:
 
 
 def check_env() -> None:
-    """Fail at start, not on first use, when an environment override is invalid."""
+    """Fail at start, not on first use, when an environment value is invalid."""
+    # Docker's env_file takes `KEY= # comment` as the value "# comment" (our own .env
+    # reader does not): an API token or a key would silently become that text.
+    names = (*ENV_NAMES, *(t.env for t in TUNABLES.values()))
+    commented = [name for name in names if os.environ.get(name, "").lstrip().startswith("#")]
+    if commented:
+        raise SettingsError(
+            f"{commented}: the value starts with `#`, a comment taken for the value "
+            f"(Docker's env_file does that with `KEY= # comment`); put comments on their own line"
+        )
+
     for tunable in TUNABLES.values():
         if (raw := _env(tunable)) is None:
             continue

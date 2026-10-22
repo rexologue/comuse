@@ -1,0 +1,58 @@
+# Development: the whole agent in one container, one process (RUN_MODE=single), the
+# sources mounted and reloaded on every change. Settings come from the repository's .env,
+# read by the launcher itself like in a local run (not env_file: Docker reads
+# `KEY= # comment` as the value "# comment"); what differs in a container is set below
+# and wins over .env.
+#
+#   docker compose -f deploy/compose.dev.yaml up --build
+#
+# Optional, from the shell or deploy/.env: AGENT_DEV_PORT (8000), AGENT_DEV_HOST
+# (127.0.0.1), AGENT_DEV_WORKSPACE_PATH (../workspace), AGENT_DEV_UID / AGENT_DEV_GID
+# (1000: your user's ids, `id -u` / `id -g`), AGENT_DEV_POLLING (false; true where
+# file events do not reach the container).
+
+name: fintech2026-dev
+
+services:
+  app:
+    build:
+      context: ..
+      args:
+        APP_UID: ${AGENT_DEV_UID:-1000}
+        APP_GID: ${AGENT_DEV_GID:-1000}
+    image: fintech2026-agent:dev
+    container_name: fintech2026-dev
+    # PID 1 that forwards signals and reaps the reloader's children.
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    command: ["python", "launcher.py", "--reload"]
+    environment:
+      RUN_MODE: single
+      MAIN_PORT: "8000"
+      SERVICE_HOST: 0.0.0.0
+      DATA_DIR: /data
+      WORKSPACE_DIR: /workspace
+      KEYRING_BACKEND: file
+      KEYRING_PASSWORD: ${AGENT_DEV_KEYRING_PASSWORD:-dev-only}
+      WATCHFILES_FORCE_POLLING: ${AGENT_DEV_POLLING:-false}
+    # An LLM on the host itself is http://host.docker.internal:<port>/v1 from here.
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    ports:
+      - "${AGENT_DEV_HOST:-127.0.0.1}:${AGENT_DEV_PORT:-8000}:8000"
+    volumes:
+      # The code is the host's: an edit reloads the services. Read-only, so nothing in the
+      # container writes into the repository.
+      - ..:/app:ro
+      - ${AGENT_DEV_WORKSPACE_PATH:-../workspace}:/workspace
+      - agent-dev-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  agent-dev-data:

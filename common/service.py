@@ -24,7 +24,7 @@ log = logging.getLogger("service")
 
 # Services re-register periodically so a restarted main relearns their addresses soon.
 _REGISTER_INTERVAL_SEC = 10
-_FIRST_REGISTER_RETRY_SEC = 1
+_FIRST_REGISTER_RETRY_SEC = 0.25
 
 # How long a service waits for main to bring the database schema up to date.
 _SCHEMA_WAIT_SEC = 60
@@ -39,6 +39,9 @@ def configure_logging() -> None:
         format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
         stream=sys.stdout,
     )
+
+    # httpx logs every request at INFO: each call between services and to the LLM.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 async def require_internal_token(request: Request) -> None:

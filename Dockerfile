@@ -5,11 +5,12 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
-# Unprivileged runtime user — nothing here ever runs as root.
-ENV APP_UID=10001 \
-    APP_GID=10001
-RUN groupadd --gid 10001 agent \
- && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin agent
+# Unprivileged runtime user — nothing here ever runs as root. The dev compose builds it
+# with the host user's ids, so files in mounted folders stay writable.
+ARG APP_UID=10001
+ARG APP_GID=10001
+RUN groupadd --gid ${APP_GID} agent \
+ && useradd --uid ${APP_UID} --gid ${APP_GID} --create-home --shell /usr/sbin/nologin agent
 
 WORKDIR /app
 
@@ -28,11 +29,11 @@ COPY --chown=${APP_UID}:${APP_GID} runner/ ./runner/
 COPY --chown=${APP_UID}:${APP_GID} executor/ ./executor/
 COPY --chown=${APP_UID}:${APP_GID} scheduler/ ./scheduler/
 COPY --chown=${APP_UID}:${APP_GID} internal_tools/ ./internal_tools/
-COPY --chown=${APP_UID}:${APP_GID} launcher.py ./
+COPY --chown=${APP_UID}:${APP_GID} launcher.py single_app.py ./
 
 RUN mkdir -p /data /workspace && chown ${APP_UID}:${APP_GID} /data /workspace
 
-USER 10001:10001
+USER ${APP_UID}:${APP_GID}
 
 # One image, six services: compose picks the service with the command.
 CMD ["python", "launcher.py", "main"]

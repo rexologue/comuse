@@ -19,6 +19,15 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 # (single_app.py).
 SINGLE_PREFIX = "/svc"
 
+# Every variable the services read here (the working settings add theirs in
+# common/tunables.py), for the check that no value is a leftover comment.
+ENV_NAMES = (
+    "SERVICE_NAME", "SERVICE_HOST", "PORT", "MAIN_URL", "RUN_MODE", "SELF_URL", "MAIN_PORT",
+    "INTERNAL_TOKEN", "API_TOKEN", "ALLOWED_HOSTS", "ALLOWED_ORIGINS", "DATA_DIR", "LOG_LEVEL",
+    "LLM_MODEL", "LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL_CHAT", "LLM_MODEL_INSTRUCT",
+    "LLM_MODEL_EMBED", "LLM_EMBED_BASE_URL", "LLM_EMBED_API_KEY", "KEYRING_BACKEND", "KEYRING_PASSWORD",
+)
+
 SERVICE_PORTS = {
     "main": 8000,
     "agent_loop": 8001,
