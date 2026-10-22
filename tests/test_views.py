@@ -18,3 +18,12 @@ def test_a_task_and_its_versions_say_when_they_run(settings):
 
     assert views.task_list()[0]["schedule"] == "по будням в 09:00"
     assert views.version_detail("task_1", "ver_2")["schedule"] == "только вручную"
+
+
+def test_times_from_the_database_say_they_are_utc(settings):
+    """SQLite keeps no time zone: without the mark a browser takes UTC for local time."""
+    with session() as db:
+        db.add(Task(id="task_2", title="Сводка", status="draft"))
+        db.commit()
+
+    assert views.task_list()[0]["created_at"].endswith("+00:00")

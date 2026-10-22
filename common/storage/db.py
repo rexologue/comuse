@@ -2,15 +2,38 @@
 
 from __future__ import annotations
 
-from sqlalchemy import create_engine, event
+from datetime import datetime, timezone
+
+from sqlalchemy import DateTime, create_engine, event
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Session
+from sqlalchemy.types import TypeDecorator
 
 from common.settings import StorageSettings
 
 
 class Base(DeclarativeBase):
     pass
+
+
+class UTCDateTime(TypeDecorator):
+    """A moment in UTC. SQLite keeps no time zone: a value goes in as UTC and comes back
+    marked UTC, so `isoformat()` says `+00:00` and no client takes it for local time."""
+
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(self, value: datetime | None, dialect) -> datetime | None:
+        if value is not None and value.tzinfo is not None:
+            value = value.astimezone(timezone.utc)
+
+        return value
+
+    def process_result_value(self, value: datetime | None, dialect) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+
+        return value
 
 
 _engine: Engine | None = None

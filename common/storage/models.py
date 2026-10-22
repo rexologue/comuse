@@ -5,10 +5,10 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text
+from sqlalchemy import JSON, Boolean, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from common.storage.db import Base
+from common.storage.db import Base, UTCDateTime
 from common.utils import utcnow
 
 
@@ -28,8 +28,8 @@ class Approval(Base):
     task_version_id: Mapped[str | None] = mapped_column(String)
     session_id: Mapped[str | None] = mapped_column(String)
     payload: Mapped[Any] = mapped_column(JSON, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
 
 class Event(Base):
@@ -38,7 +38,7 @@ class Event(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     type: Mapped[str] = mapped_column(String, index=True)
     payload: Mapped[Any] = mapped_column(JSON, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
 class Setting(Base):
@@ -48,7 +48,7 @@ class Setting(Base):
 
     key: Mapped[str] = mapped_column(String, primary_key=True)
     value: Mapped[Any] = mapped_column(JSON)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
 
 
 class LLMProvider(Base):
@@ -63,8 +63,8 @@ class LLMProvider(Base):
     base_url: Mapped[str] = mapped_column(String)
     model: Mapped[str] = mapped_column(String)
     has_key: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
 
 
 # -----------------------------
@@ -76,8 +76,8 @@ class ChatSession(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     title: Mapped[str] = mapped_column(String, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
 
 
 class ChatMessage(Base):
@@ -91,7 +91,7 @@ class ChatMessage(Base):
     tool_calls: Mapped[Any] = mapped_column(JSON, nullable=True)
     tool_call_id: Mapped[str | None] = mapped_column(String)
     name: Mapped[str | None] = mapped_column(String)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
 class TraceEvent(Base):
@@ -105,7 +105,7 @@ class TraceEvent(Base):
     result: Mapped[Any] = mapped_column(JSON, nullable=True)
     # ok | error | needs_approval (waits for the user) | confirmed (ran after their yes)
     status: Mapped[str] = mapped_column(String)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
 # -----------------------------
@@ -124,8 +124,8 @@ class Task(Base):
     # Domain settings sections ({"mail": {"send_directly": false}}); see compiler/task_settings.py
     settings: Mapped[Any] = mapped_column(JSON, default=dict)
     source_session_id: Mapped[str | None] = mapped_column(String)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
 
 
 class TaskVersion(Base):
@@ -145,8 +145,8 @@ class TaskVersion(Base):
     created_by: Mapped[str] = mapped_column(String, default="compile")
     # The chat the version came from (compile, a patch asked in chat); None for manual edits.
     session_id: Mapped[str | None] = mapped_column(String)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    approved_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
 
 # -----------------------------
@@ -170,8 +170,8 @@ class Run(Base):
     # Last step's output and the files the run made; everything else is in run_log.
     result: Mapped[Any] = mapped_column(JSON, nullable=True)
     error: Mapped[str | None] = mapped_column(Text)
-    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
 
 class RunLog(Base):
@@ -184,7 +184,7 @@ class RunLog(Base):
     run_id: Mapped[str] = mapped_column(String, index=True)
     task_id: Mapped[str] = mapped_column(String, index=True)
     seq: Mapped[int] = mapped_column(Integer)
-    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     # start | step | notify | end
     kind: Mapped[str] = mapped_column(String)
     step_key: Mapped[str | None] = mapped_column(String)
@@ -205,4 +205,4 @@ class Account(Base):
     # Non-secret connection settings; the secret itself lives in the keyring.
     config: Mapped[Any] = mapped_column(JSON, default=dict)
     secret_ref: Mapped[str] = mapped_column(String)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
