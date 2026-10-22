@@ -1,10 +1,11 @@
-"""Workspace sandbox: references resolve inside their roots, escapes are refused."""
+"""Workspace sandbox: references resolve inside their roots, escapes are refused, and new
+files get names Windows accepts (the workspace is often a Windows folder)."""
 
 from __future__ import annotations
 
 import pytest
 
-from common.tools import PermissionDenied
+from common.tools import PermissionDenied, ToolError
 from executor.paths import WorkspacePaths
 
 
@@ -42,3 +43,35 @@ def test_symlink_out_of_workspace_is_refused(roots, tmp_path):
 
     with pytest.raises(PermissionDenied):
         WorkspacePaths(workspace, data).read_path("link/file.txt")
+
+
+@pytest.fixture
+def sandbox(tmp_path) -> WorkspacePaths:
+    (tmp_path / "workspace").mkdir()
+    (tmp_path / "data" / "outputs").mkdir(parents=True)
+
+    return WorkspacePaths(tmp_path / "workspace", tmp_path / "data")
+
+
+def test_a_new_name_windows_refuses_is_refused_with_a_way_out(sandbox):
+    with pytest.raises(ToolError, match="«2026-10-22T12:00:00.txt».*«:».*«2026-10-22T12-00-00.txt»"):
+        sandbox.write_path("Стихи/2026-10-22T12:00:00.txt")
+
+
+@pytest.mark.parametrize("name", ["CON.txt", "отчёт?.docx", "черновик."])
+def test_other_names_windows_refuses(sandbox, name):
+    with pytest.raises(ToolError, match="Windows"):
+        sandbox.write_path(f"Отчёты/{name}")
+
+
+def test_what_already_exists_is_not_judged(sandbox):
+    """A file made elsewhere (on Linux) can still be moved away or overwritten."""
+    existing = sandbox.workspace_dir / "старое: имя.txt"
+    existing.write_text("x")
+
+    assert sandbox.write_path("старое: имя.txt") == existing
+
+
+def test_portable_names_and_data_refs_pass(sandbox):
+    assert sandbox.write_path("Стихи/2026-10-22T12-00-00.txt").name == "2026-10-22T12-00-00.txt"
+    assert sandbox.write_path("data:outputs/run_1/report.docx").name == "report.docx"
