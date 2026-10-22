@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 import pytest
 from jinja2 import TemplateError
@@ -35,6 +35,14 @@ def test_mixed_text_renders_string():
     ctx = {"today": FRIDAY}
 
     assert templating.render_str("Отчёт {{ today | start_of_prev_week | format_date }}", ctx) == "Отчёт 05.10.2026"
+
+
+def test_format_date_keeps_the_time_of_a_moment():
+    """`now | format_date('%H:%M')` gave 00:00: the filter cut every value to a date."""
+    ctx = {"now": datetime(2026, 10, 22, 12, 12, 5), "today": FRIDAY}
+
+    assert templating.render_str("{{ now | format_date('%Y-%m-%dT%H-%M-%S') }}", ctx) == "2026-10-22T12-12-05"
+    assert templating.render_str("{{ today | format_date }}", ctx) == "16.10.2026"
 
 
 def test_render_nested_and_jsonable():

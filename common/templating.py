@@ -72,6 +72,10 @@ def add_days(value: Any, days: int) -> date:
 
 
 def format_date(value: Any, fmt: str = "%d.%m.%Y") -> str:
+    """A date, or a moment with its time (`now`): `%H:%M` stays meaningful for those."""
+    if isinstance(value, datetime):
+        return value.strftime(fmt)
+
     return _as_date(value).strftime(fmt)
 
 
