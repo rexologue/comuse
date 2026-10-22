@@ -28,7 +28,8 @@ class AccountCreate(BaseModel):
     # A known provider of the kind (GET /accounts/kinds); fills settings under `config`.
     preset: str | None = None
     config: dict[str, Any] = Field(default_factory=dict)
-    secret: str = Field(min_length=1)
+    # Left out when editing an account: its current password stays.
+    secret: str | None = Field(default=None, min_length=1)
 
 
 @router.get("/accounts", summary="Configured accounts (no secrets)")
@@ -49,7 +50,7 @@ async def list_kinds():
     }
 
 
-@router.post("/accounts", summary="Create or replace an account")
+@router.post("/accounts", summary="Create or replace an account (no secret: keep the current one)")
 async def create_account(body: AccountCreate, request: Request):
     kind = _kind(body.kind)
 
@@ -63,7 +64,13 @@ async def create_account(body: AccountCreate, request: Request):
         raise ApiError(status_code=400, message=str(e)) from e
 
     secret_ref = f"account:{body.name}"
-    request.app.state.secrets.set(secret_ref, body.secret)
+    secrets = request.app.state.secrets
+
+    if body.secret is not None:
+        secrets.set(secret_ref, body.secret)
+
+    elif secrets.get(secret_ref) is None:
+        raise ApiError(status_code=400, message=f"У аккаунта `{body.name}` ещё нет пароля: передайте secret")
 
     with session() as db:
         row = db.query(Account).filter(Account.name == body.name).one_or_none()

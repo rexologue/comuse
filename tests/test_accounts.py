@@ -25,6 +25,10 @@ class _Secrets:
         self.values[ref] = value
 
 
+    def get(self, ref):
+        return self.values.get(ref)
+
+
 def _request(secrets=None, runtime=None):
     return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(secrets=secrets or _Secrets(), runtime=runtime)))
 
@@ -53,8 +57,27 @@ async def test_preset_fills_the_settings_and_the_password_goes_to_the_keyring(se
     account = await create_account(body, _request(secrets))
 
     assert account["config"]["imap_host"] == "imap.yandex.ru"
-    assert account["config"]["username"] == "me@yandex.ru"
+    # No login stored: it falls back to the address, so editing the address moves it too.
+    assert "username" not in account["config"]
     assert "secret" not in account and secrets.values == {"account:work": "app-pass"}
+
+
+async def test_editing_without_a_password_keeps_the_old_one(settings):
+    secrets = _Secrets()
+    await create_account(AccountCreate(name="work", kind="imap_smtp", preset="yandex", config={"email": "me@yandex.ru"}, secret="app-pass"), _request(secrets))
+
+    edited = AccountCreate(name="work", kind="imap_smtp", preset="yandex", config={"email": "me@yandex.ru", "smtp_security": "starttls"})
+    account = await create_account(edited, _request(secrets))
+
+    assert account["config"]["smtp_security"] == "starttls"
+    assert secrets.values == {"account:work": "app-pass"}
+
+
+async def test_a_new_account_needs_a_password(settings):
+    with pytest.raises(ApiError) as e:
+        await create_account(AccountCreate(name="new", kind="imap_smtp", preset="yandex", config={"email": "me@yandex.ru"}), _request())
+
+    assert e.value.status_code == 400 and "пароля" in e.value.message
 
 
 @pytest.mark.parametrize(

@@ -1,9 +1,9 @@
 // Accounts the commands use (mail and others): the form comes from the kind's declared
 // fields, so nothing here knows about mail. The password goes to the secret store and
-// never comes back.
+// never comes back: editing an account leaves it as it is unless a new one is typed.
 
 import { useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2 } from "lucide-react";
+import { Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 
 import { api } from "@/api/client";
@@ -28,7 +28,7 @@ export function Accounts() {
         {accounts.data?.length === 0 && <p className="text-sm text-muted-foreground">Аккаунтов нет.</p>}
       </div>
       {adding && kinds.data ? (
-        <AddAccount kinds={kinds.data} onDone={() => setAdding(false)} />
+        <AccountForm kinds={kinds.data} onDone={() => setAdding(false)} />
       ) : (
         <Button variant="outline" className="self-start" onClick={() => setAdding(true)}>
           <Plus /> Добавить аккаунт
@@ -40,9 +40,13 @@ export function Accounts() {
 
 function AccountRow({ account, kind }: { account: Account; kind: AccountKindSpec | undefined }) {
   const queryClient = useQueryClient();
+  const kinds = useAccountKinds();
   const { busy, error, run } = useAction();
   const [checked, setChecked] = useState<string | null>(null);
   const [armed, setArmed] = useState(false);
+  const [editing, setEditing] = useState(false);
+
+  if (editing && kinds.data) return <AccountForm kinds={kinds.data} account={account} onDone={() => (setEditing(false), setChecked(null))} />;
 
   const shown = (kind?.fields ?? []).filter((field) => account.config[field.name] !== undefined && account.config[field.name] !== "").slice(0, 3);
 
@@ -66,6 +70,9 @@ function AccountRow({ account, kind }: { account: Account; kind: AccountKindSpec
           disabled={busy !== null}
         >
           {busy === "check" ? "Проверяю…" : "Проверить вход"}
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => setEditing(true)} disabled={busy !== null || !kind}>
+          <Pencil /> Изменить
         </Button>
         <Button
           size="sm"
@@ -91,13 +98,17 @@ function AccountRow({ account, kind }: { account: Account; kind: AccountKindSpec
   );
 }
 
-function AddAccount({ kinds, onDone }: { kinds: Record<string, AccountKindSpec>; onDone: () => void }) {
+// A new account, or an existing one (`account`): then the name and kind stay, the
+// settings start from what is saved, and an empty password keeps the saved one.
+function AccountForm({ kinds, account, onDone }: { kinds: Record<string, AccountKindSpec>; account?: Account; onDone: () => void }) {
   const queryClient = useQueryClient();
   const { busy, error, run } = useAction();
-  const [kindName, setKindName] = useState(Object.keys(kinds)[0] ?? "");
+  const [kindName, setKindName] = useState(account?.kind ?? Object.keys(kinds)[0] ?? "");
   const [preset, setPreset] = useState("");
-  const [name, setName] = useState("");
-  const [config, setConfig] = useState<Record<string, string>>({});
+  const [name, setName] = useState(account?.name ?? "");
+  const [config, setConfig] = useState<Record<string, string>>(() =>
+    Object.fromEntries(Object.entries(account?.config ?? {}).map(([key, value]) => [key, value == null ? "" : String(value)])),
+  );
   const [secret, setSecret] = useState("");
 
   const kind = kinds[kindName];
@@ -112,7 +123,7 @@ function AddAccount({ kinds, onDone }: { kinds: Record<string, AccountKindSpec>;
           .map(([key, value]) => [key, kind.fields.find((field) => field.name === key)?.type === "number" ? Number(value) : value]),
       );
 
-      await api("/accounts", { method: "POST", json: { name, kind: kindName, preset: preset || null, config: typed, secret } });
+      await api("/accounts", { method: "POST", json: { name, kind: kindName, preset: preset || null, config: typed, secret: secret || null } });
       await queryClient.invalidateQueries({ queryKey: keys.accounts });
       onDone();
     });
@@ -123,7 +134,12 @@ function AddAccount({ kinds, onDone }: { kinds: Record<string, AccountKindSpec>;
     <div className="flex flex-col gap-2 rounded-lg border border-dashed p-3">
       <div className="grid gap-2 sm:grid-cols-2">
         <Labeled title="Вид">
-          <select className={selectClass} value={kindName} onChange={(e) => (setKindName(e.target.value), setPreset(""), setConfig({}))}>
+          <select
+            className={selectClass}
+            value={kindName}
+            onChange={(e) => (setKindName(e.target.value), setPreset(""), setConfig({}))}
+            disabled={account !== undefined}
+          >
             {Object.entries(kinds).map(([key, item]) => (
               <option key={key} value={key}>
                 {item.title}
@@ -131,7 +147,7 @@ function AddAccount({ kinds, onDone }: { kinds: Record<string, AccountKindSpec>;
             ))}
           </select>
         </Labeled>
-        {Object.keys(kind.presets).length > 0 && (
+        {!account && Object.keys(kind.presets).length > 0 && (
           <Labeled title="Провайдер">
             <select className={selectClass} value={preset} onChange={(e) => setPreset(e.target.value)}>
               <option value="">свои настройки</option>
@@ -145,19 +161,20 @@ function AddAccount({ kinds, onDone }: { kinds: Record<string, AccountKindSpec>;
         )}
       </div>
 
-      <Labeled title="Имя аккаунта (латиница, цифры, _ и -) — по нему его называют задачи">
-        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="work" />
+      <Labeled title={account ? "Имя аккаунта — не меняется: по нему его называют задачи" : "Имя аккаунта (латиница, цифры, _ и -) — по нему его называют задачи"}>
+        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="work" disabled={account !== undefined} />
       </Labeled>
 
       {kind.fields.map((field) => {
         const fromPreset = presetValues[field.name];
+        const empty = fromPreset !== undefined ? `как у провайдера (${String(fromPreset)})` : field.default ? `по умолчанию (${field.default})` : "по умолчанию";
         const title = `${field.title}${field.required ? " *" : ""}${field.hint ? ` — ${field.hint}` : ""}`;
 
         return (
           <Labeled key={field.name} title={title}>
             {field.type === "choice" ? (
               <select className={selectClass} value={config[field.name] ?? ""} onChange={(e) => setConfig((c) => ({ ...c, [field.name]: e.target.value }))}>
-                <option value="">{fromPreset !== undefined ? `как у провайдера (${String(fromPreset)})` : "по умолчанию"}</option>
+                <option value="">{empty}</option>
                 {field.choices.map((choice) => (
                   <option key={choice} value={choice}>
                     {choice}
@@ -169,19 +186,25 @@ function AddAccount({ kinds, onDone }: { kinds: Record<string, AccountKindSpec>;
                 type={field.type === "number" ? "number" : "text"}
                 value={config[field.name] ?? ""}
                 onChange={(e) => setConfig((c) => ({ ...c, [field.name]: e.target.value }))}
-                placeholder={fromPreset !== undefined ? String(fromPreset) : ""}
+                placeholder={fromPreset !== undefined ? String(fromPreset) : field.default}
               />
             )}
           </Labeled>
         );
       })}
 
-      <Labeled title={`${kind.secret_title} *`}>
-        <Input type="password" autoComplete="new-password" value={secret} onChange={(e) => setSecret(e.target.value)} />
+      <Labeled title={account ? kind.secret_title : `${kind.secret_title} *`}>
+        <Input
+          type="password"
+          autoComplete="new-password"
+          value={secret}
+          onChange={(e) => setSecret(e.target.value)}
+          placeholder={account ? "оставить сохранённый" : ""}
+        />
       </Labeled>
 
       <div className="flex gap-2">
-        <Button size="sm" onClick={save} disabled={busy !== null || !name || !secret}>
+        <Button size="sm" onClick={save} disabled={busy !== null || !name || (!account && !secret)}>
           Сохранить
         </Button>
         <Button size="sm" variant="ghost" onClick={onDone}>

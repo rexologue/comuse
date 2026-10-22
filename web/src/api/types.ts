@@ -166,7 +166,16 @@ export type Tunable = {
 // GET /accounts, /accounts/kinds (docs/TOOLS.md#виды-аккаунтов).
 export type Account = { id: string; name: string; kind: string; config: Record<string, unknown> };
 
-export type AccountFieldSpec = { name: string; title: string; type: "text" | "number" | "choice"; required: boolean; choices: string[]; hint: string };
+export type AccountFieldSpec = {
+  name: string;
+  title: string;
+  type: "text" | "number" | "choice";
+  required: boolean;
+  choices: string[];
+  hint: string;
+  // What an empty value means ("ssl"), or "".
+  default: string;
+};
 
 export type AccountKindSpec = { title: string; fields: AccountFieldSpec[]; secret_title: string; presets: Record<string, Record<string, unknown>> };
 

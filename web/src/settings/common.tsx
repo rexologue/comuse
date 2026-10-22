@@ -14,7 +14,7 @@ export function Section({ title, description, children }: { title: string; descr
   );
 }
 
-export const selectClass = "h-9 rounded-md border bg-transparent px-2 text-sm dark:bg-input/30";
+export const selectClass = "h-9 rounded-md border bg-transparent px-2 text-sm disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30";
 
 // A call with its pending state and the error main sent, in words.
 export function useAction() {

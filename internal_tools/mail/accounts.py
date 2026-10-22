@@ -28,7 +28,9 @@ def _prepare(config: dict[str, Any]) -> dict[str, Any]:
     except ToolError as e:
         raise ValueError(str(e)) from e
 
-    return {**config, "username": config.get("username") or config["email"]}
+    # No username stored for the address: the login falls back to it, so editing the
+    # address later does not leave a stale login behind.
+    return config
 
 
 account_kind(
@@ -37,13 +39,15 @@ account_kind(
         title="Почта IMAP/SMTP",
         fields=(
             AccountField("email", "Адрес почты", required=True),
-            AccountField("username", "Логин", hint="если не совпадает с адресом"),
+            AccountField("username", "Логин", hint="если не совпадает с адресом", default="адрес почты"),
             AccountField("imap_host", "Сервер IMAP", hint="заполняется пресетом"),
-            AccountField("imap_port", "Порт IMAP", type="number"),
-            AccountField("imap_security", "Защита IMAP", type="choice", choices=("ssl", "starttls", "none")),
+            AccountField("imap_port", "Порт IMAP", type="number", default="993 при ssl, иначе 143"),
+            AccountField("imap_security", "Защита IMAP", type="choice", choices=("ssl", "starttls", "none"), default="ssl"),
             AccountField("smtp_host", "Сервер SMTP", hint="заполняется пресетом"),
-            AccountField("smtp_port", "Порт SMTP", type="number"),
-            AccountField("smtp_security", "Защита SMTP", type="choice", choices=("ssl", "starttls", "none")),
+            AccountField("smtp_port", "Порт SMTP", type="number", default="465 при ssl, 587 при starttls, 25 без защиты"),
+            AccountField(
+                "smtp_security", "Защита SMTP", type="choice", choices=("ssl", "starttls", "none"), default="ssl на порту 465, иначе starttls"
+            ),
             AccountField("drafts_folder", "Папка черновиков", hint="если не находится сама"),
         ),
         secret_title="Пароль приложения",

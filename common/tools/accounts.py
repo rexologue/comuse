@@ -19,9 +19,19 @@ class AccountField:
     required: bool = False
     choices: tuple[str, ...] = ()
     hint: str = ""
+    # What an empty value means, for the user ("ssl", "993 for ssl, else 143").
+    default: str = ""
 
     def manifest(self) -> dict[str, Any]:
-        return {"name": self.name, "title": self.title, "type": self.type, "required": self.required, "choices": list(self.choices), "hint": self.hint}
+        return {
+            "name": self.name,
+            "title": self.title,
+            "type": self.type,
+            "required": self.required,
+            "choices": list(self.choices),
+            "hint": self.hint,
+            "default": self.default,
+        }
 
 
 @dataclass(slots=True, frozen=True)
