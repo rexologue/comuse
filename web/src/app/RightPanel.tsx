@@ -7,6 +7,7 @@ import { useMatch, useSearchParams } from "react-router";
 import { useChats } from "@/api/queries";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { EventFeed } from "@/events/EventFeed";
 import { RunView } from "@/task/RunView";
 import { TaskPanel } from "@/task/TaskPanel";
 import { VersionView } from "@/task/VersionView";
@@ -57,7 +58,7 @@ export function RightPanel({ eventsOpen, onCloseEvents }: { eventsOpen: boolean;
 
       <ScrollArea className="min-h-0 flex-1">
         {showEvents ? (
-          <p className="p-4 text-sm text-muted-foreground">Здесь будут события: ждущие решения черновики, идущие запуски и всё, что сообщают задачи.</p>
+          <EventFeed onOpen={onCloseEvents} />
         ) : detail === "run" && runId ? (
           <RunView runId={runId} />
         ) : detail === "version" && openTask && versionId ? (

@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { api } from "@/api/client";
 import type {
+  AgentEvent,
   Approval,
   ChatDetail,
   ChatSummary,
@@ -33,7 +34,11 @@ export const keys = {
   run: (id: string) => ["run", id] as const,
   runLog: (id: string) => ["run", id, "log"] as const,
   approvals: (sessionId?: string) => ["approvals", sessionId ?? "all"] as const,
+  events: ["events"] as const,
 };
+
+// How many recent events the feed keeps; older ones are in the server's table.
+export const RECENT_EVENTS = 200;
 
 // A run still going is polled: its steps land in the log as they finish.
 const LIVE = new Set(["queued", "running"]);
@@ -129,5 +134,14 @@ export function useApprovals(sessionId?: string) {
   return useQuery({
     queryKey: keys.approvals(sessionId),
     queryFn: async () => (await api<{ approvals: Approval[] }>(`/approvals?status=pending${sessionId ? `&session_id=${sessionId}` : ""}`)).approvals,
+  });
+}
+
+// The latest events, oldest first; the event stream appends to it (api/events.tsx).
+export function useRecentEvents() {
+  return useQuery({
+    queryKey: keys.events,
+    queryFn: async () => (await api<{ events: AgentEvent[] }>(`/events/recent?limit=${RECENT_EVENTS}`)).events,
+    staleTime: Infinity,
   });
 }

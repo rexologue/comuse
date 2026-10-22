@@ -9,7 +9,7 @@ import { createContext, useContext, useEffect, useRef, type ReactNode } from "re
 
 import { currentConnection } from "@/api/client";
 import { authHeaders, baseUrl } from "@/api/connection";
-import { keys } from "@/api/queries";
+import { keys, RECENT_EVENTS } from "@/api/queries";
 import type { AgentEvent } from "@/api/types";
 
 type Listener = (event: AgentEvent) => void;
@@ -90,6 +90,11 @@ export function useEvents(listener: Listener): void {
 // What each event changes on the server.
 function refresh(queryClient: QueryClient, event: AgentEvent): void {
   const [group] = event.type.split(".");
+
+  // The feed's list grows by the event itself, without asking again.
+  queryClient.setQueryData<AgentEvent[]>(keys.events, (events) =>
+    events && !events.some((known) => known.id === event.id) ? [...events, event].slice(-RECENT_EVENTS) : events,
+  );
 
   if (group === "approval" || group === "task") {
     queryClient.invalidateQueries({ queryKey: keys.tasks });
