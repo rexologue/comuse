@@ -34,6 +34,8 @@ services:
       DATA_DIR: /data
       WORKSPACE_DIR: /workspace
       KEYRING_BACKEND: file
+      # The token is always made in /data/api_token here: the web container reads it.
+      API_TOKEN: ""
       KEYRING_PASSWORD: ${AGENT_DEV_KEYRING_PASSWORD:-dev-only}
       WATCHFILES_FORCE_POLLING: ${AGENT_DEV_POLLING:-false}
     # An LLM on the host itself is http://host.docker.internal:<port>/v1 from here.
@@ -53,6 +55,33 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+
+  # The frontend's dev server (Vite): Node lives only here. Its proxy sends /api to app
+  # with the API token from the shared data volume, so the browser never holds it.
+  #   docker compose -f deploy/compose.dev.yaml run --rm --no-deps web npm install
+  web:
+    image: node:22-slim
+    container_name: fintech2026-dev-web
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    # The host user's ids: node_modules and the lockfile land in web/ as yours.
+    user: "${AGENT_DEV_UID:-1000}:${AGENT_DEV_GID:-1000}"
+    working_dir: /web
+    command: ["sh", "-c", "npm install --no-audit --no-fund && npm run dev -- --host 0.0.0.0"]
+    environment:
+      HOME: /tmp
+      AGENT_API_URL: http://app:8000
+      AGENT_TOKEN_FILE: /data/api_token
+      CHOKIDAR_USEPOLLING: ${AGENT_DEV_POLLING:-false}
+    ports:
+      - "${AGENT_DEV_HOST:-127.0.0.1}:${AGENT_DEV_WEB_PORT:-5173}:5173"
+    volumes:
+      - ../web:/web
+      - agent-dev-data:/data:ro
+    depends_on:
+      app:
+        condition: service_healthy
 
 volumes:
   agent-dev-data:

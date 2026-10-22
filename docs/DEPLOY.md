@@ -174,8 +174,10 @@ docker compose -f deploy/docker-compose.yaml up -d --build
 
 ## Docker для разработки
 
-Весь агент в одном контейнере и одном процессе (`RUN_MODE=single`). Исходники
-примонтированы, поэтому правка кода сразу перезапускает сервисы (`launcher.py --reload`):
+Весь агент в одном контейнере и одном процессе (`RUN_MODE=single`) и рядом —
+dev-сервер фронта в контейнере `web` (Node только в нём, см. [WEB.md](WEB.md)).
+Исходники примонтированы, поэтому правка кода сразу перезапускает сервисы
+(`launcher.py --reload`), а фронт обновляется в браузере:
 
 ```bash
 docker compose -f deploy/compose.dev.yaml up --build
@@ -187,8 +189,9 @@ docker compose -f deploy/compose.dev.yaml up --build
   `DATA_DIR=/data`, `WORKSPACE_DIR=/workspace`, `KEYRING_BACKEND=file`.
 - **Код** примонтирован только на чтение: контейнер ничего не пишет в репозиторий.
 - **Рабочая папка** — `workspace/` репозитория или `AGENT_DEV_WORKSPACE_PATH`.
-- **Данные** — в томе `agent-dev-data`, отдельно от боевого `agent-data`. Токен API, если
-  `API_TOKEN` пуст: `docker exec fintech2026-dev cat /data/api_token`.
+- **Данные** — в томе `agent-dev-data`, отдельно от боевого `agent-data`. `API_TOKEN` из
+  `.env` здесь не действует: main всегда создаёт токен в `/data/api_token`, а контейнер
+  `web` читает его оттуда. Посмотреть: `docker exec fintech2026-dev cat /data/api_token`.
 - **Пользователь** в образе получает uid и gid хоста (`AGENT_DEV_UID`, `AGENT_DEV_GID`,
   по умолчанию 1000), поэтому команды могут писать в примонтированную рабочую папку.
 - **LLM на самом хосте** доступна из контейнера как `http://host.docker.internal:<порт>/v1`.
@@ -198,6 +201,7 @@ docker compose -f deploy/compose.dev.yaml up --build
 | Переменная | Что задаёт | По умолчанию |
 | --- | --- | --- |
 | `AGENT_DEV_PORT` | Порт на хосте | `8000` |
+| `AGENT_DEV_WEB_PORT` | Порт фронта на хосте | `5173` |
 | `AGENT_DEV_HOST` | Адрес публикации | `127.0.0.1` |
 | `AGENT_DEV_WORKSPACE_PATH` | Рабочая папка на хосте | `../workspace` |
 | `AGENT_DEV_UID`, `AGENT_DEV_GID` | uid и gid пользователя в образе (`id -u`, `id -g`) | `1000` |
