@@ -6,6 +6,7 @@ import { Layout } from "@/app/Layout";
 import { ChatPage } from "@/chat/ChatPage";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Home } from "@/pages/Home";
+import { SettingsPage } from "@/settings/SettingsPage";
 import { Placeholder } from "@/pages/Placeholder";
 import { ThemeProvider } from "@/theme";
 
@@ -20,7 +21,8 @@ const router = createBrowserRouter([
       { path: "/", element: <Home /> },
       { path: "/chat/:sessionId", element: <ChatPage /> },
       { path: "/task/:taskId", element: <Placeholder title="Задача" text="Задача без чата: её панель справа." /> },
-      { path: "/settings", element: <Placeholder title="Настройки" text="Модели, рабочие настройки, аккаунты и «О программе» — шаг 6." /> },
+      { path: "/settings", element: <SettingsPage /> },
+      { path: "/settings/:section", element: <SettingsPage /> },
     ],
   },
 ]);

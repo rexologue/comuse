@@ -1,21 +1,26 @@
-// The server state the screens share; events (later) invalidate these keys.
+// The server state the screens share; events (api/events.tsx) refresh these keys.
 
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "@/api/client";
 import type {
+  Account,
+  AccountKindSpec,
   AgentEvent,
   Approval,
   ChatDetail,
   ChatSummary,
   Diff,
   Job,
+  LlmOverview,
   LogEntry,
   Run,
+  ServiceStatus,
   TaskDetail,
   TaskSettings,
   TaskSummary,
   ToolManifest,
+  Tunable,
   Version,
 } from "@/api/types";
 
@@ -35,6 +40,12 @@ export const keys = {
   runLog: (id: string) => ["run", id, "log"] as const,
   approvals: (sessionId?: string) => ["approvals", sessionId ?? "all"] as const,
   events: ["events"] as const,
+  llm: ["llm"] as const,
+  settings: ["settings"] as const,
+  accounts: ["accounts"] as const,
+  accountKinds: ["accounts", "kinds"] as const,
+  services: ["services"] as const,
+  logs: ["logs"] as const,
 };
 
 // How many recent events the feed keeps; older ones are in the server's table.
@@ -144,4 +155,28 @@ export function useRecentEvents() {
     queryFn: async () => (await api<{ events: AgentEvent[] }>(`/events/recent?limit=${RECENT_EVENTS}`)).events,
     staleTime: Infinity,
   });
+}
+
+export function useLlm() {
+  return useQuery({ queryKey: keys.llm, queryFn: () => api<LlmOverview>("/llm") });
+}
+
+export function useSettings() {
+  return useQuery({ queryKey: keys.settings, queryFn: async () => (await api<{ settings: Tunable[] }>("/settings")).settings });
+}
+
+export function useAccounts() {
+  return useQuery({ queryKey: keys.accounts, queryFn: async () => (await api<{ accounts: Account[] }>("/accounts")).accounts });
+}
+
+export function useAccountKinds() {
+  return useQuery({ queryKey: keys.accountKinds, queryFn: async () => (await api<{ kinds: Record<string, AccountKindSpec> }>("/accounts/kinds")).kinds, staleTime: Infinity });
+}
+
+export function useServices() {
+  return useQuery({ queryKey: keys.services, queryFn: () => api<ServiceStatus>("/services"), refetchInterval: 10_000 });
+}
+
+export function useLogs(lines: number) {
+  return useQuery({ queryKey: [...keys.logs, lines], queryFn: () => api<{ dir: string; files: Record<string, string[]> }>(`/logs?lines=${lines}`) });
 }

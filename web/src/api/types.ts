@@ -135,3 +135,38 @@ export type Approval = {
 
 // POST /compiler/patch: the new draft with what changed.
 export type PatchResult = { task_id: string; version_id: string; title: string; summary: string; diff: string[]; cards: Card[]; approval_id: string };
+
+// GET /llm (docs/LLM.md).
+export type RoleName = "chat" | "instruct" | "embed";
+
+export type Provider = { id: string; name: string; base_url: string; model: string; has_key: boolean; roles: RoleName[]; created_at: string; updated_at: string };
+
+export type LlmOverview = {
+  roles: Record<RoleName, { provider: string; name: string; model: string; follows_chat?: boolean } | null>;
+  providers: Provider[];
+};
+
+export type CheckResult = { role: RoleName; model: string; ok: boolean; error?: string; dimensions?: number };
+
+// GET /settings (docs/SETTINGS.md).
+export type Tunable = {
+  key: string;
+  value: unknown;
+  default: unknown;
+  source: "env" | "db" | "default";
+  locked: boolean;
+  type: "int" | "bool" | "choice" | "dir";
+  min: number | null;
+  max: number | null;
+  choices: string[] | null;
+  description: string;
+};
+
+// GET /accounts, /accounts/kinds (docs/TOOLS.md#виды-аккаунтов).
+export type Account = { id: string; name: string; kind: string; config: Record<string, unknown> };
+
+export type AccountFieldSpec = { name: string; title: string; type: "text" | "number" | "choice"; required: boolean; choices: string[]; hint: string };
+
+export type AccountKindSpec = { title: string; fields: AccountFieldSpec[]; secret_title: string; presets: Record<string, Record<string, unknown>> };
+
+export type ServiceStatus = Record<string, { url: string | null; last_seen: string | null }>;

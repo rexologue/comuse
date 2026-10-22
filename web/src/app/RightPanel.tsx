@@ -15,6 +15,7 @@ import { VersionView } from "@/task/VersionView";
 export function RightPanel({ eventsOpen, onCloseEvents }: { eventsOpen: boolean; onCloseEvents: () => void }) {
   // The layout sits above the routes, so it reads them from the URL itself.
   const chatMatch = useMatch("/chat/:sessionId");
+  const settingsMatch = useMatch("/settings/*");
   const taskMatch = useMatch("/task/:taskId");
   const chats = useChats();
   const [search, setSearch] = useSearchParams();
@@ -33,6 +34,9 @@ export function RightPanel({ eventsOpen, onCloseEvents }: { eventsOpen: boolean;
       params.delete("version");
       return params;
     });
+
+  // Settings need the room: the events come only when the bell asks.
+  if (settingsMatch && !eventsOpen) return null;
 
   const title = showEvents ? "События" : detail === "run" ? "Журнал запуска" : detail === "version" ? "Версия" : "Задача";
 
