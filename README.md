@@ -90,10 +90,11 @@ uv run python launcher.py
 `data/runtime.json`. Порт у main постоянный: свободный, выбранный при первом запуске,
 или `MAIN_PORT` из `.env`. Остальные сервисы берут любые свободные порты. Второй
 launcher с той же папкой данных не запустится. Интерактивная документация —
-`<адрес>/docs`. Первое сообщение (с `MAIN_PORT=8000`):
+`<адрес>/docs`. Каждому запросу нужен токен: `API_TOKEN` из `.env` или, если он пуст,
+тот, что main создал в `data/api_token`. Первое сообщение (с `MAIN_PORT=8000`):
 
 ```bash
-curl -s -X POST localhost:8000/agent/v1/chat/completions -H 'content-type: application/json' -d '{"messages":[{"role":"user","content":"В папке Отчёты/Пример лежит пример еженедельного отчёта. Сделай такой же за прошлую неделю по выгрузкам из Отчёты/Продажи."}]}'
+curl -s -X POST localhost:8000/agent/v1/chat/completions -H "Authorization: Bearer $(cat data/api_token)" -H 'content-type: application/json' -d '{"messages":[{"role":"user","content":"В папке Отчёты/Пример лежит пример еженедельного отчёта. Сделай такой же за прошлую неделю по выгрузкам из Отчёты/Продажи."}]}'
 ```
 
 Ответ содержит `session_id`: передавайте его дальше в `metadata.session_id`. Клиент,
@@ -144,7 +145,7 @@ uv run pytest
 | `LLM_MODEL_CHAT`, `LLM_MODEL_INSTRUCT` | Модели по ролям | `LLM_MODEL` |
 | `LLM_MODEL_EMBED` | Модель эмбеддингов | не задано |
 | `DATA_DIR` | База, шаблоны, готовые файлы | `data` |
-| `API_TOKEN` | Токен внешнего API; пусто — без проверки | не задано |
+| `API_TOKEN` | Токен внешнего API, нужен всегда; пусто — main создаёт его в `data/api_token` | не задано |
 | `INTERNAL_TOKEN` | Токен между сервисами; локально его создаёт `launcher.py` | не задано |
 | `KEYRING_BACKEND` | Где пароли аккаунтов: `system` или `file` | `system` |
 

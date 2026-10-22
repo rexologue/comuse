@@ -76,7 +76,8 @@
 одно значение не подходит, не сохраняется ни одно, а ответ `400` перечисляет причины:
 
 ```bash
-curl -X PATCH http://127.0.0.1:8000/settings -H 'Content-Type: application/json' \
+curl -X PATCH http://127.0.0.1:8000/settings -H "Authorization: Bearer $(cat data/api_token)" \
+  -H 'Content-Type: application/json' \
   -d '{"retention_days": 30, "agent_tools_top_k": 0}'
 ```
 

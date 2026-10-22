@@ -15,6 +15,7 @@ from main.api import llm as llm_api
 from main.api import settings as settings_api
 from main.api import tasks as tasks_api
 from main import events, providers
+from main.auth import Guard, api_token
 from main.events import EventBus
 from main.orchestrator import Orchestrator
 from main.registry import ServiceRegistry
@@ -24,6 +25,8 @@ from main.registry import ServiceRegistry
 async def lifespan(app: FastAPI):
 
     settings = app.state.settings
+
+    app.state.api_token = api_token(settings)
 
     # Models named by LLM_* variables become providers (once; later they are ordinary).
     providers.register_env_models(settings)
@@ -51,7 +54,7 @@ async def lifespan(app: FastAPI):
 
 
 # Routers carry their own auth: internal ones need the internal token, the rest
-# the optional API token.
+# the API token.
 app = create_service_app(
     name="main",
     title="Office agent · main",
@@ -66,3 +69,6 @@ app = create_service_app(
     lifespan_hook=lifespan,
     protect=False,
 )
+
+# Host check and CORS before any route (main/auth.py).
+app.add_middleware(Guard)

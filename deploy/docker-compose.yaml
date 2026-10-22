@@ -36,6 +36,8 @@ services:
     environment:
       <<: *service-env
       SELF_URL: http://main:8000
+      # The other containers call main by its compose name; outside callers use the host's.
+      ALLOWED_HOSTS: ${AGENT_DEPLOY_ALLOWED_HOSTS:-127.0.0.1,localhost},main
     ports:
       - "${AGENT_DEPLOY_HOST}:${AGENT_DEPLOY_PORT}:8000"
     healthcheck:

@@ -202,12 +202,14 @@ def _run_all(env: dict[str, str], reload: bool) -> None:
 
     children[0].start()
     _wait_for_main(main_url)
-    _write_runtime(data_dir, {"main_url": main_url, "port": main_port, "pid": os.getpid()})
+    # With no API_TOKEN main has made one there (main/auth.py); a local client reads it.
+    token_file = None if env.get("API_TOKEN") else str(data_dir / "api_token")
+    _write_runtime(data_dir, {"main_url": main_url, "port": main_port, "pid": os.getpid(), "token_file": token_file})
 
     for child in children[1:]:
         child.start()
 
-    print(f"[launcher  ] started: {', '.join(START_ORDER)} · API at {main_url}", flush=True)
+    print(f"[launcher  ] started: {', '.join(START_ORDER)} · API at {main_url} · token: {token_file or 'API_TOKEN'}", flush=True)
 
     try:
         while not stopping.is_set():
@@ -225,7 +227,7 @@ def _run_all(env: dict[str, str], reload: bool) -> None:
             child.wait()
 
         # The port stays for the next start; the address is no longer served.
-        _write_runtime(data_dir, {"main_url": None, "port": main_port, "pid": None})
+        _write_runtime(data_dir, {"main_url": None, "port": main_port, "pid": None, "token_file": token_file})
         lock.release()
 
 

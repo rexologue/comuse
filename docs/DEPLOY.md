@@ -109,7 +109,8 @@ cp deploy/.env.example deploy/.env
 - настройки LLM;
 - `INTERNAL_TOKEN` — обязателен, общий для всех контейнеров;
 - `KEYRING_PASSWORD` — ключ к файлу паролей;
-- `API_TOKEN` — обязателен, если main публикуется не на `127.0.0.1`.
+- `API_TOKEN` — если пусто, main создаст токен при первом старте: `docker exec <префикс>-main cat /data/api_token`;
+- `AGENT_DEPLOY_ALLOWED_HOSTS` — имена, по которым клиенты обращаются к main; при публикации в сеть добавьте имя или адрес сервера.
 
 ```bash
 docker compose -f deploy/docker-compose.yaml up -d --build
@@ -152,7 +153,9 @@ LLM, прокси и `reasoning_effort` для LLM) меняются через 
 | `SERVICE_HOST` | На каком адресе слушать | `127.0.0.1` |
 | `PORT` | Порт одиночного сервиса (`launcher.py <сервис>`, Docker); при запуске всех сервисов его раздаёт launcher | 8000–8005 по сервису |
 | `SELF_URL` | Адрес, который сервис сообщает main | `http://127.0.0.1:<порт>` |
-| `API_TOKEN` | Токен внешнего API (`Authorization: Bearer`); пусто — без проверки | не задано |
+| `API_TOKEN` | Токен внешнего API (`Authorization: Bearer`), нужен всегда; пусто — main создаёт его в `DATA_DIR/api_token` | не задано |
+| `ALLOWED_HOSTS` | Заголовки `Host`, на которые отвечает main (защита от DNS rebinding); `*` — без проверки | `127.0.0.1,localhost` |
+| `ALLOWED_ORIGINS` | Источники для CORS через запятую | не задано |
 | `INTERNAL_TOKEN` | Токен между сервисами (`X-Internal-Token`); пусто — без проверки, локально его создаёт `launcher.py` | не задано |
 | `LOG_LEVEL` | Уровень логов | `INFO` |
 
@@ -189,7 +192,8 @@ LLM, прокси и `reasoning_effort` для LLM) меняются через 
 | Переменная | Значение | По умолчанию |
 | --- | --- | --- |
 | `AGENT_DEPLOY_PORT` | Порт main на хосте | `8000` |
-| `AGENT_DEPLOY_HOST` | Адрес публикации main; `0.0.0.0` — в сеть (тогда задайте `API_TOKEN`) | `127.0.0.1` |
+| `AGENT_DEPLOY_HOST` | Адрес публикации main; `0.0.0.0` — в сеть | `127.0.0.1` |
+| `AGENT_DEPLOY_ALLOWED_HOSTS` | `ALLOWED_HOSTS` для main; `main` добавляется сам | `127.0.0.1,localhost` |
 | `AGENT_DEPLOY_IMAGE` | Имя образа | `fintech2026-agent:0.1.0` |
 | `AGENT_DEPLOY_CONTAINER_PREFIX` | Префикс имён контейнеров | `fintech2026` |
 | `AGENT_DEPLOY_WORKSPACE_PATH` | Папка пользователя на хосте → `/workspace` | не задано |

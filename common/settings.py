@@ -33,7 +33,11 @@ class ServiceSettings:
     self_url: str
     main_url: str
     internal_token: str
+    # Empty: main makes one and keeps it in DATA_DIR/api_token (main/auth.py).
     api_token: str
+    # main only: Host headers it answers (DNS rebinding) and origins allowed by CORS.
+    allowed_hosts: list[str]
+    allowed_origins: list[str]
 
 
 @dataclass(slots=True, frozen=True)
@@ -117,6 +121,9 @@ class Settings:
         internal_token = os.environ.get("INTERNAL_TOKEN", "")
         api_token = os.environ.get("API_TOKEN", "")
 
+        allowed_hosts = _list(os.environ.get("ALLOWED_HOSTS") or "127.0.0.1,localhost")
+        allowed_origins = _list(os.environ.get("ALLOWED_ORIGINS", ""))
+
         # -----------------------------
         # STORAGE
         # -----------------------------
@@ -145,6 +152,8 @@ class Settings:
                 main_url=main_url,
                 internal_token=internal_token,
                 api_token=api_token,
+                allowed_hosts=allowed_hosts,
+                allowed_origins=allowed_origins,
             ),
             storage=StorageSettings(
                 data_dir=data_dir,
@@ -186,6 +195,10 @@ def _llm_from_env() -> LLMSettings | None:
         embed_base_url=embed_base_url,
         embed_api_key=embed_api_key,
     )
+
+
+def _list(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
 
 
 def load_dotenv(path: Path) -> dict[str, str]:

@@ -19,8 +19,10 @@ async def client(settings):
     install_error_handlers(app)
     app.include_router(settings_api.router)
     app.state.settings = settings
+    app.state.api_token = "test-api-token"
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://agent") as client:
+    headers = {"Authorization": "Bearer test-api-token"}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://agent", headers=headers) as client:
         yield client
 
 

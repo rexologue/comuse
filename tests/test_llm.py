@@ -47,8 +47,10 @@ async def client(main_settings):
     install_error_handlers(app)
     app.include_router(llm_api.router)
     app.state.settings = main_settings
+    app.state.api_token = "test-api-token"
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://agent") as client:
+    headers = {"Authorization": "Bearer test-api-token"}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://agent", headers=headers) as client:
         yield client
 
 
