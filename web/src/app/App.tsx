@@ -1,4 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { lazy, Suspense } from "react";
 import { createBrowserRouter, RouterProvider } from "react-router";
 
 import { EventsProvider } from "@/api/events";
@@ -6,9 +7,17 @@ import { Layout } from "@/app/Layout";
 import { ChatPage } from "@/chat/ChatPage";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Home } from "@/pages/Home";
-import { SettingsPage } from "@/settings/SettingsPage";
 import { Placeholder } from "@/pages/Placeholder";
 import { ThemeProvider } from "@/theme";
+
+// Settings are opened now and then: their code loads when asked for.
+const SettingsPage = lazy(() => import("@/settings/SettingsPage").then((module) => ({ default: module.SettingsPage })));
+
+const settings = (
+  <Suspense fallback={<p className="p-6 text-sm text-muted-foreground">Загрузка…</p>}>
+    <SettingsPage />
+  </Suspense>
+);
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 10_000, refetchOnWindowFocus: true } },
@@ -21,8 +30,8 @@ const router = createBrowserRouter([
       { path: "/", element: <Home /> },
       { path: "/chat/:sessionId", element: <ChatPage /> },
       { path: "/task/:taskId", element: <Placeholder title="Задача" text="Задача без чата: её панель справа." /> },
-      { path: "/settings", element: <SettingsPage /> },
-      { path: "/settings/:section", element: <SettingsPage /> },
+      { path: "/settings", element: settings },
+      { path: "/settings/:section", element: settings },
     ],
   },
 ]);

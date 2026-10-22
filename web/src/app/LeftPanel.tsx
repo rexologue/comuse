@@ -16,7 +16,7 @@ const STATUS: Record<TaskStatus, { label: string; variant: "success" | "secondar
   archived: { label: "архив", variant: "outline" },
 };
 
-export function LeftPanel() {
+export function LeftPanel({ overlay = false }: { overlay?: boolean }) {
   const tasks = useTasks();
   const chats = useChats();
   const navigate = useNavigate();
@@ -24,7 +24,7 @@ export function LeftPanel() {
   const temporary = (chats.data ?? []).filter((chat) => chat.task_id === null);
 
   return (
-    <aside className="flex w-72 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground">
+    <aside className={cn("flex w-72 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground", overlay && "absolute inset-y-0 left-0 z-40 shadow-xl")}>
       <div className="p-3">
         <Button className="w-full justify-start" variant="outline" onClick={() => navigate("/chat/new")}>
           <MessageSquarePlus /> Новый чат

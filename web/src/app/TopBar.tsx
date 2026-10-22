@@ -1,4 +1,4 @@
-import { Bell, Monitor, Moon, Settings, Sun } from "lucide-react";
+import { Bell, Menu, Monitor, Moon, PanelRight, Settings, Sun } from "lucide-react";
 import { useEffect } from "react";
 import { Link } from "react-router";
 
@@ -17,7 +17,15 @@ const THEMES: { value: Theme; label: string; icon: typeof Sun }[] = [
   { value: "dark", label: "Тёмная", icon: Moon },
 ];
 
-export function TopBar({ eventsOpen, onToggleEvents }: { eventsOpen: boolean; onToggleEvents: () => void }) {
+type Props = {
+  eventsOpen: boolean;
+  onToggleEvents: () => void;
+  // Given on a window too narrow for the side panels to stay.
+  onToggleLeft?: () => void;
+  onToggleRight?: () => void;
+};
+
+export function TopBar({ eventsOpen, onToggleEvents, onToggleLeft, onToggleRight }: Props) {
   const health = useHealth();
   const events = useRecentEvents();
   const seen = useSeen();
@@ -33,7 +41,12 @@ export function TopBar({ eventsOpen, onToggleEvents }: { eventsOpen: boolean; on
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-2 border-b px-3">
-      <Link to="/" className="font-semibold">
+      {onToggleLeft && (
+        <Button variant="ghost" size="icon" onClick={onToggleLeft} aria-label="Задачи и чаты">
+          <Menu />
+        </Button>
+      )}
+      <Link to="/" className="truncate font-semibold">
         Офисный агент
       </Link>
 
@@ -45,6 +58,11 @@ export function TopBar({ eventsOpen, onToggleEvents }: { eventsOpen: boolean; on
       </Tooltip>
 
       <div className="ml-auto flex items-center gap-1">
+        {onToggleRight && (
+          <Button variant="ghost" size="icon" onClick={onToggleRight} aria-label="Боковая панель">
+            <PanelRight />
+          </Button>
+        )}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button variant={eventsOpen ? "secondary" : "ghost"} size="icon" onClick={onToggleEvents} aria-label="События" className="relative">

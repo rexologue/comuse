@@ -8,14 +8,14 @@ import { useChats } from "@/api/queries";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { EventFeed } from "@/events/EventFeed";
+import { cn } from "@/lib/utils";
 import { RunView } from "@/task/RunView";
 import { TaskPanel } from "@/task/TaskPanel";
 import { VersionView } from "@/task/VersionView";
 
-export function RightPanel({ eventsOpen, onCloseEvents }: { eventsOpen: boolean; onCloseEvents: () => void }) {
+export function RightPanel({ overlay = false, eventsOpen, onCloseEvents, onClose }: { overlay?: boolean; eventsOpen: boolean; onCloseEvents: () => void; onClose: () => void }) {
   // The layout sits above the routes, so it reads them from the URL itself.
   const chatMatch = useMatch("/chat/:sessionId");
-  const settingsMatch = useMatch("/settings/*");
   const taskMatch = useMatch("/task/:taskId");
   const chats = useChats();
   const [search, setSearch] = useSearchParams();
@@ -35,13 +35,10 @@ export function RightPanel({ eventsOpen, onCloseEvents }: { eventsOpen: boolean;
       return params;
     });
 
-  // Settings need the room: the events come only when the bell asks.
-  if (settingsMatch && !eventsOpen) return null;
-
   const title = showEvents ? "События" : detail === "run" ? "Журнал запуска" : detail === "version" ? "Версия" : "Задача";
 
   return (
-    <aside className="flex w-96 shrink-0 flex-col border-l">
+    <aside className={cn("flex w-96 max-w-full shrink-0 flex-col border-l bg-background", overlay && "absolute inset-y-0 right-0 z-40 shadow-xl")}>
       <div className="flex h-11 shrink-0 items-center gap-2 border-b px-3 text-sm font-medium">
         {!showEvents && detail ? (
           <Button variant="ghost" size="icon" className="size-7" onClick={back} aria-label="Назад к задаче">
@@ -53,10 +50,17 @@ export function RightPanel({ eventsOpen, onCloseEvents }: { eventsOpen: boolean;
           <Workflow className="size-4" />
         )}
         {title}
-        {eventsOpen && (openTask !== null || detail !== null) && (
-          <Button variant="ghost" size="icon" className="ml-auto size-7" onClick={onCloseEvents} aria-label="Закрыть события">
+        {overlay ? (
+          <Button variant="ghost" size="icon" className="ml-auto size-7" onClick={onClose} aria-label="Закрыть панель">
             <X />
           </Button>
+        ) : (
+          eventsOpen &&
+          (openTask !== null || detail !== null) && (
+            <Button variant="ghost" size="icon" className="ml-auto size-7" onClick={onCloseEvents} aria-label="Закрыть события">
+              <X />
+            </Button>
+          )
         )}
       </div>
 

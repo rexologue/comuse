@@ -58,6 +58,19 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // Libraries change less often than our code: their chunks stay cached.
+        manualChunks: {
+          react: ["react", "react-dom", "react-router"],
+          data: ["@tanstack/react-query", "@microsoft/fetch-event-source"],
+          markdown: ["react-markdown", "remark-gfm"],
+          ui: ["@radix-ui/react-dropdown-menu", "@radix-ui/react-scroll-area", "@radix-ui/react-tooltip", "lucide-react"],
+        },
+      },
+    },
+  },
   test: {
     environment: "node",
   },

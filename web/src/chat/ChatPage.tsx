@@ -3,7 +3,7 @@
 // answer brings its session_id.
 
 import { useQueryClient } from "@tanstack/react-query";
-import { LoaderCircle, Trash2 } from "lucide-react";
+import { LoaderCircle, RotateCcw, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 
@@ -32,7 +32,8 @@ export function ChatPage() {
 
   const [sending, setSending] = useState<string | null>(null);
   const [live, setLive] = useState<Live[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  // The message that failed to go, to send again as it was.
+  const [error, setError] = useState<{ text: string; message: string } | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
 
   // A new chat has no id until the first answer: then any session's progress is ours.
@@ -70,7 +71,7 @@ export function ChatPage() {
 
       if (isNew) navigate(`/chat/${reply.session_id}`, { replace: true });
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : String(e));
+      setError({ text, message: failure(e) });
     } finally {
       setSending(null);
       setLive([]);
@@ -115,7 +116,15 @@ export function ChatPage() {
             </>
           )}
 
-          {error && <p className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">{error}</p>}
+          {error && (
+            <div className="flex flex-col gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm">
+              <p className="text-destructive">{error.message}</p>
+              <p className="line-clamp-2 text-muted-foreground">Не отправлено: «{error.text}»</p>
+              <Button size="sm" variant="outline" className="self-start" onClick={() => send(error.text)}>
+                <RotateCcw /> Повторить
+              </Button>
+            </div>
+          )}
           <div ref={bottom} />
         </div>
       </div>
@@ -157,4 +166,13 @@ function DeleteChat({ sessionId }: { sessionId: string }) {
       <Trash2 /> {armed ? "Точно удалить?" : "Удалить чат"}
     </Button>
   );
+}
+
+function failure(e: unknown): string {
+  if (!(e instanceof ApiError)) return String(e instanceof Error ? e.message : e);
+
+  if (e.status === 503) return `Агент ещё запускается или модель не подключена: ${e.message}`;
+  if (e.status === 0 || e.status >= 500) return `Агент не ответил: ${e.message}`;
+
+  return e.message;
 }
