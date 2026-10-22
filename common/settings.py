@@ -15,6 +15,10 @@ class SettingsError(Exception):
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
+# RUN_MODE=single: every service but main is mounted under this prefix on main's port
+# (single_app.py).
+SINGLE_PREFIX = "/svc"
+
 SERVICE_PORTS = {
     "main": 8000,
     "agent_loop": 8001,
@@ -108,14 +112,23 @@ class Settings:
             high=65535,
         )
 
-        # The address this service reports to main on registration. Locally it is
-        # loopback; in Docker compose sets it to the service's DNS name.
-        service_self_url = os.environ.get("SELF_URL") or f"http://127.0.0.1:{service_port}"
-
         main_url = os.environ.get(
             "MAIN_URL",
             f"http://127.0.0.1:{SERVICE_PORTS['main']}",
         ).rstrip("/")
+
+        # multi: a process per service; single: all of them in one (single_app.py).
+        run_mode = os.environ.get("RUN_MODE") or "multi"
+        if run_mode not in ("multi", "single"):
+            raise SettingsError(f"Incorrect `RUN_MODE`: {run_mode!r}. Must be one of ['multi', 'single'].")
+
+        # The address this service reports to main on registration. Locally it is
+        # loopback; in Docker compose sets it to the service's DNS name; in one process
+        # it is the service's prefix on main's own port.
+        if run_mode == "single" and name != "main":
+            service_self_url = f"{main_url}{SINGLE_PREFIX}/{name}"
+        else:
+            service_self_url = os.environ.get("SELF_URL") or f"http://127.0.0.1:{service_port}"
 
         # Empty token = the check is off; the launcher generates one for local runs.
         internal_token = os.environ.get("INTERNAL_TOKEN", "")

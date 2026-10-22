@@ -24,6 +24,7 @@ log = logging.getLogger("service")
 
 # Services re-register periodically so a restarted main relearns their addresses soon.
 _REGISTER_INTERVAL_SEC = 10
+_FIRST_REGISTER_RETRY_SEC = 1
 
 # How long a service waits for main to bring the database schema up to date.
 _SCHEMA_WAIT_SEC = 60
@@ -60,14 +61,19 @@ async def health(request: Request):
 
 
 async def _register_forever(main: MainClient, name: str, url: str) -> None:
+    registered = False
+
     while True:
         try:
             await main.register(name, url)
+            registered = True
 
         except ApiError as e:
-            log.warning("registration in main failed: %s", e.message)
+            # Before the first success main may simply not be up yet (in one process it
+            # starts serving only after every service has started): ask again soon.
+            log.log(logging.WARNING if registered else logging.DEBUG, "registration in main failed: %s", e.message)
 
-        await asyncio.sleep(_REGISTER_INTERVAL_SEC)
+        await asyncio.sleep(_REGISTER_INTERVAL_SEC if registered else _FIRST_REGISTER_RETRY_SEC)
 
 
 def create_service_app(

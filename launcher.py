@@ -7,11 +7,12 @@
 `.env` from the repository root is loaded into the environment first; variables
 already set in the shell win.
 
-All six services: main listens on MAIN_PORT, or else on the port it had last time, or
-else on a free one picked at random; the port is kept in DATA_DIR/runtime.json with
-main's address, for clients to find it. The other services get a free port from the
-OS on every start and tell main where they are. One launcher per DATA_DIR: a second
-one would run every task twice.
+All six services, in one process (RUN_MODE=single, the default: single_app.py) or a
+process each (RUN_MODE=multi). main listens on MAIN_PORT, or else on the port it had
+last time, or else on a free one picked at random; the port is kept in
+DATA_DIR/runtime.json with main's address, for clients to find it. With a process
+each, the other services get a free port from the OS on every start and tell main
+where they are. One launcher per DATA_DIR: a second one would run every task twice.
 
 One service (Docker): its own PORT or the standard one, as compose expects."""
 
@@ -36,6 +37,9 @@ from common.settings import ROOT_DIR, SERVICE_PORTS, load_dotenv, path_coercion
 
 # main starts first: every other service registers with it on startup.
 START_ORDER = ["main", "executor", "agent_loop", "compiler", "runner", "scheduler"]
+
+# The one child of RUN_MODE=single: every service in one uvicorn (single_app.py).
+SINGLE = "single"
 
 _RESTART_DELAY_SEC = 2
 _MAX_RESTARTS_PER_MINUTE = 5
@@ -73,32 +77,45 @@ def _environment() -> dict[str, str]:
 
 
 def _command(service: str, env: dict[str, str], reload: bool, port: int | None = None) -> list[str]:
+    """uvicorn for one service, or for all of them (`single`)."""
     if port is None:
         port = env.get("PORT") if env.get("SERVICE_NAME") == service else None
+
+    single = service == SINGLE
 
     command = [
         sys.executable,
         "-m",
         "uvicorn",
-        f"{service}.main:app",
+        "single_app:app" if single else f"{service}.main:app",
         "--host",
         env.get("SERVICE_HOST", "127.0.0.1"),
         "--port",
-        str(port or SERVICE_PORTS[service]),
+        str(port or SERVICE_PORTS["main" if single else service]),
         "--app-dir",
         str(ROOT_DIR),
         "--no-access-log",
     ]
 
     if reload:
-        command += ["--reload", "--reload-dir", str(ROOT_DIR / service), "--reload-dir", str(ROOT_DIR / "common")]
+        watched = START_ORDER if single else [service]
+        for folder in [*watched, "common"]:
+            command += ["--reload-dir", str(ROOT_DIR / folder)]
+
+        command.insert(command.index("--app-dir"), "--reload")
 
     return command
 
 
 def _service_env(service: str, env: dict[str, str], port: int) -> dict[str, str]:
     # PORT/SELF_URL from .env would apply to every child; each service gets its own.
-    return {**env, "SERVICE_NAME": service, "PORT": str(port), "SELF_URL": f"http://127.0.0.1:{port}"}
+    if service == SINGLE:
+        child = {**env, "RUN_MODE": "single", "PORT": str(port)}
+        child.pop("SELF_URL", None)
+        child.pop("SERVICE_NAME", None)
+        return child
+
+    return {**env, "RUN_MODE": "multi", "SERVICE_NAME": service, "PORT": str(port), "SELF_URL": f"http://127.0.0.1:{port}"}
 
 
 def _run_single(service: str, env: dict[str, str], reload: bool) -> int:
@@ -191,7 +208,15 @@ def _run_all(env: dict[str, str], reload: bool) -> None:
     main_url = f"http://127.0.0.1:{main_port}"
     env = {**env, "MAIN_URL": main_url}
 
-    children = [_Child(service, env, reload, port=main_port if service == "main" else None) for service in START_ORDER]
+    run_mode = env.get("RUN_MODE") or "single"
+    if run_mode not in ("single", "multi"):
+        raise SystemExit(f"[launcher  ] RUN_MODE must be single or multi, got {run_mode!r}")
+
+    if run_mode == "single":
+        children = [_Child(SINGLE, env, reload, port=main_port)]
+    else:
+        children = [_Child(service, env, reload, port=main_port if service == "main" else None) for service in START_ORDER]
+
     stopping = threading.Event()
 
     def _stop(*_):
@@ -209,7 +234,7 @@ def _run_all(env: dict[str, str], reload: bool) -> None:
     for child in children[1:]:
         child.start()
 
-    print(f"[launcher  ] started: {', '.join(START_ORDER)} · API at {main_url} · token: {token_file or 'API_TOKEN'}", flush=True)
+    print(f"[launcher  ] started ({run_mode}): {', '.join(START_ORDER)} · API at {main_url} · token: {token_file or 'API_TOKEN'}", flush=True)
 
     try:
         while not stopping.is_set():
