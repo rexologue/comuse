@@ -8,6 +8,8 @@ import logging
 import os
 import sys
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import Callable
 
 from fastapi import APIRouter, Depends, FastAPI, Request
@@ -32,16 +34,44 @@ _SCHEMA_WAIT_SEC = 60
 LifespanHook = Callable[[FastAPI], AbstractAsyncContextManager[None]]
 
 
-def configure_logging() -> None:
-    """Send structured logs to stdout at the LOG_LEVEL from the environment."""
-    logging.basicConfig(
-        level=os.environ.get("LOG_LEVEL", "INFO").upper(),
-        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
-        stream=sys.stdout,
-    )
+_LOG_FORMAT = "%(asctime)s %(levelname)-8s %(name)s: %(message)s"
+
+# One file per process: several processes rotating one file would lose lines.
+_LOG_FILE_BYTES = 10 * 1024 * 1024
+_LOG_FILES_KEPT = 5
+
+
+def log_file(settings: Settings) -> Path:
+    """agent.log when every service shares the process, <service>.log otherwise."""
+    name = "agent" if settings.service.run_mode == "single" else settings.service.name
+    return settings.storage.log_dir / f"{name}.log"
+
+
+def configure_logging(settings: Settings) -> None:
+    """Logs at LOG_LEVEL to stdout and to a rotating file in LOG_DIR."""
+    logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO").upper(), format=_LOG_FORMAT, stream=sys.stdout)
 
     # httpx logs every request at INFO: each call between services and to the LLM.
     logging.getLogger("httpx").setLevel(logging.WARNING)
+
+    path = log_file(settings)
+    # uvicorn's own loggers (startup failures among them) do not reach the root one.
+    for logger in (logging.getLogger(), logging.getLogger("uvicorn")):
+        ours = [h for h in logger.handlers if getattr(h, "agent_log", False)]
+
+        # In one process every service configures the same file: one handler for all.
+        if any(Path(h.baseFilename) == path for h in ours):
+            continue
+
+        for handler in ours:
+            logger.removeHandler(handler)
+            handler.close()
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handler = RotatingFileHandler(path, maxBytes=_LOG_FILE_BYTES, backupCount=_LOG_FILES_KEPT, encoding="utf-8")
+        handler.setFormatter(logging.Formatter(_LOG_FORMAT))
+        handler.agent_log = True
+        logger.addHandler(handler)
 
 
 async def require_internal_token(request: Request) -> None:
@@ -93,9 +123,8 @@ def create_service_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
 
-        configure_logging()
-
         settings = Settings.from_env(name)
+        configure_logging(settings)
         tunables.check_env()
         engine = init_engine(settings.storage)
 

@@ -172,7 +172,7 @@ class _Child:
         if len(self.restarts) >= _MAX_RESTARTS_PER_MINUTE:
             return
 
-        print(f"[launcher  ] {self.service} exited with {self.process.returncode}, restarting", flush=True)
+        _say(f"{self.service} exited with {self.process.returncode}, restarting")
         self.restarts.append(now)
         time.sleep(_RESTART_DELAY_SEC)
         self.start()
@@ -198,10 +198,13 @@ def _run_all(env: dict[str, str], reload: bool) -> None:
     data_dir = path_coercion(env.get("DATA_DIR", "data"))
     data_dir.mkdir(parents=True, exist_ok=True)
 
+    log_dir = path_coercion(env["LOG_DIR"]) if env.get("LOG_DIR") else data_dir / "logs"
+    _log_to(log_dir / "launcher.log")
+
     lock = _InstanceLock(data_dir / "launcher.lock")
     if not lock.acquire():
         running = _read_runtime(data_dir).get("main_url") or "address unknown"
-        print(f"[launcher  ] already running with this DATA_DIR ({running}); a second launcher would run every task twice", flush=True)
+        _say(f"already running with this DATA_DIR ({running}); a second launcher would run every task twice")
         sys.exit(1)
 
     main_port = _main_port(data_dir, env)
@@ -229,12 +232,13 @@ def _run_all(env: dict[str, str], reload: bool) -> None:
     _wait_for_main(main_url)
     # With no API_TOKEN main has made one there (main/auth.py); a local client reads it.
     token_file = None if env.get("API_TOKEN") else str(data_dir / "api_token")
-    _write_runtime(data_dir, {"main_url": main_url, "port": main_port, "pid": os.getpid(), "token_file": token_file})
+    runtime = {"main_url": main_url, "port": main_port, "pid": os.getpid(), "token_file": token_file, "log_dir": str(log_dir)}
+    _write_runtime(data_dir, runtime)
 
     for child in children[1:]:
         child.start()
 
-    print(f"[launcher  ] started ({run_mode}): {', '.join(START_ORDER)} · API at {main_url} · token: {token_file or 'API_TOKEN'}", flush=True)
+    _say(f"started ({run_mode}): {', '.join(START_ORDER)} · API at {main_url} · token: {token_file or 'API_TOKEN'}")
 
     try:
         while not stopping.is_set():
@@ -244,7 +248,7 @@ def _run_all(env: dict[str, str], reload: bool) -> None:
             stopping.wait(1)
 
     finally:
-        print("[launcher  ] stopping…", flush=True)
+        _say("stopping…")
         for child in reversed(children):
             child.stop()
 
@@ -252,7 +256,7 @@ def _run_all(env: dict[str, str], reload: bool) -> None:
             child.wait()
 
         # The port stays for the next start; the address is no longer served.
-        _write_runtime(data_dir, {"main_url": None, "port": main_port, "pid": None, "token_file": token_file})
+        _write_runtime(data_dir, {**runtime, "main_url": None, "pid": None})
         lock.release()
 
 
@@ -273,7 +277,35 @@ def _wait_for_main(main_url: str) -> None:
         except OSError:
             time.sleep(0.5)
 
-    print("[launcher  ] main did not become healthy in time; starting the rest anyway", flush=True)
+    _say("main did not become healthy in time; starting the rest anyway")
+
+
+# -----------------------------
+# OWN LOG
+# -----------------------------
+
+# The launcher's own lines (starts, restarts, stops) go to the console and to
+# LOG_DIR/launcher.log; the services log to their own files.
+_log_file: Path | None = None
+
+
+def _log_to(path: Path) -> None:
+    global _log_file
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _log_file = path
+
+
+def _say(message: str) -> None:
+    print(f"[launcher  ] {message}", flush=True)
+
+    if _log_file is not None:
+        try:
+            with _log_file.open("a", encoding="utf-8") as file:
+                file.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}\n")
+
+        except OSError:
+            pass
 
 
 # -----------------------------

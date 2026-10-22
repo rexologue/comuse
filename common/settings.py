@@ -23,7 +23,7 @@ SINGLE_PREFIX = "/svc"
 # common/tunables.py), for the check that no value is a leftover comment.
 ENV_NAMES = (
     "SERVICE_NAME", "SERVICE_HOST", "PORT", "MAIN_URL", "RUN_MODE", "SELF_URL", "MAIN_PORT",
-    "INTERNAL_TOKEN", "API_TOKEN", "ALLOWED_HOSTS", "ALLOWED_ORIGINS", "DATA_DIR", "LOG_LEVEL",
+    "INTERNAL_TOKEN", "API_TOKEN", "ALLOWED_HOSTS", "ALLOWED_ORIGINS", "DATA_DIR", "LOG_DIR", "LOG_LEVEL",
     "LLM_MODEL", "LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL_CHAT", "LLM_MODEL_INSTRUCT",
     "LLM_MODEL_EMBED", "LLM_EMBED_BASE_URL", "LLM_EMBED_API_KEY", "KEYRING_BACKEND", "KEYRING_PASSWORD",
 )
@@ -51,11 +51,15 @@ class ServiceSettings:
     # main only: Host headers it answers (DNS rebinding) and origins allowed by CORS.
     allowed_hosts: list[str]
     allowed_origins: list[str]
+    # multi: a process per service; single: all of them in one (single_app.py).
+    run_mode: str
 
 
 @dataclass(slots=True, frozen=True)
 class StorageSettings:
     data_dir: Path
+    # Log files (common/service.py): DATA_DIR/logs unless LOG_DIR says otherwise.
+    log_dir: Path
 
     @property
     def db_path(self) -> Path:
@@ -126,7 +130,6 @@ class Settings:
             f"http://127.0.0.1:{SERVICE_PORTS['main']}",
         ).rstrip("/")
 
-        # multi: a process per service; single: all of them in one (single_app.py).
         run_mode = os.environ.get("RUN_MODE") or "multi"
         if run_mode not in ("multi", "single"):
             raise SettingsError(f"Incorrect `RUN_MODE`: {run_mode!r}. Must be one of ['multi', 'single'].")
@@ -151,6 +154,7 @@ class Settings:
         # -----------------------------
 
         data_dir = path_coercion(os.environ.get("DATA_DIR", "data"))
+        log_dir = path_coercion(os.environ["LOG_DIR"]) if os.environ.get("LOG_DIR") else data_dir / "logs"
 
         # -----------------------------
         # SECRETS
@@ -176,9 +180,11 @@ class Settings:
                 api_token=api_token,
                 allowed_hosts=allowed_hosts,
                 allowed_origins=allowed_origins,
+                run_mode=run_mode,
             ),
             storage=StorageSettings(
                 data_dir=data_dir,
+                log_dir=log_dir,
             ),
             llm=_llm_from_env(),
             secrets=SecretsSettings(

@@ -124,7 +124,7 @@ main/
   events.py          шина событий: таблица events и подписчики SSE
   views.py           чтение задач и запусков для API
   auth.py            токен внешнего API
-  api/               gateway (чат, каталог, аккаунты), tasks, approvals (и события), settings, llm, internal
+  api/               gateway (чат, каталог, аккаунты), tasks, approvals (и события), settings, llm, logs, internal
 agent_loop/
   loop.py            ход чата: LLM, команды, вопросы, подтверждения
   history.py         сессии, сообщения, трейс; окно истории для модели; поиск чата по переписке
@@ -156,7 +156,7 @@ common/
   tunables.py        рабочие настройки: окружение → таблица settings → по умолчанию
   llm.py             роли моделей: какой провайдер и модель отвечают сейчас
   secrets.py         хранилища секретов: пароли аккаунтов и ключи LLM
-  service.py         каркас сервиса: логи, БД, регистрация, токен, /health
+  service.py         каркас сервиса: логи в консоль и файл, БД, регистрация, токен, /health
   templating.py      шаблоны задач: Jinja-песочница и фильтры дат
   documents.py       текст из docx, xlsx, pdf, txt
   retention.py       общий цикл чистки по сроку хранения

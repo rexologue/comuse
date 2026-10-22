@@ -12,6 +12,7 @@ from main.api import approvals as approvals_api
 from main.api import gateway as gateway_api
 from main.api import internal as internal_api
 from main.api import llm as llm_api
+from main.api import logs as logs_api
 from main.api import settings as settings_api
 from main.api import tasks as tasks_api
 from main import events, providers
@@ -64,6 +65,7 @@ app = create_service_app(
         (approvals_api.router, "approvals"),
         (settings_api.router, "settings"),
         (llm_api.router, "llm"),
+        (logs_api.router, "logs"),
         (gateway_api.router, "gateway"),
     ],
     lifespan_hook=lifespan,
