@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from common.tools import Credential, ToolContext, ToolError
-from common.tools.accounts import AccountKind, account_kind
+from common.tools.accounts import AccountField, AccountKind, account_kind
 from internal_tools.mail.adapters import imap_smtp
 from internal_tools.mail.adapters.presets import PRESETS
 
@@ -35,6 +35,18 @@ account_kind(
     AccountKind(
         name=KIND,
         title="Почта IMAP/SMTP",
+        fields=(
+            AccountField("email", "Адрес почты", required=True),
+            AccountField("username", "Логин", hint="если не совпадает с адресом"),
+            AccountField("imap_host", "Сервер IMAP", hint="заполняется пресетом"),
+            AccountField("imap_port", "Порт IMAP", type="number"),
+            AccountField("imap_security", "Защита IMAP", type="choice", choices=("ssl", "starttls", "none")),
+            AccountField("smtp_host", "Сервер SMTP", hint="заполняется пресетом"),
+            AccountField("smtp_port", "Порт SMTP", type="number"),
+            AccountField("smtp_security", "Защита SMTP", type="choice", choices=("ssl", "starttls", "none")),
+            AccountField("drafts_folder", "Папка черновиков", hint="если не находится сама"),
+        ),
+        secret_title="Пароль приложения",
         presets=PRESETS,
         prepare=_prepare,
         check=imap_smtp.check,

@@ -41,7 +41,12 @@ async def list_accounts():
 
 @router.get("/accounts/kinds", summary="Account kinds the tool groups offer, with their presets")
 async def list_kinds():
-    return {"kinds": {name: {"title": kind.title, "presets": kind.presets} for name, kind in account_kinds().items()}}
+    return {
+        "kinds": {
+            name: {"title": kind.title, "fields": [f.manifest() for f in kind.fields], "secret_title": kind.secret_title, "presets": kind.presets}
+            for name, kind in account_kinds().items()
+        }
+    }
 
 
 @router.post("/accounts", summary="Create or replace an account")

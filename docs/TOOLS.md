@@ -196,13 +196,21 @@ Executor хранит аккаунт как имя, вид, настройки �
 account_kind(AccountKind(
     name="imap_smtp",
     title="Почта IMAP/SMTP",
+    fields=(                  # настройки в config — как их спросить в форме
+        AccountField("email", "Адрес почты", required=True),
+        AccountField("imap_security", "Защита IMAP", type="choice", choices=("ssl", "starttls", "none")),
+        ...
+    ),
+    secret_title="Пароль приложения",
     presets=PRESETS,          # готовые настройки известных провайдеров
     prepare=_prepare,         # дополнить и проверить настройки; ValueError — понятный текст
     check=imap_smtp.check,    # попробовать войти; POST /accounts/{name}/check
 ))
 ```
 
-`GET /accounts/kinds` показывает виды и их пресеты, `POST /accounts` создаёт аккаунт
+`GET /accounts/kinds` показывает виды: поля (`name`, `title`, `type` — `text`, `number`
+или `choice`, `required`, `choices`, `hint`), как называется секрет, пресеты. По ним
+клиент строит форму, ничего не зная о почте. `POST /accounts` создаёт аккаунт
 (см. [API.md](API.md#команды-и-аккаунты)).
 
 ## Инструкции группы

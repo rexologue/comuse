@@ -10,7 +10,7 @@ import pytest
 from common.errors import ApiError
 from common.tools import discover
 from common.tools.accounts import get_account_kind
-from executor.api.accounts import AccountCreate, check_account, create_account
+from executor.api.accounts import AccountCreate, check_account, create_account, list_kinds
 
 
 discover()  # tool groups register their account kinds on import
@@ -33,6 +33,17 @@ def test_mail_registers_its_kind():
     kind = get_account_kind("imap_smtp")
 
     assert kind is not None and "gmail" in kind.presets and kind.check is not None
+
+
+async def test_a_kind_tells_a_form_what_to_ask():
+    mail = (await list_kinds())["kinds"]["imap_smtp"]
+    fields = {field["name"]: field for field in mail["fields"]}
+
+    assert fields["email"]["required"] is True
+    assert fields["imap_security"]["choices"] == ["ssl", "starttls", "none"]
+    assert mail["secret_title"] == "Пароль приложения"
+    # Every field a preset fills is one the form knows.
+    assert all(key in fields for preset in mail["presets"].values() for key in preset)
 
 
 async def test_preset_fills_the_settings_and_the_password_goes_to_the_keyring(settings):
