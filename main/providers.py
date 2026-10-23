@@ -34,13 +34,22 @@ _PING = {
 }
 
 
+# The `settings` row listing the LLM_* models already imported, as "base_url model".
+ENV_IMPORTED_KEY = "llm_env_imported"
+
+
 def register_env_models(settings: Settings) -> None:
-    """LLM_* models become providers named `default…` unless a provider with the same
-    address and model exists (renamed or not); a role still unset gets them. From then
-    on they are ordinary providers."""
+    """LLM_* models become providers named `default…` once: an address and model
+    imported before is left alone, so a provider the user changed or deleted stays as
+    they left it. A provider with the same address and model is reused (renamed or
+    not); a role still unset gets the model. From then on they are ordinary providers."""
     ls = settings.llm
     if ls is None:
         return
+
+    with session() as db:
+        row = db.get(Setting, ENV_IMPORTED_KEY)
+        imported = list(row.value) if row is not None else []
 
     wanted = [("chat", "default", ls.base_url, ls.model_chat, ls.api_key)]
 
@@ -52,13 +61,22 @@ def register_env_models(settings: Settings) -> None:
         wanted.append(("embed", "default-embed", ls.embed_base_url, ls.model_embed, ls.embed_api_key))
 
     for role, name, base_url, model, api_key in wanted:
+        signature = f"{base_url} {model}"
+        if signature in imported:
+            continue
+
         provider_id = _find_or_add(settings, name, base_url, model, api_key)
+        imported.append(signature)
 
         with session() as db:
             if db.get(Setting, llm.role_key(role)) is None:
                 set_role(db, role, provider_id)
-                db.commit()
                 log.info("role %s → provider %s from LLM_* variables", role, provider_id)
+
+            row = db.get(Setting, ENV_IMPORTED_KEY) or Setting(key=ENV_IMPORTED_KEY)
+            row.value = list(imported)
+            db.add(row)
+            db.commit()
 
 
 def _find_or_add(settings: Settings, name: str, base_url: str, model: str, api_key: str) -> str:

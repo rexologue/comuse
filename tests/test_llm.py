@@ -166,6 +166,34 @@ async def test_llm_variables_become_ordinary_providers_once(client, main_setting
     assert (await client.get("/llm")).json()["roles"]["chat"]["provider"] == other
 
 
+async def test_an_imported_model_is_not_imported_again(client, main_settings):
+    providers.register_env_models(main_settings)
+    default = (await client.get("/llm")).json()["roles"]["chat"]["provider"]
+
+    # The user moves it to another address: the old LLM_* values must not bring it back.
+    await client.patch(f"/llm/providers/{default}", json={"base_url": "http://moved:9000/v1"})
+    providers.register_env_models(main_settings)
+
+    assert _providers() == {"default": "test-model"}
+
+    # Deleted (after moving the role away), it stays deleted.
+    other = await _add(client, "Другая", "other")
+    await client.patch("/llm", json={"chat": other})
+    await client.delete(f"/llm/providers/{default}")
+    providers.register_env_models(main_settings)
+
+    assert _providers() == {"Другая": "other"}
+
+
+async def test_a_new_model_in_the_variables_is_imported(client, main_settings, monkeypatch):
+    providers.register_env_models(main_settings)
+
+    monkeypatch.setenv("LLM_MODEL", "newer-model")
+    providers.register_env_models(Settings.from_env("main"))
+
+    assert _providers() == {"default": "test-model", "default 2": "newer-model"}
+
+
 async def test_a_taken_default_name_gets_a_number(client, main_settings):
     await _add(client, "default", "something-else")
 
