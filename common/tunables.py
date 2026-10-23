@@ -25,11 +25,11 @@ log = logging.getLogger("tunables")
 @dataclass(slots=True, frozen=True)
 class Tunable:
     key: str
-    kind: str          # "int" | "bool" | "choice" | "dir"
+    kind: str          # "int" | "float" | "bool" | "choice" | "dir"
     default: Any
     description: str
-    low: int | None = None
-    high: int | None = None
+    low: float | None = None
+    high: float | None = None
     choices: tuple[str, ...] | None = None
 
     @property
@@ -48,11 +48,35 @@ class Tunable:
         if self.kind == "choice":
             return _parse_choice(value, self.choices)
 
+        if self.kind == "float":
+            return _parse_float(value, self.low, self.high)
+
         return _parse_int(value, self.low, self.high)
 
 
     def to_json(self, value: Any) -> Any:
         return str(value) if self.kind == "dir" else value
+
+
+# Roles whose sampling the user sets (embed has nothing to sample).
+SAMPLED_ROLES = ("chat", "instruct")
+
+
+def _sampling(role: str) -> tuple[Tunable, ...]:
+    """Empty means not sent: the server's own value works, and a server that does not
+    know a field is not asked about it."""
+    return (
+        Tunable(f"llm_{role}_temperature", "float", None,
+                f"Температура модели роли {role} (0–2); пусто — как на сервере", low=0, high=2),
+        Tunable(f"llm_{role}_top_p", "float", None,
+                f"top_p модели роли {role} (0–1); пусто — как на сервере", low=0, high=1),
+        Tunable(f"llm_{role}_thinking", "choice", "",
+                f"Рассуждения модели роли {role} (enable_thinking: Qwen3 и др. на vLLM, SGLang, llama.cpp); "
+                f"пусто — как на сервере", choices=("", "on", "off")),
+        Tunable(f"llm_{role}_reasoning_effort", "choice", "",
+                f"Глубина рассуждений модели роли {role} (для reasoning-моделей); пусто — не отправляется",
+                choices=("", "low", "medium", "high")),
+    )
 
 
 TUNABLES = {
@@ -80,9 +104,7 @@ TUNABLES = {
                 "Сколько раз повторить запрос к LLM при сетевом сбое", low=0),
         Tunable("llm_no_proxy", "bool", True,
                 "Ходить к LLM напрямую, не через прокси из HTTP(S)_PROXY"),
-        Tunable("llm_chat_reasoning_effort", "choice", "",
-                "Глубина рассуждений модели роли chat (для reasoning-моделей); пусто — не отправляется",
-                choices=("", "low", "medium", "high")),
+        *(t for role in SAMPLED_ROLES for t in _sampling(role)),
     )
 }
 
@@ -183,6 +205,29 @@ def _parse_int(value: Any, low: int | None, high: int | None) -> int:
 
     if high is not None and number > high:
         raise ValueError(f"не больше {high}")
+
+    return number
+
+
+def _parse_float(value: Any, low: float | None, high: float | None) -> float | None:
+    # None (and "" from a form or the environment) is "not set".
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+
+    if isinstance(value, bool):
+        raise ValueError("нужно число")
+
+    try:
+        number = float(str(value).replace(",", "."))
+
+    except (TypeError, ValueError):
+        raise ValueError(f"нужно число, а не {value!r}") from None
+
+    if low is not None and number < low:
+        raise ValueError(f"не меньше {low:g}")
+
+    if high is not None and number > high:
+        raise ValueError(f"не больше {high:g}")
 
     return number
 

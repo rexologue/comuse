@@ -1,14 +1,15 @@
 """Which model serves each role:
 
 - chat — the agent in the chat and the compiler (multi-step work, calls tools);
-- instruct — llm.* tools and template markup (single structured calls); the chat
-  model when no other is set;
+- instruct — llm.* tools (single structured calls); the chat model when no other is
+  set;
 - embed — ranking tools for a request; none = the agent sees every tool.
 
 A provider is one model at an OpenAI-compatible server (`llm_providers`); a role points
 at any of them by id from the `settings` table. main writes both through /llm, and
 registers the models of LLM_* variables as providers on start (main/providers.py).
-Timeouts, retries, proxy and reasoning effort are settings (common/tunables.py).
+Timeouts, retries, proxy and each role's sampling (temperature, top_p, thinking,
+reasoning effort) are settings (common/tunables.py).
 
 A role is resolved on every call, so a change applies without a restart. Clients are
 kept per provider version and transport settings: a changed provider gets a new client,
@@ -20,7 +21,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from common import tunables
-from common.clients.llm_client import LLMClient
+from common.clients.llm_client import LLMClient, Sampling
 from common.errors import ApiError
 from common.secrets import SecretStore
 from common.settings import Settings
@@ -55,7 +56,22 @@ class Endpoint:
     base_url: str
     model: str
     has_key: bool
-    reasoning_effort: str | None = None
+    sampling: Sampling = Sampling()
+
+
+def role_sampling(role: str) -> Sampling:
+    """The role's sampling settings (llm_<role>_temperature, …); embed has none."""
+    if role not in tunables.SAMPLED_ROLES:
+        return Sampling()
+
+    thinking = tunables.get(f"llm_{role}_thinking")
+
+    return Sampling(
+        temperature=tunables.get(f"llm_{role}_temperature"),
+        top_p=tunables.get(f"llm_{role}_top_p"),
+        thinking={"on": True, "off": False}.get(thinking),
+        reasoning_effort=tunables.get(f"llm_{role}_reasoning_effort") or None,
+    )
 
 
 def assigned(role: str) -> str | None:
@@ -88,7 +104,7 @@ def resolve(role: str) -> Endpoint | None:
         base_url=provider.base_url,
         model=provider.model,
         has_key=provider.has_key,
-        reasoning_effort=(tunables.get("llm_chat_reasoning_effort") or None) if role == "chat" else None,
+        sampling=role_sampling(role),
     )
 
 
@@ -138,17 +154,17 @@ class Role:
 
 
     async def complete(self, messages: list[dict[str, Any]], **kwargs) -> dict[str, Any]:
-        """LLMClient.chat with this role's model (and reasoning effort, unless given)."""
+        """LLMClient.chat with this role's model and sampling (unless given)."""
         client, endpoint = self._bound()
-        kwargs.setdefault("reasoning_effort", endpoint.reasoning_effort)
+        kwargs.setdefault("sampling", endpoint.sampling)
 
         return await client.chat(messages, model=endpoint.model, **kwargs)
 
 
     async def structured(self, messages: list[dict[str, Any]], **kwargs) -> Any:
-        """LLMClient.structured with this role's model."""
+        """LLMClient.structured with this role's model and sampling (unless given)."""
         client, endpoint = self._bound()
-        kwargs.setdefault("reasoning_effort", endpoint.reasoning_effort)
+        kwargs.setdefault("sampling", endpoint.sampling)
 
         return await client.structured(messages, model=endpoint.model, **kwargs)
 

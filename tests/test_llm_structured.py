@@ -107,3 +107,42 @@ async def test_schema_hint_adds_a_system_message_when_there_is_none():
     await llm.structured([{"role": "user", "content": "?"}], model="m", schema=SCHEMA)
 
     assert [m["role"] for m in llm.sent[-1]] == ["system", "user"]
+
+
+class CapturingLLM(LLMClient):
+    def __init__(self):
+        super().__init__(base_url="http://llm", api_key="", timeout=1)
+        self.bodies: list[dict] = []
+
+
+    async def _send(self, method, url, json_body=None):
+        self.bodies.append(json_body)
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+
+async def test_only_the_sampling_that_is_set_is_sent():
+    from common.clients.llm_client import Sampling
+
+    llm = CapturingLLM()
+    await llm.chat([{"role": "user", "content": "?"}], model="m")
+    await llm.chat([{"role": "user", "content": "?"}], model="m", sampling=Sampling(temperature=0.2, top_p=0.9, thinking=False))
+
+    plain, tuned = llm.bodies
+    assert set(plain) == {"model", "messages", "stream"}
+    assert tuned["temperature"] == 0.2 and tuned["top_p"] == 0.9
+    assert tuned["chat_template_kwargs"] == {"enable_thinking": False}
+    assert "reasoning_effort" not in tuned
+
+
+async def test_structured_calls_keep_the_sampling():
+    from common.clients.llm_client import Sampling
+
+    class Reply(CapturingLLM):
+        async def _send(self, method, url, json_body=None):
+            self.bodies.append(json_body)
+            return {"choices": [{"message": {"content": '{"n": 1}'}}]}
+
+    llm = Reply()
+    await llm.structured([{"role": "user", "content": "?"}], model="m", schema=SCHEMA, sampling=Sampling(thinking=False))
+
+    assert llm.bodies[0]["chat_template_kwargs"] == {"enable_thinking": False}

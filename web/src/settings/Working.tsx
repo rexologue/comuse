@@ -101,5 +101,22 @@ function Control({ item, value, onChange }: { item: Tunable; value: unknown; onC
     );
   }
 
+  if (item.type === "float") {
+    // Empty is "not set": the server's own value.
+    return (
+      <Input
+        type="number"
+        className="w-32"
+        step="0.05"
+        min={item.min ?? undefined}
+        max={item.max ?? undefined}
+        value={value === null || value === undefined ? "" : String(value)}
+        onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}
+        disabled={item.locked}
+        placeholder="как на сервере"
+      />
+    );
+  }
+
   return <Input value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} disabled={item.locked} placeholder="полный путь к папке" />;
 }

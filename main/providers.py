@@ -144,14 +144,14 @@ async def check(client: LLMClient, model: str, role: str) -> dict[str, Any]:
                 [{"role": "user", "content": "Проверка связи: вызови функцию ping."}],
                 model=model,
                 tools=[_PING],
-                reasoning_effort=tunables.get("llm_chat_reasoning_effort") or None,
+                sampling=llm.role_sampling("chat"),
             )
 
             if not reply.get("tool_calls"):
                 return {"ok": False, "error": "модель ответила текстом, а не вызовом функции: агенту нужен вызов инструментов"}
 
         elif role == "instruct":
-            await client.chat([{"role": "user", "content": "Ответь одним словом: готов?"}], model=model)
+            await client.chat([{"role": "user", "content": "Ответь одним словом: готов?"}], model=model, sampling=llm.role_sampling("instruct"))
 
         else:
             [vector] = await client.embed(["проверка связи"], model=model)

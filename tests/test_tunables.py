@@ -102,3 +102,26 @@ def test_a_comment_taken_for_a_value_stops_the_start(env, monkeypatch):
 
     with pytest.raises(SettingsError, match="API_TOKEN"):
         tunables.check_env()
+
+
+async def test_each_role_has_its_own_sampling(client):
+    from common.clients.llm_client import Sampling
+    from common.llm import role_sampling
+
+    # Nothing set: nothing is sent, the server's own values work.
+    assert role_sampling("instruct") == Sampling()
+
+    response = await client.patch("/settings", json={"llm_instruct_temperature": 0.2, "llm_instruct_thinking": "off"})
+
+    assert response.status_code == 200
+    assert _item(response, "llm_instruct_temperature")["type"] == "float"
+    assert role_sampling("instruct") == Sampling(temperature=0.2, thinking=False)
+    assert role_sampling("chat") == Sampling()
+    assert role_sampling("embed") == Sampling()
+
+
+async def test_sampling_values_are_checked(client):
+    response = await client.patch("/settings", json={"llm_chat_temperature": 3, "llm_chat_top_p": "много"})
+
+    assert response.status_code == 400
+    assert response.json()["error"]["details"] == {"llm_chat_temperature": "не больше 2", "llm_chat_top_p": "нужно число, а не 'много'"}

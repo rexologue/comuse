@@ -156,7 +156,7 @@ export type Tunable = {
   default: unknown;
   source: "env" | "db" | "default";
   locked: boolean;
-  type: "int" | "bool" | "choice" | "dir";
+  type: "int" | "float" | "bool" | "choice" | "dir";
   min: number | null;
   max: number | null;
   choices: string[] | null;

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from dataclasses import dataclass
 from typing import Any, Callable
 
 import httpx
@@ -19,6 +20,32 @@ _RETRY_BACKOFF_SEC = 1.0
 # Structured output, from strict to loose; see LLMClient.structured.
 _MODES = ("json_schema", "json_object", "plain")
 _LAST_MODE = len(_MODES) - 1
+
+
+@dataclass(slots=True, frozen=True)
+class Sampling:
+    """How the model generates; None leaves the server's own value (nothing is sent),
+    since not every server knows every field."""
+    temperature: float | None = None
+    top_p: float | None = None
+    # Thinking on or off for models that have it (Qwen3 and others): vLLM, SGLang and
+    # llama.cpp take it as chat_template_kwargs.enable_thinking.
+    thinking: bool | None = None
+    # Reasoning models (gpt-oss) trade quality for latency: low / medium / high.
+    reasoning_effort: str | None = None
+
+    def body(self) -> dict[str, Any]:
+        fields: dict[str, Any] = {}
+        if self.temperature is not None:
+            fields["temperature"] = self.temperature
+        if self.top_p is not None:
+            fields["top_p"] = self.top_p
+        if self.thinking is not None:
+            fields["chat_template_kwargs"] = {"enable_thinking": self.thinking}
+        if self.reasoning_effort:
+            fields["reasoning_effort"] = self.reasoning_effort
+
+        return fields
 
 
 class LLMClient:
@@ -91,25 +118,17 @@ class LLMClient:
         model: str,
         tools: list[dict[str, Any]] | None = None,
         response_format: dict[str, Any] | None = None,
-        temperature: float | None = None,
-        reasoning_effort: str | None = None,
+        sampling: Sampling | None = None,
     ) -> dict[str, Any]:
         """One non-streaming completion; returns the assistant message with
         reasoning blocks stripped from `content`."""
-        body: dict[str, Any] = {"model": model, "messages": messages, "stream": False}
+        body: dict[str, Any] = {"model": model, "messages": messages, "stream": False, **(sampling or Sampling()).body()}
 
         if tools:
             body["tools"] = tools
 
         if response_format is not None:
             body["response_format"] = response_format
-
-        if temperature is not None:
-            body["temperature"] = temperature
-
-        # Reasoning models (gpt-oss) trade quality for latency: low / medium / high.
-        if reasoning_effort:
-            body["reasoning_effort"] = reasoning_effort
 
         data = await self._send("POST", self.route, json_body=body)
 
@@ -152,7 +171,7 @@ class LLMClient:
         name: str = "result",
         validate: Callable[[Any], Any] | None = None,
         attempts: int = 3,
-        reasoning_effort: str | None = None,
+        sampling: Sampling | None = None,
     ) -> Any:
         """Ask for JSON matching `schema`; validation errors go back to the model.
 
@@ -177,7 +196,7 @@ class LLMClient:
                     _with_schema_hint(conversation, schema) if mode > 0 else conversation,
                     model=model,
                     response_format=_response_format(mode, name, schema),
-                    reasoning_effort=reasoning_effort,
+                    sampling=sampling,
                 )
                 content = message["content"]
 
