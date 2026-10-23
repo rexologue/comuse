@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI
 
+from common.clients.main_client import INTERNAL_TIMEOUT
 from common.retention import sweep_forever
 from common.service import create_service_app
 from main.api import approvals as approvals_api
@@ -39,8 +40,8 @@ async def lifespan(app: FastAPI):
     app.state.bus = bus
     app.state.orchestrator = Orchestrator(registry, bus)
 
-    # Long read timeout: a chat turn may run several LLM calls and tools.
-    app.state.http = httpx.AsyncClient(timeout=httpx.Timeout(900, connect=5), trust_env=False)
+    # No read cap: a chat turn may run several LLM calls and tools (see INTERNAL_TIMEOUT).
+    app.state.http = httpx.AsyncClient(timeout=INTERNAL_TIMEOUT, trust_env=False)
 
     sweeper = asyncio.create_task(sweep_forever("events", events.sweep))
 

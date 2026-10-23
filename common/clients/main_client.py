@@ -16,13 +16,18 @@ log = logging.getLogger("main-client")
 
 INTERNAL_TOKEN_HEADER = "X-Internal-Token"
 
+# Calls between services wait as long as the work takes: the executor stops a tool at
+# tool_timeout_sec and the LLM client a request at llm_timeout_sec, so a cap here would
+# only cut off what the user allowed to run longer.
+INTERNAL_TIMEOUT = httpx.Timeout(None, connect=5)
+
 
 class MainClient:
     def __init__(
         self,
         base_url: str,
         internal_token: str,
-        timeout: float | httpx.Timeout = httpx.Timeout(900, connect=5),
+        timeout: float | httpx.Timeout = INTERNAL_TIMEOUT,
     ):
 
         self.base_url = base_url
