@@ -49,6 +49,15 @@ account_kind(
                 "smtp_security", "Защита SMTP", type="choice", choices=("ssl", "starttls", "none"), default="ssl на порту 465, иначе starttls"
             ),
             AccountField("drafts_folder", "Папка черновиков", hint="если не находится сама"),
+            AccountField("sent_folder", "Папка отправленных", hint="если не находится сама"),
+            AccountField(
+                "save_sent",
+                "Копия в отправленных",
+                type="choice",
+                choices=("yes", "no"),
+                hint="no — если сервер сам сохраняет отправленное (Gmail, Outlook)",
+                default="yes",
+            ),
         ),
         secret_title="Пароль приложения",
         presets=PRESETS,

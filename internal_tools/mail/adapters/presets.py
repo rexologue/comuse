@@ -10,6 +10,8 @@ PRESETS: dict[str, dict[str, object]] = {
         "imap_port": 993,
         "smtp_host": "smtp.gmail.com",
         "smtp_port": 465,
+        # Gmail keeps what goes through its SMTP in Sent itself.
+        "save_sent": "no",
     },
     "yandex": {
         "imap_host": "imap.yandex.ru",
@@ -28,5 +30,7 @@ PRESETS: dict[str, dict[str, object]] = {
         "imap_port": 993,
         "smtp_host": "smtp.office365.com",
         "smtp_port": 587,
+        # So does Exchange Online.
+        "save_sent": "no",
     },
 }

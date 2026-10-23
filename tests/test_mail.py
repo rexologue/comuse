@@ -210,11 +210,82 @@ async def test_send_follows_the_task_mail_settings(monkeypatch, mode, task_setti
     from internal_tools.mail.send import Input, send
 
     monkeypatch.setattr(imap_smtp, "append_draft", lambda *a: "Drafts")
+    monkeypatch.setattr(imap_smtp, "append_sent", lambda *a: "Sent")
     monkeypatch.setattr(imap_smtp, "send", lambda *a: None)
 
     out = await send(Input(account="work", to=["boss@company.local"], subject="s", body="b"), _send_context(mode, task_settings, dry_run=dry_run))
 
     assert out.mode == expected
+    assert out.folder == ("Drafts" if expected == "draft" else "Sent")
+
+
+def _sent_context(config):
+    from common.tools import ToolContext
+    from common.tools.context import Credential
+
+    return ToolContext(
+        mode="chat", settings=None, paths=None, llm=None,
+        credentials={"account": Credential(name="work", kind="imap_smtp", config={"email": "agent@company.local", **config}, secret="")},
+    )
+
+
+async def test_a_server_that_keeps_sent_mail_gets_no_second_copy(monkeypatch):
+    from internal_tools.mail.adapters.presets import PRESETS
+    from internal_tools.mail.send import Input, send
+
+    monkeypatch.setattr(imap_smtp, "send", lambda *a: None)
+    monkeypatch.setattr(imap_smtp, "append_sent", lambda *a: pytest.fail("Gmail keeps the copy itself"))
+
+    out = await send(Input(account="work", to=["boss@company.local"], subject="s", body="b"), _sent_context(PRESETS["gmail"]))
+
+    assert out.mode == "sent" and out.folder is None
+
+
+async def test_a_failed_copy_does_not_fail_a_sent_letter(monkeypatch):
+    from internal_tools.mail.send import Input, send
+
+    def no_sent_folder(*a):
+        raise ToolError("Нет папки отправленных и не удалось её создать")
+
+    sent = []
+    monkeypatch.setattr(imap_smtp, "send", lambda *a: sent.append(a))
+    monkeypatch.setattr(imap_smtp, "append_sent", no_sent_folder)
+
+    out = await send(Input(account="work", to=["boss@company.local"], subject="s", body="b"), _sent_context({}))
+
+    # Sent once; an error here would make the agent try again and send it twice.
+    assert len(sent) == 1
+    assert out.mode == "sent" and out.folder is None and "отправленных" in out.copy_error
+
+
+class FakeFolders:
+    def __init__(self, rows):
+        self.rows = rows
+        self.created: list[str] = []
+
+
+    def list(self):
+        return "OK", [row.encode() for row in self.rows]
+
+
+    def create(self, folder):
+        self.created.append(folder)
+        return "OK", [b""]
+
+
+@pytest.mark.parametrize(
+    ("rows", "folder", "created"),
+    [
+        (['(\\HasNoChildren) "/" "INBOX"', '(\\HasNoChildren \\Sent) "/" "&BB4EQgQ,BEAEMAQyBDsENQQ9BD0ESwQ1-"'], "Отправленные", []),
+        (['(\\HasNoChildren) "/" "INBOX"', '(\\HasNoChildren) "/" "Sent"'], "Sent", []),
+        (['(\\HasNoChildren) "/" "INBOX"'], "Sent", ['"Sent"']),  # GreenMail starts with INBOX only
+    ],
+)
+def test_sent_folder_is_the_flagged_one_or_sent(rows, folder, created):
+    imap = FakeFolders(rows)
+
+    assert imap_smtp._special_folder(imap, "\\Sent", "Sent", "отправленных") == folder
+    assert imap.created == created
 
 
 class FakeMailbox:

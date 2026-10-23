@@ -266,11 +266,30 @@ def send(config: dict[str, Any], secret: str, message: EmailMessage) -> None:
 def append_draft(config: dict[str, Any], secret: str, message: EmailMessage) -> str:
     """Save into the provider's Drafts folder (the one flagged \\Drafts)."""
     with _imap(config, secret) as imap:
-        folder = config.get("drafts_folder") or _drafts_folder(imap)
+        folder = config.get("drafts_folder") or _special_folder(imap, "\\Drafts", "Drafts", "черновиков")
 
         status, data = imap.append(_quote(folder), r"(\Draft \Seen)", None, message.as_bytes())
         if status != "OK":
             raise ToolError(f"Не удалось сохранить черновик: {data}")
+
+    return folder
+
+
+def saves_sent_copy(config: dict[str, Any]) -> bool:
+    """Whether a sent letter needs a copy in Sent from us: SMTP only delivers it, and the
+    mail client keeps the copy. `save_sent: no` for servers that keep one themselves
+    (Gmail, Outlook), or every letter would be there twice."""
+    return config.get("save_sent") != "no"
+
+
+def append_sent(config: dict[str, Any], secret: str, message: EmailMessage) -> str:
+    """Keep a sent letter in the provider's Sent folder (the one flagged \\Sent)."""
+    with _imap(config, secret) as imap:
+        folder = config.get("sent_folder") or _special_folder(imap, "\\Sent", "Sent", "отправленных")
+
+        status, data = imap.append(_quote(folder), r"(\Seen)", None, message.as_bytes())
+        if status != "OK":
+            raise ToolError(f"Не удалось сохранить письмо в «{folder}»: {data}")
 
     return folder
 
@@ -355,9 +374,9 @@ def _select(imap: imaplib.IMAP4, folder: str, *, readonly: bool) -> None:
         raise ToolError(f"Папка почты «{folder}» не найдена: {data}")
 
 
-def _drafts_folder(imap: imaplib.IMAP4) -> str:
-    """The folder flagged \\Drafts, else one named Drafts — created if missing
-    (some servers start with INBOX only)."""
+def _special_folder(imap: imaplib.IMAP4, flag: str, fallback: str, what: str) -> str:
+    """The folder flagged `flag` (RFC 6154: \\Drafts, \\Sent), else one named `fallback`
+    — created if missing (some servers start with INBOX only)."""
     names: list[str] = []
 
     status, rows = imap.list()
@@ -371,17 +390,17 @@ def _drafts_folder(imap: imaplib.IMAP4) -> str:
                 continue
 
             name = decode_folder(match.group("name").strip('"'))
-            if "\\Drafts" in match.group("flags"):
+            if flag in match.group("flags"):
                 return name
 
             names.append(name)
 
-    if "Drafts" not in names:
-        status, data = imap.create(_quote("Drafts"))
+    if fallback not in names:
+        status, data = imap.create(_quote(fallback))
         if status != "OK":
-            raise ToolError(f"Нет папки черновиков и не удалось её создать: {data}")
+            raise ToolError(f"Нет папки {what} и не удалось её создать: {data}")
 
-    return "Drafts"
+    return fallback
 
 
 def _ensure_folder(imap: imaplib.IMAP4, folder: str) -> None:
