@@ -61,8 +61,11 @@ def _read_docx(path: Path) -> str:
 
     document = Document(str(path))
     parts: list[str] = []
+    tables = 0
 
-    # Walk the body in order so tables stay where they are in the text.
+    # Walk the body in order so tables stay where they are in the text. Tables are
+    # numbered as python-docx counts them (body level), so «T2» means document.tables[1]
+    # to docs.make_template.
     for block in document.element.body.iterchildren():
         tag = block.tag.rsplit("}", 1)[-1]
 
@@ -84,7 +87,8 @@ def _read_docx(path: Path) -> str:
 
                 rows.append(cells)
 
-            parts.append(markdown_table(rows))
+            tables += 1
+            parts.append(f"Таблица T{tables}:\n{markdown_table(rows)}")
 
     return "\n\n".join(parts)
 

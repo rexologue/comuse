@@ -1,7 +1,9 @@
 """Turn a filled-in example report into a reusable docxtpl template.
 
-The LLM only points at what varies (a date, a total, the rows of a table); the
-document itself is edited in code, so formatting and layout stay intact."""
+What varies (a date, a total, the rows of a table) is decided by an LLM outside this
+tool: the agent in chat, an llm.extract step in a task. The tool checks that markup
+against the document and edits the document in code, so formatting and layout stay
+intact."""
 
 from __future__ import annotations
 
@@ -15,25 +17,32 @@ from pydantic import BaseModel, Field
 
 from common.tools import ToolContext, ToolError, ToolInput, ToolOutput, tool
 from common.tools.fields import WorkspacePath
-from common.documents import markdown_table
 
 
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,40}$")
 
 
-class Input(ToolInput):
-    example: WorkspacePath = Field(description="Готовый отчёт-пример .docx")
-    name: str = Field(description="Имя шаблона латиницей, например weekly_sales")
-    hint: str = Field(default="", description="Что в отчёте меняется от раза к разу (подсказка для разметки)")
-
-
 class TemplateField(BaseModel):
-    name: str
-    description: str
-    example: str
+    name: str = Field(description="Имя поля латиницей snake_case")
+    description: str = Field(description="Что это за значение")
+    example: str = Field(description="ТОЧНЫЙ фрагмент текста документа, который станет полем")
 
 
 class TemplateTable(BaseModel):
+    table: int = Field(ge=1, description="Номер таблицы: «Таблица T2» в тексте документа → 2")
+    name: str = Field(description="Имя таблицы латиницей snake_case")
+    header_rows: int = Field(ge=0, description="Сколько строк шапки остаются как есть")
+    columns: list[str] = Field(min_length=1, description="Ключи колонок по порядку, латиницей snake_case")
+
+
+class Input(ToolInput):
+    example: WorkspacePath = Field(description="Готовый отчёт-пример .docx")
+    name: str = Field(description="Имя шаблона латиницей, например weekly_sales")
+    fields: list[TemplateField] = Field(default_factory=list, description="Значения, которые меняются от раза к разу")
+    tables: list[TemplateTable] = Field(default_factory=list, description="Таблицы, строки которых будут другими")
+
+
+class TableOut(BaseModel):
     name: str
     columns: list[str]
 
@@ -41,7 +50,7 @@ class TemplateTable(BaseModel):
 class Output(ToolOutput):
     template: str
     fields: list[TemplateField]
-    tables: list[TemplateTable]
+    tables: list[TableOut]
     example_context: dict[str, Any]
 
 
@@ -50,9 +59,10 @@ class Output(ToolOutput):
     title="Сделать шаблон из примера",
     card="Сделать шаблон «{name}» из примера «{example}»",
     description=(
-        "Create a reusable .docx template from an example report: varying values become "
-        "{{ fields }}, data tables become row loops. Returns the template path, field names "
-        "and the example's values as a ready context for docs.fill_template."
+        "Create a reusable .docx template from an example report by the given markup: "
+        "`fields` (exact text fragments that vary) become {{ fields }}, `tables` (numbered "
+        "as «Таблица T1» in docs.read) become row loops. Returns the template path, its "
+        "fields and the example's values as a ready context for docs.fill_template."
     ),
 )
 async def make_template(inp: Input, ctx: ToolContext) -> Output:
@@ -63,8 +73,8 @@ async def make_template(inp: Input, ctx: ToolContext) -> Output:
     if source.suffix.lower() != ".docx" or not source.is_file():
         raise ToolError(f"Нужен существующий .docx, получено `{inp.example}`")
 
-    outline = await asyncio.to_thread(_outline, source)
-    markup = await _ask_markup(ctx, outline, inp.hint)
+    if not inp.fields and not inp.tables:
+        raise ToolError("Разметка пуста: укажите fields или tables — что в примере меняется от раза к разу")
 
     # A dry run leaves data:templates alone: the template goes to the run's own outputs,
     # where it can be looked at (and filled by the next step) all the same.
@@ -74,153 +84,113 @@ async def make_template(inp: Input, ctx: ToolContext) -> Output:
     else:
         target = ctx.write_path(f"data:templates/{inp.name}.docx")
 
-    target.parent.mkdir(parents=True, exist_ok=True)
-
-    result = await asyncio.to_thread(_apply_markup, source, target, markup)
+    result = await asyncio.to_thread(_make, source, target, inp.fields, inp.tables)
     result["template"] = ctx.to_ref(target)
 
     return Output.model_validate(result)
 
 
-def _outline(path: Path) -> dict[str, Any]:
-    from docx import Document
-
-    document = Document(str(path))
-
-    paragraphs = [p.text for p in document.paragraphs if p.text.strip()]
-    tables = [[[cell.text.strip() for cell in row.cells] for row in table.rows] for table in document.tables]
-
-    return {"paragraphs": paragraphs, "tables": tables}
-
-
-_MARKUP_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "fields": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string"},
-                    "description": {"type": "string"},
-                    "example": {"type": "string"},
-                },
-                "required": ["name", "description", "example"],
-            },
-        },
-        "tables": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "table": {"type": "integer"},
-                    "name": {"type": "string"},
-                    "header_rows": {"type": "integer"},
-                    "columns": {"type": "array", "items": {"type": "string"}},
-                },
-                "required": ["table", "name", "header_rows", "columns"],
-            },
-        },
-    },
-    "required": ["fields", "tables"],
-}
-
-
-async def _ask_markup(ctx: ToolContext, outline: dict[str, Any], hint: str) -> dict[str, Any]:
-    text_parts = [f"P{i + 1}: {p}" for i, p in enumerate(outline["paragraphs"])]
-    for i, rows in enumerate(outline["tables"]):
-        text_parts.append(f"Таблица T{i + 1}:\n{markdown_table(rows)}")
-
-    prompt = (
-        "Это отчёт-пример. Найди в нём значения, которые будут меняться в следующих отчётах "
-        "(даты, периоды, суммы, количества, имена в данных), и таблицы с данными, строки которых "
-        "будут другими.\n"
-        "- fields: name — латиницей snake_case; example — ТОЧНЫЙ фрагмент текста из документа.\n"
-        "- tables: table — номер таблицы (T1 → 1); header_rows — сколько строк шапки; "
-        "columns — ключи колонок латиницей snake_case по порядку.\n"
-        "Постоянные заголовки и подписи не размечай.\n"
-        f"{('Подсказка пользователя: ' + hint) if hint else ''}\n\n" + "\n\n".join(text_parts)
-    )
-
-    def validate(data: Any) -> dict[str, Any]:
-        if not isinstance(data, dict) or "fields" not in data or "tables" not in data:
-            raise ValueError("ожидается объект с ключами fields и tables")
-
-        for item in data["fields"]:
-            if not _NAME_RE.match(item.get("name", "")):
-                raise ValueError(f"имя поля {item.get('name')!r} должно быть snake_case латиницей")
-
-        for item in data["tables"]:
-            if not 1 <= int(item["table"]) <= len(outline["tables"]):
-                raise ValueError(f"таблицы T{item['table']} нет в документе")
-
-        return data
-
-    return await ctx.llm.structured(
-        [{"role": "user", "content": prompt}],
-        schema=_MARKUP_SCHEMA,
-        name="template_markup",
-        validate=validate,
-    )
-
-
-def _apply_markup(source: Path, target: Path, markup: dict[str, Any]) -> dict[str, Any]:
+def _make(source: Path, target: Path, fields: list[TemplateField], tables: list[TemplateTable]) -> dict[str, Any]:
     from docx import Document
 
     document = Document(str(source))
-    example_context: dict[str, Any] = {}
-    tables_out: list[dict[str, Any]] = []
-    loop_tables: set[int] = set()
 
-    for spec in markup["tables"]:
-        index = int(spec["table"]) - 1
-        table = document.tables[index]
-        name, columns, header = spec["name"], spec["columns"], max(0, int(spec["header_rows"]))
+    problems = _check(document, fields, tables)
+    if problems:
+        # Every problem at once: the caller fixes the markup in one go.
+        raise ToolError("Разметка не подходит к документу:\n- " + "\n- ".join(problems))
 
-        data_rows = table.rows[header:]
-        if not data_rows or not _NAME_RE.match(name):
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    return _apply_markup(document, target, fields, tables)
+
+
+def _check(document, fields: list[TemplateField], tables: list[TemplateTable]) -> list[str]:
+    problems: list[str] = []
+    names: set[str] = set()
+
+    def name_ok(name: str, what: str) -> None:
+        if not _NAME_RE.match(name):
+            problems.append(f"{what} «{name}»: имя латиницей snake_case, например report_date")
+        elif name in names:
+            problems.append(f"{what} «{name}»: имя уже занято")
+        names.add(name)
+
+    loops = {spec.table - 1 for spec in tables}
+    count = len(document.tables)
+
+    for spec in tables:
+        name_ok(spec.name, "Таблица")
+        if spec.table > count:
+            problems.append(f"Таблицы T{spec.table} нет: в документе таблиц — {count}")
             continue
 
-        example_context[name] = [
-            {key: (row.cells[i].text.strip() if i < len(row.cells) else "") for i, key in enumerate(columns)}
-            for row in data_rows
-        ]
+        rows = document.tables[spec.table - 1].rows
+        if spec.header_rows >= len(rows):
+            problems.append(f"T{spec.table}: строк {len(rows)}, после шапки из {spec.header_rows} не остаётся строки данных")
+            continue
 
-        _make_row_loop(table, header, name, columns)
-        loop_tables.add(index)
-        tables_out.append({"name": name, "columns": columns})
+        width = len(rows[spec.header_rows].cells)
+        if len(spec.columns) > width:
+            problems.append(f"T{spec.table}: колонок {width}, а ключей {len(spec.columns)}")
 
+        for column in spec.columns:
+            if not _NAME_RE.match(column):
+                problems.append(f"T{spec.table}: ключ колонки «{column}» — латиницей snake_case")
+
+    texts = [p.text for p in _text_paragraphs(document, loops)]
+    for field in fields:
+        name_ok(field.name, "Поле")
+        example = field.example.strip()
+        if not example:
+            problems.append(f"Поле «{field.name}»: пустой example")
+        elif not any(example in text for text in texts):
+            problems.append(f"Поле «{field.name}»: фрагмента «{example}» нет в тексте документа (вне размеченных таблиц)")
+
+    return problems
+
+
+def _text_paragraphs(document, skip_tables: set[int]) -> list:
+    """Body paragraphs and those in tables that stay as they are."""
     paragraphs = list(document.paragraphs)
     for index, table in enumerate(document.tables):
-        if index in loop_tables:
+        if index in skip_tables:
             continue
 
         for row in table.rows:
             for cell in row.cells:
                 paragraphs.extend(cell.paragraphs)
 
-    fields_out = []
-    for field in markup["fields"]:
-        example = field["example"].strip()
-        if not example:
-            continue
+    return paragraphs
 
-        replaced = False
+
+def _apply_markup(document, target: Path, fields: list[TemplateField], tables: list[TemplateTable]) -> dict[str, Any]:
+    example_context: dict[str, Any] = {}
+
+    for spec in tables:
+        rows = document.tables[spec.table - 1].rows
+        example_context[spec.name] = [
+            {key: (row.cells[i].text.strip() if i < len(row.cells) else "") for i, key in enumerate(spec.columns)}
+            for row in rows[spec.header_rows:]
+        ]
+        _make_row_loop(document.tables[spec.table - 1], spec.header_rows, spec.name, spec.columns)
+
+    paragraphs = _text_paragraphs(document, {spec.table - 1 for spec in tables})
+    for field in fields:
+        example = field.example.strip()
         for paragraph in paragraphs:
             if example in paragraph.text:
-                _set_paragraph_text(paragraph, paragraph.text.replace(example, "{{ " + field["name"] + " }}"))
-                replaced = True
+                _set_paragraph_text(paragraph, paragraph.text.replace(example, "{{ " + field.name + " }}"))
 
-        if replaced:
-            example_context[field["name"]] = example
-            fields_out.append(field)
-
-    if not fields_out and not tables_out:
-        raise ToolError("Не нашлось ни одного изменяемого значения — шаблон не создан")
+        example_context[field.name] = example
 
     document.save(str(target))
 
-    return {"fields": fields_out, "tables": tables_out, "example_context": example_context}
+    return {
+        "fields": [field.model_dump() for field in fields],
+        "tables": [{"name": spec.name, "columns": spec.columns} for spec in tables],
+        "example_context": example_context,
+    }
 
 
 def _make_row_loop(table, header: int, name: str, columns: list[str]) -> None:

@@ -73,6 +73,79 @@ def test_fill_template_checks_fields_and_row_keys(tmp_path):
     assert "Итого: 3" in text and "Ромашка" in text
 
 
+def _example(path):
+    """A filled-in report: a date in the text, a sales table with one header row."""
+    from docx import Document
+
+    document = Document()
+    document.add_paragraph("Отчёт за 7 декабря 2026 г.")
+    table = document.add_table(rows=3, cols=2)
+    for row, values in zip(table.rows, [("Клиент", "Сумма"), ("Ромашка", "100"), ("Вектор", "250")]):
+        for cell, value in zip(row.cells, values):
+            cell.text = value
+    document.save(str(path))
+
+    return path
+
+
+def test_make_template_applies_the_markup_and_fills_back(tmp_path):
+    from docx import Document
+
+    from internal_tools.docs.fill_template import _render
+    from internal_tools.docs.make_template import TemplateField, TemplateTable, _make
+
+    template = tmp_path / "t.docx"
+    result = _make(
+        _example(tmp_path / "example.docx"),
+        template,
+        [TemplateField(name="report_date", description="Дата отчёта", example="7 декабря 2026 г.")],
+        [TemplateTable(table=1, name="sales", header_rows=1, columns=["client", "amount"])],
+    )
+
+    assert result["example_context"] == {
+        "report_date": "7 декабря 2026 г.",
+        "sales": [{"client": "Ромашка", "amount": "100"}, {"client": "Вектор", "amount": "250"}],
+    }
+
+    out = tmp_path / "out.docx"
+    _render(template, {"report_date": "8 декабря 2026 г.", "sales": [{"client": "Альфа", "amount": "5"}]}, {}, out)
+    document = Document(str(out))
+    cells = [[c.text for c in r.cells] for r in document.tables[0].rows]
+
+    assert document.paragraphs[0].text == "Отчёт за 8 декабря 2026 г."
+    assert cells == [["Клиент", "Сумма"], ["Альфа", "5"]]
+
+
+def test_make_template_names_every_problem_of_the_markup(tmp_path):
+    from internal_tools.docs.make_template import TemplateField, TemplateTable, _make
+
+    target = tmp_path / "t.docx"
+
+    with pytest.raises(ToolError) as e:
+        _make(
+            _example(tmp_path / "example.docx"),
+            target,
+            [TemplateField(name="Date", description="", example="9 мая")],
+            [
+                TemplateTable(table=1, name="sales", header_rows=1, columns=["client", "amount", "vat"]),
+                TemplateTable(table=3, name="other", header_rows=0, columns=["x"]),
+            ],
+        )
+
+    message = str(e.value)
+    assert "«Date»" in message and "«9 мая»" in message
+    assert "колонок 2, а ключей 3" in message and "T3 нет" in message
+    assert not target.exists()
+
+
+def test_docx_tables_are_numbered_as_make_template_counts_them(tmp_path):
+    from common.documents import read_document
+
+    text = read_document(_example(tmp_path / "example.docx"))
+
+    assert "Таблица T1:\n| Клиент | Сумма |" in text
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
