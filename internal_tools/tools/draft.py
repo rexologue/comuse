@@ -45,7 +45,8 @@ class Output(ToolOutput):
     description=(
         "Write or rewrite the draft of an own command (ext.<name>): manifest, Python files, packages. "
         "Nothing runs: the draft is checked (schemas, syntax, packages) and waits for the user to approve it. "
-        "Every problem comes back at once; fix them and call again — the draft keeps its version number."
+        "Every problem comes back at once; fix them and call again — the draft keeps its version number. "
+        "A draft written by the user or another chat is never replaced."
     ),
     confirm=False,
 )
@@ -71,6 +72,7 @@ async def draft(inp: Input, ctx: ToolContext) -> Output:
         requirements=inp.requirements,
         created_by="chat",
         session_id=ctx.session_id,
+        only_own=True,
     )
 
     return Output(

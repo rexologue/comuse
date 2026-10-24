@@ -124,8 +124,8 @@ needs_uv = pytest.mark.skipif(not HAVE_UV, reason="uv is not installed")
 def _two_versions(settings):
     for marker in ("первая", "вторая"):
         code = f"def run(args, ctx):\n    return {{'lines': 0, 'out': '{marker}'}}\n"
-        version = tools.save_draft(settings.storage, "count_lines", manifest=MANIFEST, files={"main.py": code}, requirements=[])["version"]
-        tools.approve(settings.storage, "count_lines", version)
+        draft = tools.save_draft(settings.storage, "count_lines", manifest=MANIFEST, files={"main.py": code}, requirements=[])
+        tools.approve(settings.storage, "count_lines", draft["version"], draft["hash"])
 
 
 @needs_uv

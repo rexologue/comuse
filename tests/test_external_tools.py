@@ -69,12 +69,17 @@ def runtime(settings):
     return ExecutorRuntime(settings, registry, secrets=None, llm=LLM(settings))
 
 
+def _seen(settings, name="count_lines", version=1) -> str:
+    """The hash the person's card shows."""
+    return store.version_view(settings.storage, name, version)["hash"]
+
+
 def _save(settings, name="count_lines", code=COUNT_LINES, **manifest):
     return store.save_draft(settings.storage, name, manifest={**MANIFEST, **manifest}, files={"main.py": code}, requirements=[])
 
 
 def _approve(settings, runtime, name="count_lines", version=1):
-    store.approve(settings.storage, name, version)
+    store.approve(settings.storage, name, version, _seen(settings, name, version))
     runtime.registry.load()
 
 
@@ -88,12 +93,15 @@ def test_a_draft_names_every_problem(settings):
             settings.storage,
             "Bad-Name",
             manifest={"title": "", "description": "x", "input_schema": {"type": "array"}},
-            files={"helper.py": "def broken(:\n", "../evil.py": "", "tool.json": ""},
-            requirements=["git+https://example.com/x.git"],
+            files={"helper.py": "def broken(:\n", "../evil.py": "", "tool.json": "", "__pycache__/main.py": ""},
+            requirements=["git+https://example.com/x.git", "dateutil\n-r ../../api_token"],
         )
 
     message = str(e.value)
-    for expected in ("«Bad-Name»", "title", "объект", "Нет main.py", "helper.py, строка 1", "«../evil.py»", "«tool.json»", "git+https"):
+    for expected in (
+        "«Bad-Name»", "title", "объект", "Нет main.py", "helper.py, строка 1", "«../evil.py»", "«tool.json»", "git+https",
+        "«__pycache__/main.py»", "«dateutil\n-r ../../api_token»",
+    ):
         assert expected in message
 
     assert not settings.storage.external_tools_dir.exists() or not any(settings.storage.external_tools_dir.iterdir())
@@ -171,15 +179,17 @@ async def test_changed_files_do_not_run(settings, runtime):
 
 
 @needs_uv
-async def test_a_slow_tool_is_stopped_at_its_timeout(settings, runtime):
-    _save(settings, name="sleepy", code="import time\n\ndef run(args, ctx):\n    time.sleep(30)\n", timeout=1)
+async def test_a_tool_and_what_it_started_are_stopped_at_its_timeout(settings, runtime):
+    # A child holding the pipes open used to keep the call waiting after the kill.
+    code = "import subprocess, sys, time\n\ndef run(args, ctx):\n    subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n    time.sleep(30)\n"
+    _save(settings, name="sleepy", code=code, timeout=1)
     _approve(settings, runtime, name="sleepy")
 
     started = time.monotonic()
     response = await _call(runtime, {"file": "a.txt"}, tool="ext.sleepy")
 
     assert "таймаут" in response.error
-    assert time.monotonic() - started < 10
+    assert time.monotonic() - started < 5
 
 
 @needs_uv
@@ -188,4 +198,45 @@ def test_approval_refuses_a_draft_changed_after_saving(settings):
     (store.version_dir(settings.storage, "count_lines", 1) / "main.py").write_text("def run(args, ctx):\n    return {}\n")
 
     with pytest.raises(ToolError, match="изменились после сохранения"):
-        store.approve(settings.storage, "count_lines", 1)
+        store.approve(settings.storage, "count_lines", 1, _seen(settings))
+
+
+@needs_uv
+def test_a_person_approves_only_the_draft_they_read(settings, runtime):
+    _save(settings)
+    seen = _seen(settings)
+    _save(settings, code=COUNT_LINES + "\n# rewritten by the chat\n")
+
+    with pytest.raises(ToolError, match="изменился, пока вы его читали"):
+        store.approve(settings.storage, "count_lines", 1, seen)
+
+    store.approve(settings.storage, "count_lines", 1, _seen(settings))
+
+
+@needs_uv
+def test_a_draft_whose_packages_do_not_resolve_stays_as_it_was(settings, monkeypatch):
+    _save(settings)
+    before = store.version_view(settings.storage, "count_lines", 1, files=True)
+
+    def unresolvable(folder, cache):
+        raise ToolError("Не удалось подобрать пакеты")
+
+    monkeypatch.setattr(store.deps, "lock", unresolvable)
+    with pytest.raises(ToolError):
+        store.save_draft(settings.storage, "count_lines", manifest=MANIFEST, files={"main.py": "def run(args, ctx):\n    return {}\n"}, requirements=["nothing-like-it"])
+
+    assert store.version_view(settings.storage, "count_lines", 1, files=True) == before
+    assert store.files_hash(store.version_dir(settings.storage, "count_lines", 1)) == before["hash"]
+
+
+@needs_uv
+async def test_a_tool_cannot_leave_compiled_code_behind(settings, runtime):
+    _save(settings)
+    _approve(settings, runtime)
+
+    cache = store.version_dir(settings.storage, "count_lines", 1) / "__pycache__"
+    cache.mkdir()
+    (cache / "main.cpython-314.pyc").write_bytes(b"not what was read")
+
+    assert "изменились после одобрения" in (await _call(runtime, {"file": "a.txt"})).error
+

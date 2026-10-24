@@ -37,16 +37,18 @@ function ToolDraftCard({ tool, version }: { tool: ExternalTool; version: number 
     setError(null);
     try {
       await call();
-      await queryClient.invalidateQueries({ queryKey: keys.externalTools });
-      await queryClient.invalidateQueries({ queryKey: keys.tools });
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
     } finally {
+      // A refused approval too: the draft may have changed, and the card shows it anew.
+      await queryClient.invalidateQueries({ queryKey: keys.externalTools });
+      await queryClient.invalidateQueries({ queryKey: keys.tools });
       setBusy(null);
     }
   };
 
-  const approve = act("approve", () => api(`/external-tools/${tool.name}/versions/${version}/approve`, { method: "POST" }));
+  // The hash of the code on screen: a draft rewritten since is not approved.
+  const approve = act("approve", () => api(`/external-tools/${tool.name}/versions/${version}/approve`, { method: "POST", json: { hash: draft.data?.hash } }));
   const discard = act("discard", () => api(`/external-tools/${tool.name}/draft`, { method: "DELETE" }));
 
   const manifest = draft.data?.manifest;
@@ -89,7 +91,7 @@ function ToolDraftCard({ tool, version }: { tool: ExternalTool; version: number 
       </p>
 
       <div className="flex flex-wrap gap-2">
-        <Button size="sm" onClick={approve} disabled={busy !== null}>
+        <Button size="sm" onClick={approve} disabled={busy !== null || !draft.data}>
           {busy === "approve" ? "Ставлю пакеты…" : "Одобрить"}
         </Button>
         <Button

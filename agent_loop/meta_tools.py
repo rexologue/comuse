@@ -79,9 +79,26 @@ DEFINITIONS: list[dict[str, Any]] = [
 
 NAMES = {d["function"]["name"] for d in DEFINITIONS}
 
+# What changes the user's tasks for real asks first, every time, like a command with
+# confirm="always": text the model read (a letter, a document) must not start a run.
+ASKING = {
+    "task_run_now": "Запустить задачу сейчас",
+    "task_control": "Приостановить, возобновить или убрать в архив задачу",
+}
+
+
+def manifest(name: str) -> dict[str, Any] | None:
+    """A meta tool that asks first, shaped like a tool manifest for the chat's question."""
+    if name not in ASKING:
+        return None
+
+    definition = next(d["function"] for d in DEFINITIONS if d["function"]["name"] == name)
+
+    return {"name": f"meta:{name}", "title": ASKING[name], "confirm": "always", "input_schema": definition["parameters"]}
+
 
 async def _compile(main: MainClient, session_id: str, args: dict[str, Any]) -> Any:
-    result = await main.post("/compiler/compile", json={"session_id": session_id, **args})
+    result = await main.post("/compiler/compile", json={**args, "session_id": session_id})
 
     return {
         "task_id": result["task_id"],
@@ -141,7 +158,8 @@ async def _reject(main: MainClient, session_id: str, args: dict[str, Any]) -> An
 
 
 async def _patch(main: MainClient, session_id: str, args: dict[str, Any]) -> Any:
-    result = await main.post("/compiler/patch", json={"session_id": session_id, **args})
+    # The chat's own session, whatever the model put in args.
+    result = await main.post("/compiler/patch", json={**args, "session_id": session_id})
 
     return {
         "task_id": result["task_id"],

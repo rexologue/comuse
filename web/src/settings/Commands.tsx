@@ -126,7 +126,7 @@ function VersionDetail({ tool, version, onEdit }: { tool: ExternalTool; version:
       <div className="flex flex-wrap gap-2">
         {data.status === "draft" && (
           <>
-            <Button size="sm" onClick={() => run("approve", () => api(`/external-tools/${tool.name}/versions/${version}/approve`, { method: "POST" }).then(refresh))} disabled={busy !== null}>
+            <Button size="sm" onClick={() => run("approve", () => api(`/external-tools/${tool.name}/versions/${version}/approve`, { method: "POST", json: { hash: data.hash } }).finally(refresh))} disabled={busy !== null}>
               {busy === "approve" ? "Ставлю пакеты…" : "Одобрить"}
             </Button>
             <Button

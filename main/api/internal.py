@@ -1,4 +1,4 @@
-"""Routes only services call (internal token required when configured)."""
+"""Routes only services call: the internal token (the API token when none is configured)."""
 
 from __future__ import annotations
 
@@ -7,11 +7,11 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
-from common.service import require_internal_token
+from main.auth import require_service
 from main.proxy import METHODS, reverse_proxy
 
 
-router = APIRouter(dependencies=[Depends(require_internal_token)])
+router = APIRouter(dependencies=[Depends(require_service)])
 
 
 class RegisterBody(BaseModel):

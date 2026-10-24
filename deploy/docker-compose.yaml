@@ -12,6 +12,8 @@ x-service: &service
     - path: .env
       required: true
   environment: &service-env
+    # Without it the services would trust anyone; a known value is no better.
+    INTERNAL_TOKEN: ${INTERNAL_TOKEN:?set INTERNAL_TOKEN in deploy/.env}
     MAIN_URL: http://main:8000
     SERVICE_HOST: 0.0.0.0
     DATA_DIR: /data

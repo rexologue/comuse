@@ -37,8 +37,8 @@ class ToolCatalog:
         self._embed_down_until = 0.0
 
 
-    async def manifests(self) -> dict[str, dict[str, Any]]:
-        if not self._manifests or time.monotonic() - self._loaded_at > _CATALOG_TTL_SEC:
+    async def manifests(self, *, fresh: bool = False) -> dict[str, dict[str, Any]]:
+        if fresh or not self._manifests or time.monotonic() - self._loaded_at > _CATALOG_TTL_SEC:
             data = await self.main.get("/tools")
             self._manifests = {tool["name"]: tool for tool in data["tools"]}
             self._loaded_at = time.monotonic()

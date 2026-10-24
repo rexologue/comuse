@@ -65,17 +65,34 @@ async def require_client(request: Request) -> None:
         return
 
     scheme, _, token = request.headers.get("Authorization", "").partition(" ")
-    if scheme.lower() == "bearer" and hmac.compare_digest(token, request.app.state.api_token):
+    if scheme.lower() == "bearer" and same(token, request.app.state.api_token):
         return
 
     raise ApiError(status_code=401, message="Missing or invalid API token")
+
+
+async def require_service(request: Request) -> None:
+    """main's internal routes: the internal token. Without one configured they are not
+    left open: the API token is asked instead."""
+    expected = request.app.state.settings.service.internal_token
+
+    if not expected:
+        await require_client(request)
+
+    elif not _valid_internal(request, expected):
+        raise ApiError(status_code=401, message="Missing or invalid internal token")
+
+
+def same(provided: str, expected: str) -> bool:
+    """Headers come decoded as latin-1: compare bytes, so a non-ASCII token is a 401, not a 500."""
+    return hmac.compare_digest(provided.encode("utf-8", "surrogateescape"), expected.encode("utf-8"))
 
 
 def _valid_internal(request: Request, expected: str) -> bool:
     if not expected:
         return False
 
-    return hmac.compare_digest(request.headers.get(INTERNAL_TOKEN_HEADER, ""), expected)
+    return same(request.headers.get(INTERNAL_TOKEN_HEADER, ""), expected)
 
 
 class Guard:

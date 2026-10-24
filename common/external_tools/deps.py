@@ -64,12 +64,16 @@ def python_of(version_dir: Path) -> Path:
     return venv / "Scripts" / "python.exe" if os.name == "nt" else venv / "bin" / "python"
 
 
-def ensure_venv(version_dir: Path, cache_dir: Path) -> Path:
-    """The version's .venv with its lock installed (made on first use); its python."""
+def ensure_venv(version_dir: Path, cache_dir: Path, *, fresh: bool = False) -> Path:
+    """The version's .venv with its lock installed (made on first use, or anew when
+    `fresh`); its python."""
     with _LOCKS_GUARD:
         guard = _LOCKS.setdefault(version_dir.resolve(), threading.Lock())
 
     with guard:
+        if fresh:
+            shutil.rmtree(version_dir / VENV, ignore_errors=True)
+
         return _ensure_venv(version_dir, cache_dir)
 
 

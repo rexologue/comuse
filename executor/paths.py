@@ -35,7 +35,7 @@ class WorkspacePaths:
         """A path to create or change. What does not exist yet must get a name Windows
         accepts too: the workspace is often a Windows folder or a network share."""
         path = self._resolve(ref)
-        root = self.data_dir if path.is_relative_to(self.data_dir) else self.workspace_dir
+        root, _ = self._owner(path)
 
         current = root
         for part in path.relative_to(root).parts:
@@ -51,14 +51,15 @@ class WorkspacePaths:
 
     def to_ref(self, path: Path) -> str:
         resolved = path.resolve()
+        owner = self._owner(resolved)
 
-        if resolved.is_relative_to(self.data_dir):
-            return DATA_PREFIX + resolved.relative_to(self.data_dir).as_posix()
+        if owner is None:
+            raise PermissionDenied(f"Путь вне рабочей папки: {path}")
 
-        if resolved.is_relative_to(self.workspace_dir):
-            return resolved.relative_to(self.workspace_dir).as_posix()
+        root, prefix = owner
+        self._check_data(resolved, resolved.as_posix())
 
-        raise PermissionDenied(f"Путь вне рабочей папки: {path}")
+        return prefix + resolved.relative_to(root).as_posix()
 
 
     def _resolve(self, ref: str) -> Path:
@@ -81,7 +82,26 @@ class WorkspacePaths:
         if not path.is_relative_to(self.workspace_dir):
             raise PermissionDenied(f"Путь `{ref}` выходит за пределы рабочей папки")
 
+        # DATA_DIR inside the workspace (the repository in Documents): its database and
+        # secrets are no closer than through data:.
+        self._check_data(path, ref)
+
         return path
+
+
+    def _owner(self, path: Path) -> tuple[Path, str] | None:
+        """The deepest root holding the path: a workspace inside DATA_DIR, or DATA_DIR
+        inside the workspace, still gets refs that _resolve takes back."""
+        roots = [(self.data_dir, DATA_PREFIX), (self.workspace_dir, "")]
+        holding = [root for root in roots if path.is_relative_to(root[0])]
+
+        return max(holding, key=lambda root: len(root[0].parts), default=None)
+
+
+    def _check_data(self, path: Path, ref: str) -> None:
+        owner = self._owner(path)
+        if owner and owner[1] == DATA_PREFIX and not any(path.is_relative_to(self.data_dir / area) for area in _DATA_AREAS):
+            raise PermissionDenied(f"Доступ к `{ref}` запрещён: из папки данных агента разрешены только data:templates и data:outputs")
 
 
 # What Windows refuses in a file or folder name.

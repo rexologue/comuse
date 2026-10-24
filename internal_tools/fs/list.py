@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date, datetime, timedelta
+from pathlib import PurePosixPath
 
 from pydantic import BaseModel, Field
 
-from common.tools import ToolContext, ToolError, ToolInput, ToolOutput, tool
+from common.tools import PermissionDenied, ToolContext, ToolError, ToolInput, ToolOutput, tool
 from common.tools.fields import WorkspacePath
 
 
@@ -41,6 +42,11 @@ async def list_files(inp: Input, ctx: ToolContext) -> Output:
     if not folder.is_dir():
         raise ToolError(f"Папка `{inp.folder}` не найдена")
 
+    # A glob follows `..`: the pattern names files in the folder, not a way out of it.
+    pattern = PurePosixPath(inp.pattern.replace("\\", "/"))
+    if pattern.is_absolute() or ".." in pattern.parts:
+        raise ToolError(f"Шаблон «{inp.pattern}»: только имена внутри папки, без `..` и абсолютных путей")
+
     since = _parse_date(inp.modified_from, "modified_from")
     until = _parse_date(inp.modified_to, "modified_to")
 
@@ -59,6 +65,13 @@ def _scan(folder, pattern: str, recursive: bool, since: date | None, until: date
         if not path.is_file():
             continue
 
+        # A link out of the workspace (or into the agent's own data) is not listed.
+        try:
+            ref = ctx.to_ref(path)
+
+        except PermissionDenied:
+            continue
+
         modified = datetime.fromtimestamp(path.stat().st_mtime)
 
         if since and modified < datetime.combine(since, datetime.min.time()):
@@ -69,7 +82,7 @@ def _scan(folder, pattern: str, recursive: bool, since: date | None, until: date
 
         files.append(
             FileInfo(
-                path=ctx.to_ref(path),
+                path=ref,
                 name=path.name,
                 size=path.stat().st_size,
                 modified=modified.isoformat(timespec="seconds"),

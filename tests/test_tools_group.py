@@ -80,3 +80,13 @@ async def test_a_draft_changed_behind_its_back_does_not_run(settings):
 
     with pytest.raises(ToolError, match="изменились после сохранения"):
         await trial_tool.trial(trial_tool.Input(name="count_lines", args={"file": "a.txt"}), ctx)
+
+
+async def test_the_chat_does_not_replace_someone_elses_draft(settings):
+    store.save_draft(settings.storage, "count_lines", manifest=MANIFEST, files={"main.py": COUNT_LINES}, requirements=[])
+
+    with pytest.raises(ToolError, match="написал пользователь"):
+        await draft_tool.draft(_draft_input(), _ctx(settings))
+
+    assert store.version_view(settings.storage, "count_lines", 1)["created_by"] == "user"
+

@@ -187,3 +187,26 @@ async def test_move_in_a_dry_run_only_says_what_it_would_do(settings):
     assert out.path == "Счета/a.pdf"
     assert (workspace / "Входящие" / "a.pdf").exists() and not (workspace / "Счета").exists()
     assert ctx.logs == ["Пробный запуск: переложил бы «Входящие/a.pdf» в «Счета/a.pdf»"]
+
+
+async def test_fs_list_stays_in_its_folder(settings, tmp_path):
+    from common import tunables
+    from common.tools import ToolContext
+    from executor.paths import WorkspacePaths
+    from internal_tools.fs.list import Input, list_files
+
+    workspace = tunables.get("workspace_dir")
+    (workspace / "a.txt").write_text("a")
+    (tmp_path / "outside.txt").write_text("secret")
+    (workspace / "link.txt").symlink_to(tmp_path / "outside.txt")
+    (settings.storage.data_dir / "outputs").mkdir(parents=True, exist_ok=True)
+
+    ctx = ToolContext(mode="chat", settings=settings, paths=WorkspacePaths(workspace, settings.storage.data_dir), llm=None)
+
+    for pattern in ("../*", "/etc/*", "x/../../*"):
+        with pytest.raises(ToolError, match="без `..`"):
+            await list_files(Input(folder="data:outputs", pattern=pattern), ctx)
+
+    # A link out of the workspace is left out, the rest is listed.
+    listed = await list_files(Input(), ctx)
+    assert [f.path for f in listed.files] == ["a.txt"]

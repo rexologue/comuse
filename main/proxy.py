@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from urllib.parse import unquote
+
 import httpx
 from fastapi import Request
 from fastapi.responses import StreamingResponse
@@ -26,6 +28,11 @@ METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
 async def reverse_proxy(request: Request, service: str, path: str) -> StreamingResponse:
     """Stream a request to a service and its response back (SSE chat included)."""
     state = request.app.state
+
+    # `..%2F` arrives decoded as `../`, and httpx would resolve it: a public route must
+    # never reach another one of the service (or main's own internal routes).
+    if any(unquote(part) in (".", "..") for part in path.replace("\\", "/").split("/")):
+        raise ApiError(status_code=400, message="Путь с `.` или `..` не принимается")
 
     target_url = f"{state.registry.url(service)}/{path.lstrip('/')}"
     if request.url.query:
@@ -66,7 +73,8 @@ def _forward_request_headers(request: Request, internal_token: str) -> dict:
     headers = {
         key: value
         for key, value in request.headers.items()
-        if key.lower() not in _HOP_BY_HOP and key.lower() not in ("host", "content-length", "authorization")
+        if key.lower() not in _HOP_BY_HOP
+        and key.lower() not in ("host", "content-length", "authorization", INTERNAL_TOKEN_HEADER.lower())
     }
 
     # Services trust main; the client's own credentials stop here.

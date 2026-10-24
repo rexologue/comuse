@@ -132,8 +132,8 @@ agent-loop и пропадает при его перезапуске, тогд�
 | `task_patch {task_id, instruction}` | Правка задачи словами → черновик новой версии и «было → стало» |
 | `task_reject {task_id, version_id}` | Отклонить черновик |
 | `task_list` | Задачи пользователя с шагами и расписанием |
-| `task_run_now {task_id}` | Запустить задачу сейчас |
-| `task_control {task_id, action}` | `pause`, `resume` или `archive` |
+| `task_run_now {task_id}` | Запустить задачу сейчас; спрашивает «да» каждый раз |
+| `task_control {task_id, action}` | `pause`, `resume` или `archive`; спрашивает «да» каждый раз |
 | `run_status {run_id}` | Состояние запуска: шаги, ошибки, результат |
 | `action_confirm {action_id, remember?}` | Выполнить действие, ждавшее согласия пользователя |
 

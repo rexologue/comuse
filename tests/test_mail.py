@@ -327,3 +327,20 @@ def test_search_fetches_headers_in_batches_newest_first(monkeypatch):
     assert [item["uid"] for item in found][:3] == [498, 495, 492]
     assert len(found) == 20 and all(item["from_email"] == "boss@company.ru" for item in found)
     assert len(box.fetches) == 2
+
+
+@pytest.mark.parametrize("folder", ['"INBOX"\r\nA1 DELETE "Важное"', 'Счета "ООО"', "a\\b", "INBOX"])
+def test_a_folder_name_stays_one_imap_string(folder):
+    from internal_tools.mail.adapters.imap_smtp import _quote, _unquote, decode_folder
+
+    quoted = _quote(folder)
+
+    assert "\r" not in quoted and "\n" not in quoted
+    assert decode_folder(_unquote(quoted)) == folder
+
+
+@pytest.mark.parametrize(("sent", "saved"), [("..", "attachment_1"), ("../../x.pdf", "x.pdf"), ("C:\\tmp\\a:b.pdf", "a_b.pdf")])
+def test_an_attachment_is_saved_under_a_safe_name(sent, saved):
+    from internal_tools.mail.adapters.imap_smtp import _attachment_name
+
+    assert _attachment_name(sent, 1) == saved

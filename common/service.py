@@ -80,8 +80,9 @@ async def require_internal_token(request: Request) -> None:
     if not expected:
         return
 
-    provided = request.headers.get(INTERNAL_TOKEN_HEADER, "")
-    if not hmac.compare_digest(provided, expected):
+    # Bytes: a header with non-ASCII characters is a 401, not a TypeError.
+    provided = request.headers.get(INTERNAL_TOKEN_HEADER, "").encode("utf-8", "surrogateescape")
+    if not hmac.compare_digest(provided, expected.encode("utf-8")):
         raise ApiError(status_code=401, message="Missing or invalid internal token")
 
 

@@ -27,6 +27,11 @@ class Draft(BaseModel):
     requirements: list[str] = Field(default_factory=list)
 
 
+class Approval(BaseModel):
+    # The hash of the version the person read (its view's `hash`).
+    hash: str
+
+
 @router.get("/external-tools", summary="External tools with their versions")
 async def list_tools():
     return {"tools": await asyncio.to_thread(store.tool_list)}
@@ -57,8 +62,8 @@ async def delete_draft(name: str, request: Request):
 
 
 @router.post("/external-tools/{name}/versions/{version}/approve", summary="Approve a draft: freeze it, install its packages, make it current")
-async def approve(name: str, version: int, request: Request):
-    view = await _call(store.approve, request.app.state.settings.storage, name, version)
+async def approve(name: str, version: int, body: Approval, request: Request):
+    view = await _call(store.approve, request.app.state.settings.storage, name, version, body.hash)
     request.app.state.registry.load()
 
     return view

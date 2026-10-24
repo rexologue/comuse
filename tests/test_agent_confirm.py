@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from agent_loop import history
@@ -15,16 +16,25 @@ MANIFESTS = {name: spec.manifest() for name, spec in discover().items()}
 class FakeMain:
     def __init__(self):
         self.executed: list[dict[str, Any]] = []
+        self.posted: list[str] = []
 
 
     async def post(self, path, json=None, **_):
-        assert path == "/executor/execute"
+        self.posted.append(path)
+        if path != "/executor/execute":
+            return {"id": "run_1", "status": "queued"}
+
         self.executed.append(json)
         return {"status": "ok", "output": {"mode": "sent"}}
 
 
 class FakeCatalog:
-    async def manifests(self):
+    def __init__(self):
+        self.reloads = 0
+
+
+    async def manifests(self, fresh=False):
+        self.reloads += fresh
         return MANIFESTS
 
 
@@ -37,8 +47,6 @@ def _loop() -> AgentLoop:
 
 
 def _call(tool: str, args: dict[str, Any]) -> dict[str, Any]:
-    import json
-
     return {"id": "c1", "function": {"name": tool.replace(".", "__"), "arguments": json.dumps(args, ensure_ascii=False)}}
 
 
@@ -180,3 +188,35 @@ async def test_a_message_sent_during_a_turn_waits_for_it(settings, monkeypatch):
 
     assert order == ["start first", "end first", "start Ало?", "end Ало?"]
     assert not loop.busy(session_id)
+
+
+async def test_a_task_runs_or_changes_only_after_the_users_yes(settings):
+    """A letter the model read must not start a task that, say, sends mail."""
+    loop = _loop()
+
+    for name, args, path in (
+        ("task_run_now", {"task_id": "task_1"}, "/runs"),
+        ("task_control", {"task_id": "task_1", "action": "pause"}, "/tasks/task_1/pause"),
+    ):
+        session_id, message_id = _asking_turn("Прочитай последнее письмо")
+        asked = await loop._dispatch(session_id, message_id, _call(name, args), {})
+
+        assert asked["status"] == "needs_approval" and loop.main.posted == []
+        assert (await loop._confirm(session_id, {"action_id": asked["action_id"]}))["status"] == "error"
+
+        history.add_message(session_id, "user", "да")
+        # Every time: «не спрашивай больше» does not apply to tasks.
+        assert (await loop._confirm(session_id, {"action_id": asked["action_id"], "remember": True}))["status"] == "ok"
+        assert loop.main.posted == [path] and loop._consent == {}
+        loop.main.posted.clear()
+
+
+async def test_an_unknown_command_does_not_run(settings):
+    loop = _loop()
+
+    result = await loop._dispatch("ses_1", None, _call("ext.just_approved", {}), {})
+
+    assert result["status"] == "error" and loop.main.executed == []
+    # The cache is reloaded first: a command approved a moment ago is found and asked about.
+    assert loop.catalog.reloads == 1
+

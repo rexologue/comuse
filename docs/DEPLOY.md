@@ -141,7 +141,9 @@ cp deploy/.env.example deploy/.env
   `AGENT_DEPLOY_WORKSPACE_PATH`, которая монтируется в `/workspace`;
 - `TZ` — часовой пояс контейнеров: в нём срабатывает cron;
 - настройки LLM;
-- `INTERNAL_TOKEN` — обязателен, общий для всех контейнеров;
+- `INTERNAL_TOKEN` — обязателен, общий для всех контейнеров: без него compose не стартует.
+  Значения по умолчанию нет — придумайте своё, например
+  `python -c "import secrets; print(secrets.token_urlsafe(24))"`;
 - `KEYRING_PASSWORD` — ключ к файлу паролей;
 - `API_TOKEN` — если пусто, main создаст токен при первом старте: `docker exec <префикс>-main cat /data/api_token`;
 - `AGENT_DEPLOY_ALLOWED_HOSTS` — имена, по которым клиенты обращаются к main; при публикации в сеть добавьте имя или адрес сервера.
@@ -233,7 +235,7 @@ LLM, прокси и `reasoning_effort` для LLM) меняются через 
 | `API_TOKEN` | Токен внешнего API (`Authorization: Bearer`), нужен всегда; пусто — main создаёт его в `DATA_DIR/api_token` | не задано |
 | `ALLOWED_HOSTS` | Заголовки `Host`, на которые отвечает main (защита от DNS rebinding); `*` — без проверки | `127.0.0.1,localhost` |
 | `ALLOWED_ORIGINS` | Источники для CORS через запятую | не задано |
-| `INTERNAL_TOKEN` | Токен между сервисами (`X-Internal-Token`); пусто — без проверки, локально его создаёт `launcher.py` | не задано |
+| `INTERNAL_TOKEN` | Токен между сервисами (`X-Internal-Token`); пусто — сервисы его не проверяют, а внутренние маршруты main требуют API-токен. Локально его создаёт `launcher.py`, в Docker обязателен | не задано |
 | `LOG_LEVEL` | Уровень логов | `INFO` |
 | `LOG_DIR` | Папка файлов логов (см. [логи](#логи)) | `DATA_DIR/logs` |
 

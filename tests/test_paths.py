@@ -75,3 +75,30 @@ def test_what_already_exists_is_not_judged(sandbox):
 def test_portable_names_and_data_refs_pass(sandbox):
     assert sandbox.write_path("Стихи/2026-10-22T12-00-00.txt").name == "2026-10-22T12-00-00.txt"
     assert sandbox.write_path("data:outputs/run_1/report.docx").name == "report.docx"
+
+
+def test_a_data_dir_inside_the_workspace_stays_closed(tmp_path):
+    # The repository (and DATA_DIR=data in it) inside the user's Documents.
+    workspace = tmp_path / "Documents"
+    data = workspace / "agent" / "data"
+    (data / "outputs").mkdir(parents=True)
+    (data / "app.db").write_text("")
+    paths = WorkspacePaths(workspace, data)
+
+    for ref in ("agent/data/app.db", "agent/data/secrets.enc", str(data / "app.db")):
+        with pytest.raises(PermissionDenied):
+            paths.read_path(ref)
+
+    assert paths.to_ref(data / "outputs" / "a.txt") == "data:outputs/a.txt"
+    with pytest.raises(PermissionDenied):
+        paths.to_ref(data / "app.db")
+
+
+def test_a_workspace_inside_the_data_dir_keeps_its_refs(tmp_path):
+    data = tmp_path / "data"
+    workspace = data / "workspace"
+    workspace.mkdir(parents=True)
+    paths = WorkspacePaths(workspace, data)
+
+    ref = paths.to_ref(workspace / "a.txt")
+    assert ref == "a.txt" and paths.read_path(ref) == (workspace / "a.txt").resolve()

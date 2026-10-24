@@ -173,13 +173,12 @@ def read(config: dict[str, Any], secret: str, *, folder: str, uid: int, save_dir
         text = re.sub(r"\s+", " ", text).strip()
 
     attachments: list[Path] = []
-    for part in message.iter_attachments():
-        filename = part.get_filename()
-        if not filename:
+    for n, part in enumerate(message.iter_attachments(), start=1):
+        if not part.get_filename():
             continue
 
         save_dir.mkdir(parents=True, exist_ok=True)
-        target = save_dir / Path(filename).name
+        target = _free_name(save_dir, _attachment_name(part.get_filename(), n))
         target.write_bytes(part.get_payload(decode=True) or b"")
         attachments.append(target)
 
@@ -389,7 +388,7 @@ def _special_folder(imap: imaplib.IMAP4, flag: str, fallback: str, what: str) ->
             if not match:
                 continue
 
-            name = decode_folder(match.group("name").strip('"'))
+            name = decode_folder(_unquote(match.group("name")))
             if flag in match.group("flags"):
                 return name
 
@@ -414,7 +413,18 @@ def _ensure_folder(imap: imaplib.IMAP4, folder: str) -> None:
 
 
 def _quote(folder: str) -> str:
-    return folder if folder.startswith('"') else f'"{encode_folder(folder)}"'
+    """A folder as one IMAP quoted string, whatever the name: it may come from a letter
+    the model read, so nothing in it can end the string or the command."""
+    encoded = encode_folder(folder).replace("\\", "\\\\").replace('"', '\\"')
+
+    return f'"{encoded}"'
+
+
+def _unquote(name: str) -> str:
+    if len(name) >= 2 and name.startswith('"') and name.endswith('"'):
+        return re.sub(r'\\(.)', r"\1", name[1:-1])
+
+    return name
 
 
 def encode_folder(name: str) -> str:
@@ -449,6 +459,26 @@ def decode_folder(name: str) -> str:
         return base64.b64decode(raw + "=" * (-len(raw) % 4)).decode("utf-16-be")
 
     return _UTF7_RE.sub(decode, name)
+
+
+def _attachment_name(filename: str, n: int) -> str:
+    """The sender names the file: only its last part, nothing Windows refuses, and never
+    `..` or empty."""
+    name = re.sub(r'[<>:"|?*\x00-\x1f]', "_", filename.replace("\\", "/").rsplit("/", 1)[-1]).strip(" .")
+
+    return name or f"attachment_{n}"
+
+
+def _free_name(folder: Path, name: str) -> Path:
+    """Two attachments called image.png: the second becomes image (2).png."""
+    target, stem, suffix = folder / name, Path(name).stem, Path(name).suffix
+
+    for copy in range(2, 1000):
+        if not target.exists():
+            break
+        target = folder / f"{stem} ({copy}){suffix}"
+
+    return target
 
 
 def address_of(header: str) -> str:

@@ -181,19 +181,32 @@ class AgentLoop:
             return await self._confirm(session_id, args)
 
         if name in meta_tools.NAMES:
+            if asking := meta_tools.manifest(name):
+                return self._ask_first(session_id, message_id, asking, args)
+
             output = await meta_tools.call(self.main, session_id, name, args)
             history.add_trace(session_id, message_id, f"meta:{name}", args, output, output["status"])
             return output
 
         tool = tool_name(name)
         # The whole catalog, not just this turn's selection: an external tool must never
-        # slip past the question because the model reached it some other way.
-        manifest = by_function.get(name) or (await self.catalog.manifests()).get(tool)
+        # slip past the question because the model reached it some other way. One approved
+        # a moment ago is not in the cached catalog yet: a miss reloads it, and what is
+        # still unknown does not run at all.
+        manifest = (
+            by_function.get(name)
+            or (await self.catalog.manifests()).get(tool)
+            or (await self.catalog.manifests(fresh=True)).get(tool)
+        )
+        if manifest is None:
+            output = {"status": "error", "error": f"Нет команды `{tool}`"}
+            history.add_trace(session_id, message_id, tool, args, output, "error")
+            return output
 
         # Asking first is the chat's rule, not the executor's: the user is right here. The
         # call waits in the trace until action_confirm. A command that does not say it is
         # harmless (confirm=False) asks, unless the user let this chat stop asking about it.
-        if manifest is not None and self._needs_asking(session_id, manifest):
+        if self._needs_asking(session_id, manifest):
             return self._ask_first(session_id, message_id, manifest, args)
 
         output = await self._execute(session_id, tool, args)
@@ -268,7 +281,11 @@ class AgentLoop:
             if manifest.get("confirm") is True:
                 self._consent.setdefault(session_id, set()).add(event.tool)
 
-        output = await self._execute(session_id, event.tool, event.args)
+        if event.tool.startswith("meta:"):
+            output = await meta_tools.call(self.main, session_id, event.tool.removeprefix("meta:"), event.args)
+        else:
+            output = await self._execute(session_id, event.tool, event.args)
+
         history.update_trace(event.id, status="confirmed" if output["status"] == "ok" else output["status"], result=output)
 
         return output
