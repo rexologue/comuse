@@ -3,11 +3,13 @@ it to another one, as a new task version."""
 
 from __future__ import annotations
 
+import asyncio
 import copy
 
 import pytest
 
 from common.errors import ApiError
+from common.external_tools import pinned
 from common.external_tools import store as tools
 from common.schemas.execution import ExecContext, ExecuteRequest
 from common.schemas.task import TaskSpec
@@ -153,37 +155,46 @@ async def test_a_step_runs_the_version_it_pins(settings):
 @needs_uv
 def test_an_old_version_goes_once_no_task_needs_it(settings):
     _two_versions(settings)
-    spec = copy.deepcopy(_spec(1))
-    spec["steps"][0]["tool"] = "ext.count_lines"
-    task_id = _task(spec)
 
-    assert tools.sweep_unused(settings.storage) == 0
+    assert tools.sweep_unused(settings.storage, {("ext.count_lines", 1)}) == 0
+    assert tools.sweep_unused(settings.storage, set()) == 1
+    assert not tools.version_dir(settings.storage, "count_lines", 1).exists()
+    # The current version stays whoever uses it.
+    assert tools.version_dir(settings.storage, "count_lines", 2).exists()
+    assert tools.sweep_unused(settings.storage, set()) == 0
+
+
+def test_the_task_view_tells_of_a_newer_version(settings):
+    from main import views
+
+    task_id = _task(_spec(1))
+    assert views.current_pins(task_id) == {}      # a draft only: no current version yet
+
+    version_id = views.task_detail(task_id)["versions"][0]["id"]
+    with session() as db:
+        db.get(Task, task_id).current_version_id = version_id
+        db.commit()
+
+    # The current versions are the executor's word; main only compares.
+    assert views.current_pins(task_id) == {"ext.count": 1}
+    assert views.task_detail(task_id, {"ext.count": 2})["tool_updates"] == [{"tool": "ext.count", "version": 1, "current": 2}]
+    assert views.task_detail(task_id, {"ext.count": 1})["tool_updates"] == []
+
+
+def test_an_old_version_goes_once_its_owners_no_longer_pin_it(settings):
+    """Who needs a version is the compiler's word (tasks) and the runner's (runs)."""
+    from compiler import store as tasks
+    from runner.api import runs
+
+    task_id = _task(_spec(1))
+    assert tasks.tool_pins() == [{"tool": "ext.count", "version": 1}]
 
     with session() as db:
         db.get(Task, task_id).status = "archived"
         db.commit()
 
-    assert tools.sweep_unused(settings.storage) == 1
-    assert not tools.version_dir(settings.storage, "count_lines", 1).exists()
-    # The current version stays whoever uses it.
-    assert tools.version_dir(settings.storage, "count_lines", 2).exists()
-    assert tools.sweep_unused(settings.storage) == 0
-
-
-def test_the_task_view_tells_of_a_newer_version(settings):
-    from common.storage.models import ExternalTool
-    from main import views
-
-    task_id = _task(_spec(1))
-    assert views.task_detail(task_id)["tool_updates"] == []      # a draft only: no current version yet
-
-    version_id = views.task_detail(task_id)["versions"][0]["id"]
-    with session() as db:
-        db.get(Task, task_id).current_version_id = version_id
-        db.add(ExternalTool(name="count", current_version=2))
-        db.commit()
-
-    assert views.task_detail(task_id)["tool_updates"] == [{"tool": "ext.count", "version": 1, "current": 2}]
+    assert tasks.tool_pins() == []
+    assert asyncio.run(runs.tool_pins()) == {"pins": []}
 
 
 def test_tasks_can_be_listed_by_the_tool_they_use(settings):
@@ -203,7 +214,7 @@ def test_pinning_survives_odd_steps_and_follows_the_users_edit():
     # A tool that is not a string is left to validate_spec to name.
     odd = {"title": "x", "steps": [{"id": "a", "tool": 5}, {"id": "b", "tool": {"name": "ext.count"}}]}
     versions.pin(odd, catalog, keep={}, explicit=False)
-    assert versions.pins(odd) == {}
+    assert pinned(odd) == {}
 
     # The user moved the second step: that one wins, wherever it stands.
     two = {"title": "x", "steps": [{"id": "a", "tool": "ext.count", "tool_version": 1}, {"id": "b", "tool": "ext.count", "tool_version": 2}]}

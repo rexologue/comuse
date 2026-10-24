@@ -19,7 +19,7 @@ domain_guide(
 Если docs.make_template ответил, что разметка не подходит, исправь названные места, а не всё заново.""",
     compiler="""
 Если в разговоре шаблон уже создан (docs.make_template), не создавай его заново — используй готовый путь data:templates/….
-Если задача сама делает шаблон, разметку для docs.make_template даёт предыдущий шаг llm.extract: схема результата —
-fields и tables, как в аргументах docs.make_template.
+Если задача сама делает шаблон, разметку для docs.make_template даёт предыдущий шаг, который извлекает данные
+моделью по схеме: схема его результата — fields и tables, как в аргументах docs.make_template.
 Ключи context в docs.fill_template — ровно поля шаблона (fields и tables из docs.make_template).""",
 )

@@ -5,9 +5,10 @@ events. One age for all of them: the `retention_days` setting (common/tunables.p
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from datetime import datetime, timedelta
-from typing import Callable
+from typing import Awaitable, Callable
 
 from common import tunables
 from common.utils import utcnow
@@ -22,11 +23,14 @@ def cutoff() -> datetime:
     return utcnow() - timedelta(days=tunables.get("retention_days"))
 
 
-async def sweep_forever(what: str, sweep: Callable[[], int], every_sec: int = _SWEEP_EVERY_SEC) -> None:
-    """Run `sweep` at start and then every `every_sec`; it returns how many items went."""
+async def sweep_forever(what: str, sweep: Callable[[], int | Awaitable[int]], every_sec: int = _SWEEP_EVERY_SEC) -> None:
+    """Run `sweep` at start and then every `every_sec`; it returns how many items went.
+    A plain function runs in a thread; one that returns an awaitable is awaited."""
     while True:
         try:
             removed = await asyncio.to_thread(sweep)
+            if inspect.isawaitable(removed):
+                removed = await removed
             if removed:
                 log.info("removed %d old %s", removed, what)
 

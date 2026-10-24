@@ -1,5 +1,5 @@
 """Reshape rows between steps without an LLM: a frozen task cannot ask a model to
-turn `{key, sums}` from xlsx.aggregate into the `{client, amount}` a template wants."""
+turn one step's rows (`{key, total}`) into the `{client, amount}` the next one wants."""
 
 from __future__ import annotations
 
@@ -13,11 +13,11 @@ from common.tools import ToolContext, ToolError, ToolInput, ToolOutput, tool
 
 
 class Input(ToolInput):
-    rows: list[dict[str, Any]] = Field(description="Исходные строки, например groups из xlsx.aggregate")
+    rows: list[dict[str, Any]] = Field(description="Исходные строки — результат предыдущего шага")
     fields: dict[str, str] = Field(
         description=(
             "Новое поле → выражение над `row` БЕЗ фигурных скобок, например "
-            "{'client': 'row.key', 'amount': \"row.sums['Сумма'] | format_number\"}"
+            "{'client': 'row.name', 'amount': 'row.total | format_number'}"
         )
     )
     limit: int | None = Field(default=None, ge=1, description="Оставить первые N строк")
@@ -33,8 +33,8 @@ class Output(ToolOutput):
     card="Подготовить строки с полями {fields}, не больше {limit}",
     description=(
         "Build new rows from existing ones: each output field is a Jinja expression over `row` "
-        "written WITHOUT braces (row.key, row.sums['Sum'] | format_number, row.count). Optional "
-        "limit keeps the first N rows. Use it to fit aggregate results to a template's table columns."
+        "written WITHOUT braces (row.name, row.total | format_number, row['Сумма']). Optional "
+        "limit keeps the first N rows. Use it to fit one step's rows to what the next one wants."
     ),
     confirm=False,
 )

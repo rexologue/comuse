@@ -1,14 +1,13 @@
 // A command the agent wrote in this chat (tools.draft), waiting for the user: its code
-// and the exact packages to read, then approve or throw away. Only a person approves.
+// and the exact packages to read, then approve or throw away (DraftDecision). Only a
+// person approves.
 
-import { useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, Wrench } from "lucide-react";
 import { useState } from "react";
 
-import { api, ApiError } from "@/api/client";
-import { keys, useExternalTools, useExternalToolVersion } from "@/api/queries";
+import { useExternalTools, useExternalToolVersion } from "@/api/queries";
 import type { ExternalTool } from "@/api/types";
-import { Button } from "@/components/ui/button";
+import { DraftDecision } from "@/commands/DraftDecision";
 
 export function ToolDraftCards({ sessionId }: { sessionId: string }) {
   const tools = useExternalTools();
@@ -25,33 +24,8 @@ export function ToolDraftCards({ sessionId }: { sessionId: string }) {
 }
 
 function ToolDraftCard({ tool, version }: { tool: ExternalTool; version: number }) {
-  const queryClient = useQueryClient();
   const draft = useExternalToolVersion(tool.name, version);
   const [open, setOpen] = useState(false);
-  const [armed, setArmed] = useState(false);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const act = (name: string, call: () => Promise<unknown>) => async () => {
-    setBusy(name);
-    setError(null);
-    try {
-      await call();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : String(e));
-    } finally {
-      // A refused approval too: the draft may have changed, and the card shows it anew.
-      await queryClient.invalidateQueries({ queryKey: keys.externalTools });
-      await queryClient.invalidateQueries({ queryKey: keys.tools });
-      // An open task panel offers the move to a version approved here.
-      await queryClient.invalidateQueries({ queryKey: ["task"] });
-      setBusy(null);
-    }
-  };
-
-  // The hash of the code on screen: a draft rewritten since is not approved.
-  const approve = act("approve", () => api(`/external-tools/${tool.name}/versions/${version}/approve`, { method: "POST", json: { hash: draft.data?.hash } }));
-  const discard = act("discard", () => api(`/external-tools/${tool.name}/draft`, { method: "DELETE" }));
 
   const manifest = draft.data?.manifest;
 
@@ -92,21 +66,7 @@ function ToolDraftCard({ tool, version }: { tool: ExternalTool; version: number 
         нужно.
       </p>
 
-      <div className="flex flex-wrap gap-2">
-        <Button size="sm" onClick={approve} disabled={busy !== null || !draft.data}>
-          {busy === "approve" ? "Ставлю пакеты…" : "Одобрить"}
-        </Button>
-        <Button
-          size="sm"
-          variant={armed ? "destructive" : "ghost"}
-          onBlur={() => setArmed(false)}
-          onClick={armed ? discard : () => setArmed(true)}
-          disabled={busy !== null}
-        >
-          {armed ? "Точно выбросить?" : "Выбросить"}
-        </Button>
-      </div>
-      {error && <p className="text-sm whitespace-pre-line text-destructive">{error}</p>}
+      {draft.data && <DraftDecision version={draft.data} />}
     </div>
   );
 }

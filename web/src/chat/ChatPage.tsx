@@ -9,14 +9,14 @@ import { useNavigate, useParams } from "react-router";
 
 import { api, ApiError } from "@/api/client";
 import { useEvents } from "@/api/events";
-import { keys, useChat, useChats, useTasks, useTools } from "@/api/queries";
+import { keys, useChat, useChats, useTasks } from "@/api/queries";
 import type { ChatDetail, ChatReply, TraceItem } from "@/api/types";
 import { ConfirmBar } from "@/chat/ConfirmBar";
 import { Composer } from "@/chat/Composer";
 import { DraftCards } from "@/chat/DraftCard";
 import { ToolDraftCards } from "@/chat/ToolDraftCard";
 import { MessageList, UserBubble } from "@/chat/MessageList";
-import { toolTitle } from "@/chat/tools";
+import { useToolTitle } from "@/chat/tools";
 import { Button } from "@/components/ui/button";
 
 type Live = { tool: string; status: string };
@@ -36,7 +36,7 @@ function ChatPage() {
   const chat = useChat(isNew ? undefined : sessionId);
   const chats = useChats();
   const tasks = useTasks();
-  const tools = useTools();
+  const title = useToolTitle();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 
@@ -135,7 +135,7 @@ function ChatPage() {
                 </div>
                 {live.map((item, index) => (
                   <div key={index} className="pl-6 text-xs">
-                    {toolTitle(item.tool, tools.data)}
+                    {title(item.tool)}
                     {item.status === "needs_approval" ? " — спросит разрешения" : item.status === "error" ? " — ошибка" : ""}
                   </div>
                 ))}
@@ -150,7 +150,7 @@ function ChatPage() {
               </div>
               {live.map((item, index) => (
                 <div key={index} className="pl-6 text-xs">
-                  {toolTitle(item.tool, tools.data)}
+                  {title(item.tool)}
                 </div>
               ))}
             </div>

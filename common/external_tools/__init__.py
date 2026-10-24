@@ -24,6 +24,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from common.schemas.task import tool_steps
+
 
 PREFIX = "ext."
 
@@ -42,17 +44,8 @@ def pinned(spec: dict[str, Any]) -> dict[str, int]:
     """{tool: version} the external steps of a task spec run (nested steps too)."""
     found: dict[str, int] = {}
 
-    def walk(steps: Any) -> None:
-        for step in steps or []:
-            if not isinstance(step, dict):
-                continue
-
-            tool = step.get("tool")
-            if isinstance(tool, str) and is_external(tool) and isinstance(step.get("tool_version"), int):
-                found.setdefault(tool, step["tool_version"])
-
-            walk(step.get("steps"))
-
-    walk(spec.get("steps") if isinstance(spec, dict) else None)
+    for step in tool_steps(spec):
+        if is_external(step["tool"]) and isinstance(step.get("tool_version"), int):
+            found.setdefault(step["tool"], step["tool_version"])
 
     return found

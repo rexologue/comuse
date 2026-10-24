@@ -3,18 +3,11 @@ import type { ReactNode } from "react";
 import { NavLink, useNavigate } from "react-router";
 
 import { useChats, useTasks } from "@/api/queries";
-import type { TaskStatus } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-
-const STATUS: Record<TaskStatus, { label: string; variant: "success" | "secondary" | "outline" }> = {
-  active: { label: "работает", variant: "success" },
-  paused: { label: "пауза", variant: "secondary" },
-  draft: { label: "черновик", variant: "outline" },
-  archived: { label: "архив", variant: "outline" },
-};
+import { TASK_STATUS as STATUS } from "@/task/labels";
 
 export function LeftPanel({ overlay = false }: { overlay?: boolean }) {
   const tasks = useTasks();

@@ -21,8 +21,8 @@
 | [`settings`](#settings) | main | все сервисы | Рабочие настройки, изменённые через API, и назначение провайдеров LLM на роли |
 | [`llm_providers`](#llm_providers) | main | agent-loop, compiler, executor | Провайдеры LLM (без ключей) |
 | [`chat_sessions`](#chat_sessions) | agent-loop | — | Чаты |
-| [`chat_messages`](#chat_messages) | agent-loop | compiler | Сообщения чатов |
-| [`trace_events`](#trace_events) | agent-loop | compiler | Вызовы команд в чатах |
+| [`chat_messages`](#chat_messages) | agent-loop | — | Сообщения чатов (компилятор получает чат от agent-loop: `GET /agent/sessions/{id}/transcript`) |
+| [`trace_events`](#trace_events) | agent-loop | — | Вызовы команд в чатах |
 | [`tasks`](#tasks) | compiler | main, runner, scheduler, agent-loop | Задачи |
 | [`task_versions`](#task_versions) | compiler | main, runner, scheduler, agent-loop | Версии задач |
 | [`runs`](#runs) | runner | main | Запуски |

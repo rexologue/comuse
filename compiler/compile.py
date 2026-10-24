@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import copy
-import json
 import logging
-import time
 from datetime import date
 from difflib import SequenceMatcher
 from typing import Any
@@ -14,23 +12,22 @@ import jsonpatch
 import jsonpointer
 
 from common import tunables
+from common.clients.catalog import CatalogCache
 from common.clients.main_client import MainClient
 from common.errors import ApiError
+from common.external_tools import pinned
 from common.llm import LLM
-from common.schemas.task import TaskSpec
+from common.schemas.task import TaskSpec, tool_steps
 from common.settings import Settings
-from common.storage.db import session
 from common import templating
-from common.storage.models import ChatMessage, TaskVersion, TraceEvent
-from common.utils import truncate
+from common.storage.models import TaskVersion
+from common.utils import strings_in
 from compiler import prompts, store, task_settings, versions
 from compiler.cards import build_cards, describe_trigger, diff_specs, summarize
 from compiler.validate import SpecError, validate_spec
 
 
 log = logging.getLogger("compiler")
-
-_CATALOG_TTL_SEC = 60
 
 
 class Compiler:
@@ -40,8 +37,8 @@ class Compiler:
         self.llm      = llm
         self.main     = main
 
-        self._catalog: dict[str, dict[str, Any]] = {}
-        self._catalog_at = 0.0
+        # A task never has a chat-only tool as a step: the compiler does not see them.
+        self._catalog = CatalogCache(main, keep=lambda manifest: not manifest.get("chat_only"))
         # Manifests of approved external tool versions: they never change.
         self._versions: dict[tuple[str, int], dict[str, Any] | None] = {}
 
@@ -49,7 +46,9 @@ class Compiler:
     async def compile(self, session_id: str, *, title: str | None = None, hint: str | None = None) -> dict[str, Any]:
         catalog = await self.catalog()
 
-        transcript = build_transcript(session_id)
+        # The chat is agent-loop's: it says what was said and done there.
+        chat = await self.main.get(f"/agent/sessions/{session_id}/transcript")
+        transcript = chat["text"]
         if not transcript:
             raise ApiError(status_code=404, message=f"Session `{session_id}` has no messages to compile")
 
@@ -63,8 +62,8 @@ class Compiler:
         )
 
         # What a task can redo: writing one's own command (chat only) is not among it.
-        chat_tools = successful_tools(session_id) & catalog.keys()
-        texts = chat_texts(session_id)
+        chat_tools = set(chat["done_tools"]) & catalog.keys()
+        texts = chat["given"]
         spec = await self._ask_spec(messages, catalog, chat_tools, texts)
 
         # Only build and check: nothing runs. The draft goes back to the chat, where the
@@ -99,7 +98,7 @@ class Compiler:
                 versions.pin(data, catalog, keep={}, explicit=False)
 
             spec = validate_spec(data, catalog)
-            check_reflects_chat(spec, chat_tools)
+            check_reflects_chat(spec, chat_tools, catalog)
             check_verbatim(spec, texts)
             return spec
 
@@ -115,7 +114,7 @@ class Compiler:
 
     async def patch(self, task_id: str, instruction: str, *, session_id: str | None = None) -> dict[str, Any]:
         base = store.base_version(task_id)
-        kept = versions.pins(base.spec)
+        kept = pinned(base.spec)
         catalog = await self.catalog_for(kept)
 
         messages = prompts.patch_messages(spec=base.spec, instruction=instruction, catalog=catalog, today=date.today())
@@ -159,7 +158,7 @@ class Compiler:
             raise ApiError(status_code=422, message="Нужно одно из двух: spec (задача целиком) или ops (JSON Patch)")
 
         base = store.base_version(task_id)
-        base_catalog = await self.catalog_for(versions.pins(base.spec))
+        base_catalog = await self.catalog_for(pinned(base.spec))
 
         if ops is not None:
             try:
@@ -169,8 +168,8 @@ class Compiler:
                 raise ApiError(status_code=422, message=f"JSON Patch не применяется: {e}") from e
 
         # The user's own edit may name another version; the rest stays as the task had it.
-        versions.pin(spec, base_catalog, keep=versions.pins(base.spec), explicit=True)
-        catalog = await self.catalog_for(versions.pins(spec))
+        versions.pin(spec, base_catalog, keep=pinned(base.spec), explicit=True)
+        catalog = await self.catalog_for(pinned(spec))
 
         try:
             checked = validate_spec(spec, catalog)
@@ -195,7 +194,7 @@ class Compiler:
             raise ApiError(status_code=404, message=f"У `{tool}` нет одобренной версии")
 
         spec = copy.deepcopy(base.spec)
-        steps = [step for step in versions.tool_steps(spec) if step["tool"] == tool]
+        steps = [step for step in tool_steps(spec) if step["tool"] == tool]
 
         if not steps:
             raise ApiError(status_code=422, message=f"В задаче нет шагов с `{tool}`")
@@ -267,19 +266,13 @@ class Compiler:
         return diff_specs(
             TaskSpec.model_validate(parent.spec),
             TaskSpec.model_validate(version.spec),
-            await self.catalog_for(versions.pins(parent.spec)),
-            await self.catalog_for(versions.pins(version.spec)),
+            await self.catalog_for(pinned(parent.spec)),
+            await self.catalog_for(pinned(version.spec)),
         )
 
 
     async def catalog(self, *, fresh: bool = False) -> dict[str, dict[str, Any]]:
-        if fresh or not self._catalog or time.monotonic() - self._catalog_at > _CATALOG_TTL_SEC:
-            data = await self.main.get("/tools")
-            # A task never has a chat-only tool as a step: the compiler does not see them.
-            self._catalog = {tool["name"]: tool for tool in data["tools"] if not tool.get("chat_only")}
-            self._catalog_at = time.monotonic()
-
-        return self._catalog
+        return await self._catalog.get(fresh=fresh)
 
 
     async def catalog_for(self, pinned: dict[str, int]) -> dict[str, dict[str, Any]]:
@@ -301,23 +294,12 @@ class Compiler:
         return self._versions[(tool, version)]
 
 
-def successful_tools(session_id: str) -> set[str]:
-    with session() as db:
-        rows = (
-            db.query(TraceEvent.tool)
-            .filter(TraceEvent.session_id == session_id, TraceEvent.status.in_(("ok", "confirmed")))
-            .distinct()
-            .all()
-        )
-
-    return {tool for (tool,) in rows if not tool.startswith("meta:")}
-
-
-def check_reflects_chat(spec: TaskSpec, chat_tools: set[str]) -> None:
+def check_reflects_chat(spec: TaskSpec, chat_tools: set[str], catalog: dict[str, dict[str, Any]]) -> None:
     """A compiled task must redo at least one thing the chat actually did; a spec of
-    only notifications means the model lost the conversation."""
+    only notifications means the model lost the conversation. What only tells the user
+    something (the tool says so: `notice_only`) is not a thing done."""
     used = {step.tool for step in spec.all_steps() if step.tool}
-    substantive = chat_tools - {"user.notify"}
+    substantive = {tool for tool in chat_tools if not (catalog.get(tool) or {}).get("notice_only")}
 
     if substantive and not used & substantive:
         raise SpecError([
@@ -332,27 +314,11 @@ _VERBATIM_MIN_LEN = 15
 _NEAR_COPY = 0.9
 
 
-def chat_texts(session_id: str) -> list[str]:
-    """What the user wrote and what the chat's successful tool calls were given."""
-    with session() as db:
-        messages = db.query(ChatMessage.content).filter(ChatMessage.session_id == session_id, ChatMessage.role == "user").all()
-        events = (
-            db.query(TraceEvent.tool, TraceEvent.args)
-            .filter(TraceEvent.session_id == session_id, TraceEvent.status.in_(("ok", "needs_approval", "confirmed")))
-            .all()
-        )
-
-    texts = [content for (content,) in messages if content]
-    texts += [s for tool, args in events if not tool.startswith("meta:") for s in _literals(args)]
-
-    return texts
-
-
 def check_verbatim(spec: TaskSpec, texts: list[str]) -> None:
     """Texts the user gave must be copied, not retyped: a near-copy with a slip (a lost
     letter, a changed word) would go out in every run."""
     errors: list[str] = []
-    values = [*spec.variables.values(), *(s for step in spec.all_steps() for s in _literals(step.args))]
+    values = [*spec.variables.values(), *(s for step in spec.all_steps() for s in strings_in(step.args))]
 
     for value in values:
         if len(value) < _VERBATIM_MIN_LEN or templating.has_template(value) or any(value in text for text in texts):
@@ -376,48 +342,3 @@ def _near_copy_of(value: str, text: str) -> str | None:
     # Letters scattered over a long message are not a copy: the match must be one passage.
     original = text[blocks[0].b : blocks[-1].b + blocks[-1].size]
     return original if len(original) <= len(value) / _NEAR_COPY else None
-
-
-def _literals(value: Any) -> list[str]:
-    if isinstance(value, str):
-        return [value]
-
-    if isinstance(value, list):
-        return [s for item in value for s in _literals(item)]
-
-    if isinstance(value, dict):
-        return [s for item in value.values() for s in _literals(item)]
-
-    return []
-
-
-def build_transcript(session_id: str) -> str:
-    """The chat as the compiler sees it: messages plus each tool call and its result."""
-    with session() as db:
-        messages = db.query(ChatMessage).filter(ChatMessage.session_id == session_id).order_by(ChatMessage.id).all()
-        trace = db.query(TraceEvent).filter(TraceEvent.session_id == session_id).order_by(TraceEvent.id).all()
-
-    calls_by_message: dict[int | None, list[TraceEvent]] = {}
-    for event in trace:
-        if not event.tool.startswith("meta:"):
-            calls_by_message.setdefault(event.message_id, []).append(event)
-
-    lines: list[str] = []
-
-    for message in messages:
-        if message.role == "user":
-            lines.append(f"Пользователь: {message.content}")
-
-        elif message.role == "assistant":
-            if message.content:
-                lines.append(f"Ассистент: {message.content}")
-
-            for event in calls_by_message.get(message.id, []):
-                result = event.result or {}
-                payload = result.get("output") if result.get("status") in ("ok", "needs_approval") else result.get("error")
-                lines.append(
-                    f"→ {event.tool}({json.dumps(event.args, ensure_ascii=False)}) "
-                    f"[{event.status}]: {truncate(payload, 800)}"
-                )
-
-    return "\n".join(lines)

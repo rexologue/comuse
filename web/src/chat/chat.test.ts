@@ -31,8 +31,8 @@ describe("pendingQuestions", () => {
 
 describe("toolTitle", () => {
   it("names the agent's own tools in words and falls back to the id", () => {
-    expect(toolTitle("meta:task_compile", undefined)).toBe("Собрать задачу");
-    expect(toolTitle("fs__list", undefined)).toBe("fs.list");
+    expect(toolTitle("meta:task_compile", undefined, new Map([["task_compile", "Собрать задачу"]]))).toBe("Собрать задачу");
+    expect(toolTitle("fs__list", undefined, undefined)).toBe("fs.list");
   });
 });
 

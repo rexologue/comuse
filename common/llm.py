@@ -31,6 +31,13 @@ from common.storage.models import LLMProvider, Setting
 
 ROLES = ("chat", "instruct", "embed")
 
+# What each role does, as the settings page shows it (GET /llm).
+ROLE_INFO = {
+    "chat": ("Чат", "агент в чате и сборка задач; модель должна вызывать инструменты"),
+    "instruct": ("Инструкции", "шаги, которые просят модель (llm.*); не назначена — работает модель чата"),
+    "embed": ("Эмбеддинги", "отбор команд под запрос; не назначена — агент видит все команды"),
+}
+
 
 def role_key(role: str) -> str:
     """The `settings` row that names the role's provider."""

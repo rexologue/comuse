@@ -1,5 +1,6 @@
 """Collect text for llm.* tools from whatever the previous step produced:
-plain text, a file path, a fs.list result, a list of any of those."""
+plain text, a file path, a step's file listing (items with a `path`), a list of any
+of those."""
 
 from __future__ import annotations
 
@@ -31,8 +32,10 @@ async def _collect(value: Any, ctx: ToolContext, parts: list[str]) -> None:
             await _collect_path(value["path"], ctx, parts)
             return
 
-        if isinstance(value.get("files"), list):
-            for item in value["files"]:
+        # A listing, whichever tool made it: every list inside holds files with a `path`.
+        listed = [item for inner in value.values() if isinstance(inner, list) for item in inner]
+        if listed and all(isinstance(item, dict) and isinstance(item.get("path"), str) for item in listed):
+            for item in listed:
                 await _collect(item, ctx, parts)
             return
 

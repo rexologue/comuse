@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Iterator, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -104,3 +104,19 @@ class TaskSpec(BaseModel):
     def dump(self) -> dict[str, Any]:
         """JSON form used in storage and API responses (with the `as` alias)."""
         return self.model_dump(mode="json", by_alias=True, exclude_none=True)
+
+
+def tool_steps(data: Any) -> Iterator[dict[str, Any]]:
+    """Every step of a raw spec (a dict, maybe not valid yet) that names a tool, nested
+    ones too; a step whose `tool` is not a string is left for validation to name."""
+    def walk(steps: Any) -> Iterator[dict[str, Any]]:
+        for step in steps or []:
+            if not isinstance(step, dict):
+                continue
+
+            if step.get("tool") and isinstance(step["tool"], str):
+                yield step
+
+            yield from walk(step.get("steps"))
+
+    yield from walk(data.get("steps") if isinstance(data, dict) else None)

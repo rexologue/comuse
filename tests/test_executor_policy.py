@@ -29,6 +29,18 @@ def test_every_changing_tool_handles_dry_runs_itself():
     assert forgot == []
 
 
+def test_only_a_tool_that_declares_it_gets_the_model():
+    """The model is a step of its own (llm.*): another domain's tool cannot ask it
+    inside (docs.make_template once did)."""
+    import inspect
+
+    declared = {name for name, spec in SPECS.items() if spec.uses_llm}
+    asks = {name for name, spec in SPECS.items() if "ctx.llm" in inspect.getsource(inspect.getmodule(spec.fn))}
+
+    assert asks <= declared
+    assert all(name.startswith("llm.") for name in declared)
+
+
 def test_spec_has_no_approval_section():
     with pytest.raises(ValidationError):
         TaskSpec.model_validate({"title": "x", "approval": {"mode": "never"}, "steps": [{"id": "a", "tool": "fs.list"}]})

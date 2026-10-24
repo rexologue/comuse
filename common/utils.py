@@ -70,3 +70,17 @@ def extract_json(text: str) -> Any:
                 continue
 
     raise ValueError("No JSON found in the model reply")
+
+
+def strings_in(value: Any) -> list[str]:
+    """Every string inside a JSON-like value: lists and dict values, nested ones too."""
+    if isinstance(value, str):
+        return [value]
+
+    if isinstance(value, dict):
+        value = list(value.values())
+
+    if isinstance(value, list):
+        return [s for item in value for s in strings_in(item)]
+
+    return []

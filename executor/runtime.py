@@ -20,7 +20,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from common import tunables
-from common.llm import LLM
+from common.llm import LLM, Role
 from common.schemas.execution import ExecContext, ExecuteRequest, ExecuteResponse
 from common.secrets import SecretStore
 from common.settings import Settings
@@ -94,7 +94,9 @@ class ExecutorRuntime:
         except ToolError as e:
             return ExecuteResponse(status="error", error=str(e))
 
-        ctx = self._tool_context(req.context, paths=paths, credentials=credentials)
+        # The model only for a tool that says it asks it (llm.*), never hidden in another domain.
+        llm = self.llm.instruct if getattr(spec, "uses_llm", False) else None
+        ctx = self._tool_context(req.context, paths=paths, credentials=credentials, llm=llm)
 
         # Whatever the tool managed to log or tell the user before it failed belongs in
         # the caller's log too.
@@ -131,12 +133,12 @@ class ExecutorRuntime:
         )
 
 
-    def _tool_context(self, ctx: ExecContext, *, paths: WorkspacePaths, credentials: dict[str, Credential]) -> ToolContext:
+    def _tool_context(self, ctx: ExecContext, *, paths: WorkspacePaths, credentials: dict[str, Credential], llm: Role | None) -> ToolContext:
         return ToolContext(
             mode=ctx.mode,
             settings=self.settings,
             paths=paths,
-            llm=self.llm.instruct,
+            llm=llm,
             session_id=ctx.session_id,
             run_id=ctx.run_id,
             step_key=ctx.step_key,

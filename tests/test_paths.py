@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import pytest
 
+import internal_tools.docs  # noqa: F401 — declares data:templates
 from common.tools import PermissionDenied, ToolError
 from executor.paths import WorkspacePaths
 

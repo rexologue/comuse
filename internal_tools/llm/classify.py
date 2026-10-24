@@ -25,6 +25,7 @@ class ClassifyOutput(ToolOutput):
     card="Определить категорию: {labels}",
     description="Classify a document or text into exactly one of the given labels.",
     confirm=False,
+    uses_llm=True,
 )
 async def classify(inp: ClassifyInput, ctx: ToolContext) -> ClassifyOutput:
     text = await gather_text(inp.input, ctx, limit=20000)

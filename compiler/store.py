@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from common.errors import ApiError
+from common.external_tools import pinned
 from common.schemas.task import TaskSpec
 from common.storage.db import session
 from common.storage.models import Task, TaskVersion
@@ -206,6 +207,10 @@ def set_settings(task_id: str, settings: dict[str, Any]) -> Task:
 
 
 def set_status(task_id: str, action: str) -> Task:
+    """The actions are this table's: whoever forwards one does not check it first."""
+    if action not in _TRANSITIONS:
+        raise ApiError(status_code=404, message=f"Unknown action `{action}`; known: {', '.join(_TRANSITIONS)}")
+
     allowed, target = _TRANSITIONS[action]
 
     with session() as db:
@@ -220,3 +225,19 @@ def set_status(task_id: str, action: str) -> Task:
         db.commit()
 
     return task
+
+
+def tool_pins() -> list[dict[str, Any]]:
+    """External tool versions the tasks may still run: their drafts and approved
+    versions, archived tasks aside."""
+    with session() as db:
+        live = {t.id for t in db.query(Task).filter(Task.status != "archived")}
+        specs = [v.spec for v in db.query(TaskVersion).filter(TaskVersion.status.in_(("draft", "approved"))) if v.task_id in live]
+
+    return _pin_list(specs)
+
+
+def _pin_list(specs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    found = {(tool, version) for spec in specs for tool, version in pinned(spec).items()}
+
+    return [{"tool": tool, "version": version} for tool, version in sorted(found)]

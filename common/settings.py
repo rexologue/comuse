@@ -67,11 +67,6 @@ class StorageSettings:
 
 
     @property
-    def templates_dir(self) -> Path:
-        return self.data_dir / "templates"
-
-
-    @property
     def outputs_dir(self) -> Path:
         return self.data_dir / "outputs"
 

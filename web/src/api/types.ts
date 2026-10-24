@@ -59,6 +59,8 @@ export type ChatDetail = { id: string; title: string; created_at: string; messag
 
 export type ToolManifest = {
   name: string;
+  // internal: comes with the agent; external: an own command (ext.*).
+  source: "internal" | "external";
   function_name: string;
   title: string;
   description: string;
@@ -154,8 +156,12 @@ export type RoleName = "chat" | "instruct" | "embed";
 
 export type Provider = { id: string; name: string; base_url: string; model: string; has_key: boolean; roles: RoleName[]; created_at: string; updated_at: string };
 
+export type RoleInfo = { role: RoleName; title: string; hint: string };
+
 export type LlmOverview = {
   roles: Record<RoleName, { provider: string; name: string; model: string; follows_chat?: boolean } | null>;
+  // What each role does, in the order to show them (common/llm.py ROLE_INFO).
+  role_info: RoleInfo[];
   providers: Provider[];
 };
 
@@ -202,8 +208,12 @@ export type ExternalToolVersion = ExternalToolVersionItem & {
   manifest: { title: string; description: string; confirm: boolean | "always"; input_schema: unknown; output_schema: unknown };
   packages: string[];
   hash: string;
+  // The code (the version's bookkeeping files aside); `entry` holds def run(args, ctx).
+  entry: string;
   files: Record<string, string>;
+  requirements: string[];
 };
+
 
 // GET /accounts, /accounts/kinds (docs/TOOLS.md#виды-аккаунтов).
 export type Account = { id: string; name: string; kind: string; config: Record<string, unknown> };

@@ -26,7 +26,7 @@ agent-loop    compiler        runner        executor      scheduler
                              задачу        пути, секреты
    │             │                             │
    ▼             ▼                             ▼
-     LLM-провайдер (OpenAI API)  ◀──── internal_tools/ (llm.*, разметка шаблонов)
+     LLM-провайдер (OpenAI API)  ◀──── internal_tools/ (только llm.*)
 
         SQLite · data/app.db · у каждой таблицы один сервис-владелец
 ```

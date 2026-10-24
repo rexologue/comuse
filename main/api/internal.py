@@ -48,6 +48,19 @@ async def publish(body: EventBody, request: Request):
     return request.app.state.bus.publish(body.type, body.payload)
 
 
+@router.get("/internal/tool-pins", summary="External tool versions tasks and unfinished runs still need")
+async def tool_pins(request: Request):
+    """Asked by the executor before it deletes old versions: tasks are the compiler's,
+    runs the runner's, and each says what it pins."""
+    registry = request.app.state.registry
+    found: list[dict[str, Any]] = []
+
+    for service in ("compiler", "runner"):
+        found += (await registry.client(service).get("/tool-pins"))["pins"]
+
+    return {"pins": found}
+
+
 @router.api_route("/executor/{path:path}", methods=METHODS, summary="Proxy to executor")
 async def executor_proxy(path: str, request: Request):
     return await reverse_proxy(request, "executor", path)

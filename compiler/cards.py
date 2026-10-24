@@ -6,6 +6,7 @@ import re
 import string
 from typing import Any
 
+from common import templating
 from common.cron import describe_schedule
 from common.schemas.task import Step, TaskSpec, Trigger
 
@@ -24,8 +25,6 @@ _BEHAVIOUR = {
     "retries": "повторов",
 }
 
-# Filters that only shape how a value is printed: a card names the value without them.
-_PRESENTATION = {"format_date", "format_number", "round", "trim", "string", "int", "float", "upper", "lower", "title", "default", "join"}
 
 
 def build_cards(spec: TaskSpec, catalog: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
@@ -190,7 +189,7 @@ def _template_text(text: str) -> str:
 def _value(expression: str) -> str:
     """The expression without its printing filters; `| length` reads as «число …»."""
     head, *filters = [part.strip() for part in expression.split("|")]
-    kept = [f for f in filters if f.split("(")[0].strip() not in _PRESENTATION | {"length"}]
+    kept = [f for f in filters if f.split("(")[0].strip() not in templating.PRINTING | {"length"}]
     text = " | ".join([head, *kept])
 
     return f"число {text}" if any(f.split("(")[0].strip() == "length" for f in filters) else text

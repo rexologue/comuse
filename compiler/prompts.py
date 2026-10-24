@@ -4,11 +4,12 @@ import json
 from datetime import date
 from typing import Any
 
+from common import templating
 from common.tools.guides import collect
 
 
-# Deliberately a different domain from the demo scenarios: models copy example steps
-# verbatim (a mail step the user never asked for), so the example shows the mechanics only.
+# The mechanics only, on made-up tools: an example with real ones goes stale with them,
+# and models copy example steps verbatim. How to use real tools is each group's guide.
 _EXAMPLE = {
     "schema_version": 1,
     "title": "Сводка по командировкам за месяц",
@@ -21,52 +22,35 @@ _EXAMPLE = {
     "steps": [
         {
             "id": "reports",
-            "tool": "fs.list",
-            "args": {
-                "folder": "Бухгалтерия/Командировки",
-                "pattern": "*.xlsx",
-                "modified_from": "{{ month_start }}",
-                "modified_to": "{{ month_end }}",
-            },
+            "tool": "example.find",
+            "args": {"where": "Бухгалтерия/Командировки", "since": "{{ month_start }}", "until": "{{ month_end }}"},
             "on_empty": "skip",
         },
         {
             "id": "totals",
-            "tool": "xlsx.aggregate",
-            "args": {
-                "inputs": "{{ reports.output.files }}",
-                "sum_columns": ["Сумма"],
-                "group_by": "Сотрудник",
-            },
+            "tool": "example.count",
+            "args": {"items": "{{ reports.output.items }}", "by": "Сотрудник"},
         },
         {
             "id": "summary",
-            "tool": "docs.fill_template",
+            "tool": "example.write",
             "args": {
-                "template": "data:templates/travel_summary.docx",
-                "context": {
-                    "month": "{{ month_start | format_date('%m.%Y') }}",
-                    "total": "{{ totals.output.totals['Сумма'] }}",
-                    "rows": "{{ totals.output.groups }}",
-                },
-                "output_name": "Командировки {{ month_start | format_date('%m.%Y') }}.docx",
+                "month": "{{ month_start | format_date('%m.%Y') }}",
+                "total": "{{ totals.output.total }}",
+                "rows": "{{ totals.output.groups }}",
+                "name": "Командировки {{ month_start | format_date('%m.%Y') }}",
             },
-        },
-        {
-            "id": "done",
-            "tool": "user.notify",
-            "args": {"message": "Сводка по командировкам готова: {{ summary.output.path }}"},
         },
     ],
 }
 
 _FOREACH_EXAMPLE = {
     "id": "sort",
-    "foreach": "{{ files.output.files }}",
-    "as": "file",
+    "foreach": "{{ reports.output.items }}",
+    "as": "item",
     "steps": [
-        {"id": "kind", "tool": "llm.classify", "args": {"input": "{{ file.path }}", "labels": ["договор", "счёт", "акт"]}},
-        {"id": "move", "tool": "fs.move", "args": {"src": "{{ file.path }}", "dst": "Документы/{{ kind.output.label }}/"}},
+        {"id": "kind", "tool": "example.judge", "args": {"input": "{{ item.path }}"}},
+        {"id": "move", "tool": "example.put", "args": {"what": "{{ item.path }}", "where": "Документы/{{ kind.output.label }}/"}},
     ],
 }
 
@@ -78,16 +62,14 @@ RULES = f"""Ты превращаешь разговор пользовател�
 1. Используй только инструменты из каталога и только их аргументы (имена и типы — по input-схемам).
 2. Повтори успешную последовательность действий из разговора. Неудачные попытки, разведку и вопросы — выброси.
    Не добавляй действий, которых не было в разговоре и о которых пользователь не просил (например, отправку
-   писем): пример ниже показывает только формат, а не состав шагов.
+   писем). Инструменты example.* в примерах вымышленные: они показывают только формат, а не состав шагов.
 3. Обобщай конкретику: даты — через variables и фильтры, конкретные значения из разговора — шагами, которые
    найдут их при запуске (как именно — в инструкциях групп ниже).
 4. Ссылка на результат шага: {{{{ <id_шага>.output.<поле> }}}} — поля бери из output-схемы инструмента.
    Строка, которая целиком является одним {{{{ … }}}}, подставляется как значение (список остаётся списком).
-5. Доступно в шаблонах: today, now, variables, результаты шагов выше, переменная foreach (as). Фильтры дат:
-   start_of_week, end_of_week, start_of_prev_week, end_of_prev_week, start_of_month, end_of_month,
-   start_of_prev_month, end_of_prev_month, add_days(n), format_date('%d.%m.%Y'). Для чисел в тексте —
-   format_number, для дат — format_date (по умолчанию ДД.ММ.ГГГГ).
-6. Для обработки каждого файла по отдельности — foreach с вложенными steps, например:
+5. Доступно в шаблонах: today, now, variables, результаты шагов выше, переменная foreach (as). Фильтры:
+   {templating.describe_filters()}. Числа и даты в тексте выводи через format_number и format_date.
+6. Для обработки каждого элемента по отдельности — foreach с вложенными steps, например:
    {json.dumps(_FOREACH_EXAMPLE, ensure_ascii=False)}
 7. Пути — только относительные (как в результатах инструментов) или data:…; никаких абсолютных путей.
 8. trigger: cron из 5 полей (дни недели только именами MON..SUN, не числами) или manual — по просьбе пользователя. Trigger задаёт

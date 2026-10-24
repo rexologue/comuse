@@ -44,9 +44,9 @@ class ToolContext:
     mode: Literal["chat", "run"]
     settings: Settings
     paths: PathResolver
-    # The instruct role (common/llm.py): resolved on each call, so a tool that never
-    # asks the model works without one.
-    llm: Role
+    # The instruct role (common/llm.py), only for a tool that declares `uses_llm`: the
+    # model is a step of its own (llm.*), never hidden inside another domain's tool.
+    llm: Role | None
     session_id: str | None = None
     run_id: str | None = None
     step_key: str | None = None

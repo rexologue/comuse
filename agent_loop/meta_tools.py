@@ -79,12 +79,22 @@ DEFINITIONS: list[dict[str, Any]] = [
 
 NAMES = {d["function"]["name"] for d in DEFINITIONS}
 
+# What the user reads in the chat instead of the name (GET /agent/meta-tools).
+TITLES = {
+    "task_compile": "Собрать задачу",
+    "task_dry_run": "Пробный запуск",
+    "task_reject": "Отклонить черновик",
+    "task_patch": "Изменить задачу",
+    "task_list": "Список задач",
+    "task_run_now": "Запустить задачу",
+    "task_control": "Пауза, возобновление или архив задачи",
+    "run_status": "Состояние запуска",
+    "action_confirm": "Выполнить после согласия",
+}
+
 # What changes the user's tasks for real asks first, every time, like a command with
 # confirm="always": text the model read (a letter, a document) must not start a run.
-ASKING = {
-    "task_run_now": "Запустить задачу сейчас",
-    "task_control": "Приостановить, возобновить или убрать в архив задачу",
-}
+ASKING = {"task_run_now", "task_control"}
 
 
 def manifest(name: str) -> dict[str, Any] | None:
@@ -94,7 +104,7 @@ def manifest(name: str) -> dict[str, Any] | None:
 
     definition = next(d["function"] for d in DEFINITIONS if d["function"]["name"] == name)
 
-    return {"name": f"meta:{name}", "title": ASKING[name], "confirm": "always", "input_schema": definition["parameters"]}
+    return {"name": f"meta:{name}", "title": TITLES[name], "confirm": "always", "input_schema": definition["parameters"]}
 
 
 async def _compile(main: MainClient, session_id: str, args: dict[str, Any]) -> Any:

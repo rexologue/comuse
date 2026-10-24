@@ -5,6 +5,7 @@ there. Any other chat is temporary: idle for `chat_idle_hours`, it goes."""
 
 from __future__ import annotations
 
+import json
 from datetime import timedelta
 from typing import Any
 
@@ -13,7 +14,7 @@ from sqlalchemy import func
 from common.errors import ApiError
 from common.storage.db import session
 from common.storage.models import ChatMessage, ChatSession, Task, TaskVersion, TraceEvent
-from common.utils import new_id, utcnow
+from common.utils import new_id, strings_in, truncate, utcnow
 
 # The result of a call whose turn broke off before it answered.
 _NO_RESULT = '{"status": "error", "error": "Вызов прерван: результата нет"}'
@@ -316,3 +317,46 @@ def sweep_idle(idle_hours: int) -> list[str]:
         delete_session(chat_id)
 
     return gone
+
+
+def transcript(session_id: str) -> dict[str, Any]:
+    """The chat for whoever turns it into a task (the compiler, through main): its text
+    with every tool call and result, the tools that worked, and the texts the user gave
+    (their messages and the arguments of the calls) to be copied word for word."""
+    with session() as db:
+        messages = db.query(ChatMessage).filter(ChatMessage.session_id == session_id).order_by(ChatMessage.id).all()
+        trace = (
+            db.query(TraceEvent)
+            .filter(TraceEvent.session_id == session_id, ~TraceEvent.tool.startswith("meta:"))
+            .order_by(TraceEvent.id)
+            .all()
+        )
+
+    calls_by_message: dict[int | None, list[TraceEvent]] = {}
+    for event in trace:
+        calls_by_message.setdefault(event.message_id, []).append(event)
+
+    lines: list[str] = []
+
+    for message in messages:
+        if message.role == "user":
+            lines.append(f"Пользователь: {message.content}")
+
+        elif message.role == "assistant":
+            if message.content:
+                lines.append(f"Ассистент: {message.content}")
+
+            for event in calls_by_message.get(message.id, []):
+                result = event.result or {}
+                payload = result.get("output") if result.get("status") in ("ok", "needs_approval") else result.get("error")
+                lines.append(
+                    f"→ {event.tool}({json.dumps(event.args, ensure_ascii=False)}) "
+                    f"[{event.status}]: {truncate(payload, 800)}"
+                )
+
+    return {
+        "text": "\n".join(lines),
+        "done_tools": sorted({event.tool for event in trace if event.status in ("ok", "confirmed")}),
+        "given": [m.content for m in messages if m.role == "user" and m.content]
+        + [s for event in trace if event.status in ("ok", "needs_approval", "confirmed") for s in strings_in(event.args)],
+    }

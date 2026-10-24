@@ -35,6 +35,7 @@
 | `GET /agent/v1/models` | Единственная «модель» агента: `office-agent` |
 | `GET /agent/sessions` | Последние 50 чатов: `id`, `title`, `updated_at`, `task_id` (у чата задачи; `null` — временный) |
 | `GET /agent/sessions/{id}` | Чат целиком: сообщения, трейс вызовов команд и `busy` — идёт ли в нём сейчас ход агента |
+| `GET /agent/meta-tools` | Собственные инструменты агента (задачи, одобрения) с названиями для пользователя |
 | `DELETE /agent/sessions/{id}` | Удалить временный чат; чат задачи или чат, где агент ещё работает, — `409`. Временные и так удаляются через `chat_idle_hours` без сообщений ([CHAT.md](CHAT.md#сессии)) |
 
 Запрос — обычный OpenAI `chat/completions`. Из `messages` берётся последнее
@@ -249,6 +250,7 @@
 | `POST /internal/register {name, url}` | все сервисы | Сообщить свой адрес |
 | `POST /internal/events {type, payload}` | runner, agent-loop | Опубликовать событие |
 | `POST /internal/notify {task_id, run_id, title, message}` | runner | Доставить сообщение запуска в чат задачи |
+| `GET /internal/tool-pins` | executor | Версии своих команд, которые ещё нужны: main спрашивает компилятор (задачи) и runner (незаконченные запуски) |
 | `POST /executor/execute` | agent-loop, runner | Выполнить команду (формат — в [TOOLS.md](TOOLS.md#вызов-команды)) |
 | `/runner/*` | scheduler | Запустить задачу по cron |
 | `/scheduler/*` | — | Прокси к scheduler: `POST /reload {task_id?}` — перечитать задачи, `GET /jobs` (main сам зовёт scheduler напрямую после одобрения и смены статуса) |

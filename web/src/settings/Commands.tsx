@@ -10,6 +10,7 @@ import { Link } from "react-router";
 import { api } from "@/api/client";
 import { keys, useExternalTools, useExternalToolVersion, useTools } from "@/api/queries";
 import type { ExternalTool, ExternalToolVersion, TaskSummary, ToolManifest } from "@/api/types";
+import { DraftDecision } from "@/commands/DraftDecision";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -99,21 +100,12 @@ function OwnCommand({ tool }: { tool: ExternalTool }) {
 }
 
 function VersionDetail({ tool, version, onEdit }: { tool: ExternalTool; version: number; onEdit: () => void }) {
-  const queryClient = useQueryClient();
   const detail = useExternalToolVersion(tool.name, version);
-  const { busy, error, run } = useAction();
-  const [armed, setArmed] = useState(false);
 
   if (detail.isError) return <p className="text-sm text-destructive">{detail.error.message}</p>;
   if (!detail.data) return <p className="text-sm text-muted-foreground">Загрузка…</p>;
 
   const data: ExternalToolVersion = detail.data;
-  const refresh = async () => {
-    await queryClient.invalidateQueries({ queryKey: keys.externalTools });
-    await queryClient.invalidateQueries({ queryKey: keys.tools });
-    // A task panel offers the move to a version approved here.
-    await queryClient.invalidateQueries({ queryKey: ["task"] });
-  };
 
   return (
     <div className="flex flex-col gap-3">
@@ -129,34 +121,17 @@ function VersionDetail({ tool, version, onEdit }: { tool: ExternalTool; version:
       </div>
 
       {Object.entries(data.files).map(([path, text]) => (
-        <details key={path} open={path === "main.py"} className="text-sm">
+        <details key={path} open={path === data.entry} className="text-sm">
           <summary className="cursor-pointer text-xs text-muted-foreground">{path}</summary>
           <pre className="mt-1 max-h-96 overflow-auto rounded-md bg-muted p-2 text-xs">{text || "(пусто)"}</pre>
         </details>
       ))}
 
-      <div className="flex flex-wrap gap-2">
-        {data.status === "draft" && (
-          <>
-            <Button size="sm" onClick={() => run("approve", () => api(`/external-tools/${tool.name}/versions/${version}/approve`, { method: "POST", json: { hash: data.hash } }).finally(refresh))} disabled={busy !== null}>
-              {busy === "approve" ? "Ставлю пакеты…" : "Одобрить"}
-            </Button>
-            <Button
-              size="sm"
-              variant={armed ? "destructive" : "ghost"}
-              onBlur={() => setArmed(false)}
-              onClick={armed ? () => run("discard", () => api(`/external-tools/${tool.name}/draft`, { method: "DELETE" }).then(refresh)) : () => setArmed(true)}
-              disabled={busy !== null}
-            >
-              {armed ? "Точно выбросить?" : "Выбросить черновик"}
-            </Button>
-          </>
-        )}
-        <Button size="sm" variant="ghost" onClick={onEdit} disabled={busy !== null}>
+      <DraftDecision version={data}>
+        <Button size="sm" variant="ghost" onClick={onEdit}>
           <Pencil /> {data.status === "draft" ? "Править черновик" : "Новая версия на основе этой"}
         </Button>
-      </div>
-      {error && <p className="text-sm whitespace-pre-line text-destructive">{error}</p>}
+      </DraftDecision>
     </div>
   );
 }
@@ -255,8 +230,9 @@ function CommandFields({
   const [timeout, setTimeoutValue] = useState(manifest?.timeout ? String(manifest.timeout) : "");
   const [inputSchema, setInputSchema] = useState(JSON.stringify(manifest?.input_schema ?? NEW_INPUT, null, 2));
   const [outputSchema, setOutputSchema] = useState(JSON.stringify(manifest?.output_schema ?? NEW_OUTPUT, null, 2));
-  const [code, setCode] = useState(source?.files["main.py"] ?? NEW_CODE);
-  const [requirements, setRequirements] = useState(source?.files["requirements.txt"] ?? "");
+  const entry = source?.entry ?? "main.py";
+  const [code, setCode] = useState(source?.files[entry] ?? NEW_CODE);
+  const [requirements, setRequirements] = useState((source?.requirements ?? []).join("\n"));
   const [problem, setProblem] = useState<string | null>(null);
 
   const submit = () => {
@@ -273,7 +249,7 @@ function CommandFields({
 
     // Other files of the version stay as they were; the manifest and packages are
     // written from the fields.
-    const kept = Object.fromEntries(Object.entries(source?.files ?? {}).filter(([path]) => !["tool.json", "requirements.txt", "requirements.lock"].includes(path)));
+    const kept = source?.files ?? {};
 
     save(name.trim(), {
       manifest: {
@@ -285,7 +261,7 @@ function CommandFields({
         input_schema: input,
         output_schema: output,
       },
-      files: { ...kept, "main.py": code },
+      files: { ...kept, [entry]: code },
       requirements: requirements.split("\n").map((line) => line.trim()).filter(Boolean),
     });
   };
@@ -329,7 +305,7 @@ function CommandFields({
           <Textarea className="font-mono text-xs" value={outputSchema} onChange={(e) => setOutputSchema(e.target.value)} rows={8} />
         </Labeled>
       </div>
-      <Labeled title="main.py — def run(args, ctx) возвращает dict">
+      <Labeled title={`${entry} — def run(args, ctx) возвращает dict`}>
         <Textarea className="font-mono text-xs" value={code} onChange={(e) => setCode(e.target.value)} rows={14} spellCheck={false} />
       </Labeled>
       <Labeled title="Пакеты из PyPI, по одному в строке (например pandas>=2)">
@@ -353,7 +329,7 @@ function BuiltIn() {
 
   // The Map holds each tool under its name and its function name: one row per tool.
   const builtIn = [...new Map([...(tools.data?.values() ?? [])].map((tool) => [tool.name, tool])).values()].filter(
-    (tool: ToolManifest) => !tool.name.startsWith("ext."),
+    (tool: ToolManifest) => tool.source === "internal",
   );
   const groups = new Map<string, ToolManifest[]>();
   for (const tool of builtIn) {

@@ -16,6 +16,7 @@ from common.tools.domain import DomainSettings, domain_settings, settings_schema
 from common.tools.fields import PATH_ARG
 from common.tools.guides import guide_of
 from common.tools.refs import file_refs
+from common.utils import strings_in
 
 
 __all__ = [
@@ -70,6 +71,10 @@ class ToolSpec:
     core: bool
     # Only a chat calls it (it talks with the person); a task never has it as a step.
     chat_only: bool
+    # It only tells the user something: a task of nothing else repeats nothing of the chat.
+    notice_only: bool
+    # It asks the model (ctx.llm); every other tool gets no model at all.
+    uses_llm: bool
     input_model: type[ToolInput]
     output_model: type[BaseModel]
     fn: Callable[[Any, ToolContext], Awaitable[Any]]
@@ -113,6 +118,8 @@ class ToolSpec:
             "guide": guide_of(self.name),
             "core": self.core,
             "chat_only": self.chat_only,
+            "notice_only": self.notice_only,
+            "uses_llm": self.uses_llm,
             "source": "internal",
         }
 
@@ -131,6 +138,8 @@ def tool(
     timeout: int | None = None,
     core: bool = False,
     chat_only: bool = False,
+    notice_only: bool = False,
+    uses_llm: bool = False,
 ):
     """Register a tool. The function's first parameter annotation is its input model,
     its return annotation the output model; both become JSON schemas for the LLM."""
@@ -153,6 +162,8 @@ def tool(
             timeout=timeout,
             core=core,
             chat_only=chat_only,
+            notice_only=notice_only,
+            uses_llm=uses_llm,
             input_model=hints[params[0]],
             output_model=hints["return"],
             fn=fn,
@@ -175,7 +186,7 @@ def path_refs(spec: ToolSpec, inp: BaseModel | dict[str, Any]) -> list[str]:
 
     for name, kind in spec.path_args.items():
         value = inp.get(name) if isinstance(inp, dict) else getattr(inp, name, None)
-        refs += file_refs(value) if kind == "refs" else _strings(value)
+        refs += file_refs(value) if kind == "refs" else strings_in(value)
 
     return refs
 
@@ -203,18 +214,6 @@ def _find_mark(node: Any) -> str | None:
 
     return None
 
-
-def _strings(value: Any) -> list[str]:
-    if isinstance(value, str):
-        return [value]
-
-    if isinstance(value, dict):
-        value = list(value.values())
-
-    if isinstance(value, list):
-        return [s for item in value for s in _strings(item)]
-
-    return []
 
 
 def discover(package_name: str = "internal_tools") -> dict[str, ToolSpec]:

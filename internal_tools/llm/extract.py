@@ -11,7 +11,7 @@ from internal_tools.llm.inputs import gather_text
 
 
 class ExtractInput(ToolInput):
-    inputs: TextOrFileRefs = Field(description="Откуда извлекать: путь, список путей или результат fs.list; можно и обычный текст")
+    inputs: TextOrFileRefs = Field(description="Откуда извлекать: путь, список путей или результат шага со списком файлов; можно и обычный текст")
     instruction: str = Field(description="Что именно извлечь")
     output_schema: dict[str, Any] = Field(
         description="JSON Schema результата, например {'type':'object','properties':{'revenue':{'type':'number'}}}"
@@ -28,9 +28,10 @@ class ExtractOutput(ToolOutput):
     card="Извлечь данные: {instruction}",
     description=(
         "Extract structured data from documents or text with the LLM; the result follows "
-        "output_schema (JSON Schema). Inputs may be file paths or the output of fs.list."
+        "output_schema (JSON Schema). Inputs may be file paths or a step's file listing."
     ),
     confirm=False,
+    uses_llm=True,
 )
 async def extract(inp: ExtractInput, ctx: ToolContext) -> ExtractOutput:
     text = await gather_text(inp.inputs, ctx)

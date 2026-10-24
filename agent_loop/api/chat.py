@@ -15,7 +15,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from agent_loop import history
+from agent_loop import history, meta_tools
 from agent_loop.loop import TurnResult
 from common.errors import ApiError
 from common.utils import new_id
@@ -64,6 +64,11 @@ async def chat_completions(body: ChatRequest, request: Request):
     return StreamingResponse(_stream(task), media_type="text/event-stream")
 
 
+@router.get("/meta-tools", summary="The agent's own tools (tasks, approvals) with the titles the user reads")
+async def meta_tool_titles():
+    return {"tools": [{"name": name, "title": title} for name, title in meta_tools.TITLES.items()]}
+
+
 @router.get("/sessions", summary="Chat sessions")
 async def sessions():
     return {"sessions": history.session_list()}
@@ -72,6 +77,14 @@ async def sessions():
 @router.get("/sessions/{session_id}", summary="Messages and tool trace of a session; busy: a turn runs in it now")
 async def session_detail(session_id: str, request: Request):
     return {**history.session_view(session_id), "busy": request.app.state.loop.busy(session_id)}
+
+
+@router.get("/sessions/{session_id}/transcript", summary="The chat as text, the tools that worked and the texts the user gave (for the compiler)")
+async def session_transcript(session_id: str):
+    if not history.session_exists(session_id):
+        raise ApiError(status_code=404, message=f"Session `{session_id}` not found")
+
+    return history.transcript(session_id)
 
 
 @router.delete("/sessions/{session_id}", summary="Delete a temporary chat now (a task's chat stays)")

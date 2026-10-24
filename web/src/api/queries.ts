@@ -32,6 +32,7 @@ export const keys = {
   chats: ["chats"] as const,
   jobs: ["jobs"] as const,
   tools: ["tools"] as const,
+  metaTools: ["meta-tools"] as const,
   externalTools: ["external-tools"] as const,
   externalToolVersion: (name: string, version: number) => ["external-tools", name, version] as const,
   chat: (id: string) => ["chat", id] as const,
@@ -92,6 +93,14 @@ export function useChat(id: string | undefined) {
 }
 
 // The catalog changes only with the code: titles and `confirm` of every command.
+export function useMetaTools() {
+  return useQuery({
+    queryKey: keys.metaTools,
+    queryFn: async () => new Map((await api<{ tools: { name: string; title: string }[] }>("/agent/meta-tools")).tools.map((tool) => [tool.name, tool.title] as const)),
+    staleTime: Infinity,
+  });
+}
+
 export function useTools() {
   return useQuery({
     queryKey: keys.tools,

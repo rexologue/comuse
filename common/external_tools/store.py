@@ -17,11 +17,11 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from common.external_tools import NAME_RE, PREFIX, deps, full_name, pinned
+from common.external_tools import NAME_RE, PREFIX, deps, full_name
 from common.external_tools.manifest import Manifest
 from common.settings import StorageSettings
 from common.storage.db import session
-from common.storage.models import ExternalTool, ExternalToolVersion, Run, Task, TaskVersion
+from common.storage.models import ExternalTool, ExternalToolVersion
 from common.tools import ToolError
 from common.utils import new_id, utcnow
 
@@ -177,24 +177,17 @@ def approve(storage: StorageSettings, name: str, version: int, seen_hash: str) -
     return version_view(storage, name, version)
 
 
-def sweep_unused(storage: StorageSettings) -> int:
-    """Delete approved versions nothing runs any more: not current, and not pinned by a
-    task version that is a draft, active, or still has a run going."""
+def sweep_unused(storage: StorageSettings, needed: set[tuple[str, int]]) -> int:
+    """Delete approved versions nothing runs any more: not current, and not in `needed`
+    ({(ext.<name>, version)} that tasks and unfinished runs pin: their owners say which)."""
     with session() as db:
         current = {(t.name, t.current_version) for t in db.query(ExternalTool)}
-        live_tasks = {t.id for t in db.query(Task).filter(Task.status != "archived")}
-        running = {r.task_version_id for r in db.query(Run).filter(Run.status.in_(("queued", "running")))}
-        specs = [
-            v.spec
-            for v in db.query(TaskVersion)
-            if v.id in running or (v.task_id in live_tasks and v.status in ("draft", "approved"))
-        ]
         old = [
             row for row in db.query(ExternalToolVersion).filter_by(status="approved")
             if (row.name, row.version) not in current
         ]
 
-    used = {(tool.removeprefix(PREFIX), version) for spec in specs for tool, version in pinned(spec).items()}
+    used = {(tool.removeprefix(PREFIX), version) for tool, version in needed}
     removed = 0
 
     for row in old:
@@ -264,12 +257,17 @@ def version_view(storage: StorageSettings, name: str, version: int, *, files: bo
     }
 
     if files:
+        # The code apart from the version's own bookkeeping (tool.json is `manifest`, the
+        # lock is `packages`): whoever shows or edits it need not know the folder's layout.
         folder = version_dir(storage, name, version)
-        view["files"] = {
+        every = {
             path.relative_to(folder).as_posix(): path.read_text(encoding="utf-8", errors="replace")
             for path in sorted(folder.rglob("*"))
             if path.is_file() and not _ignored(path.relative_to(folder))
         }
+        view["entry"] = ENTRY
+        view["files"] = {path: text for path, text in every.items() if path not in _RESERVED}
+        view["requirements"] = [line.strip() for line in every.get(deps.REQUIREMENTS, "").splitlines() if line.strip()]
 
     return view
 

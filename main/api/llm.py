@@ -7,6 +7,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field, field_validator
 
+from common import llm
 from common.errors import ApiError
 from common.secrets import SecretStore
 from common.storage.db import session
@@ -244,6 +245,7 @@ def _overview() -> dict[str, Any]:
 
     return {
         "roles": {role: role_view(role, provider_id) for role, provider_id in serving.items()},
+        "role_info": [{"role": role, "title": title, "hint": hint} for role, (title, hint) in llm.ROLE_INFO.items()],
         "providers": [
             _provider_dict(provider, [role for role, provider_id in serving.items() if provider_id == provider.id])
             for provider in items

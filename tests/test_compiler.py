@@ -149,11 +149,18 @@ def test_diff_lists_changes_in_words():
     assert any("*.csv" in line for line in lines)
 
 
-def test_prompt_examples_stay_valid():
+def test_prompt_examples_are_task_shapes_on_made_up_tools():
+    """The examples show the mechanics only: no real tool, so none goes stale in them."""
+    from common import templating
+    from common.schemas.task import TaskSpec
     from compiler.prompts import _EXAMPLE, _FOREACH_EXAMPLE
 
-    validate_spec(_EXAMPLE, CATALOG)
-    validate_spec({"title": "t", "steps": [{"id": "files", "tool": "fs.list", "args": {}}, _FOREACH_EXAMPLE]}, CATALOG)
+    spec = TaskSpec.model_validate(_EXAMPLE)
+    loop = TaskSpec.model_validate({"title": "t", "steps": [{"id": "reports", "tool": "example.find"}, _FOREACH_EXAMPLE]})
+    tools = {step.tool for s in (spec, loop) for step in s.all_steps() if step.tool}
+
+    assert all(tool.startswith("example.") and tool not in CATALOG for tool in tools)
+    assert templating.check_syntax(_EXAMPLE) == [] and templating.check_syntax(_FOREACH_EXAMPLE) == []
 
 
 def test_unknown_filter_is_a_validation_error():
@@ -172,9 +179,9 @@ def test_compiled_task_must_reflect_the_chat():
     notify_only = TaskSpec.model_validate({"title": "x", "steps": [{"id": "n", "tool": "user.notify", "args": {"message": "ok"}}]})
 
     with pytest.raises(SpecError):
-        check_reflects_chat(notify_only, {"fs.list", "xlsx.aggregate", "user.notify"})
+        check_reflects_chat(notify_only, {"fs.list", "xlsx.aggregate", "user.notify"}, CATALOG)
 
-    check_reflects_chat(validate_spec(GOOD, CATALOG), {"fs.list", "docs.make_template"})
+    check_reflects_chat(validate_spec(GOOD, CATALOG), {"fs.list", "docs.make_template"}, CATALOG)
 
 
 def test_mapping_cards_name_their_fields():

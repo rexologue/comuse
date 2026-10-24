@@ -31,6 +31,11 @@ class ToolVersionBody(BaseModel):
     version: int | None = None
 
 
+@router.get("/tool-pins", summary="External tool versions the tasks may still run")
+async def tool_pins():
+    return {"pins": store.tool_pins()}
+
+
 @router.post("/compile", summary="Chat session → draft task (nothing runs)")
 async def compile_task(body: CompileBody, request: Request):
     return await request.app.state.compiler.compile(body.session_id, title=body.title, hint=body.hint)
@@ -108,9 +113,6 @@ async def put_settings(task_id: str, changes: dict[str, Any], request: Request):
 
 @router.post("/tasks/{task_id}/{action}", summary="pause | resume | archive")
 async def set_status(task_id: str, action: str):
-    if action not in ("pause", "resume", "archive"):
-        raise ApiError(status_code=404, message=f"Unknown action `{action}`")
-
     task = store.set_status(task_id, action)
 
     return {"task_id": task.id, "status": task.status}

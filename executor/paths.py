@@ -1,10 +1,11 @@
 """Task paths → real files. Tasks only ever hold portable references:
 
 - `Отчёты/Продажи/q3.xlsx` — relative to WORKSPACE_DIR (Windows folder or /workspace);
-- `data:templates/weekly.docx`, `data:outputs/…` — inside DATA_DIR.
+- `data:outputs/…` and the areas tool groups declare (`data:templates/…`) — inside
+  DATA_DIR (common/tools/areas.py).
 
 Every resolution normalizes the path and refuses escapes (`..`, symlinks out of the
-root, DATA_DIR beyond templates and outputs). What a task may touch is its approved
+root, DATA_DIR beyond those areas). What a task may touch is its approved
 steps; this only keeps every path inside the user's workspace. A file or folder about
 to be created must have a name Windows accepts (no `:`, `?`, `*`…)."""
 
@@ -13,11 +14,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from common.pathrefs import DATA_PREFIX
+from common.tools.areas import data_areas
 from common.tools import PermissionDenied, ToolError
 
 
-# Only these DATA_DIR subfolders are visible to tools (app.db and secrets are not).
-_DATA_AREAS = ("templates", "outputs")
 
 
 class WorkspacePaths:
@@ -69,8 +69,8 @@ class WorkspacePaths:
             rel = ref[len(DATA_PREFIX):].lstrip("/\\")
             path = (self.data_dir / rel).resolve()
 
-            if not any(path.is_relative_to(self.data_dir / area) for area in _DATA_AREAS):
-                raise PermissionDenied(f"Доступ к `{ref}` запрещён: разрешены только data:templates и data:outputs")
+            if not self._in_area(path):
+                raise PermissionDenied(f"Доступ к `{ref}` запрещён: разрешены только {_areas_text()}")
 
             return path
 
@@ -100,9 +100,18 @@ class WorkspacePaths:
 
     def _check_data(self, path: Path, ref: str) -> None:
         owner = self._owner(path)
-        if owner and owner[1] == DATA_PREFIX and not any(path.is_relative_to(self.data_dir / area) for area in _DATA_AREAS):
-            raise PermissionDenied(f"Доступ к `{ref}` запрещён: из папки данных агента разрешены только data:templates и data:outputs")
+        if owner and owner[1] == DATA_PREFIX and not self._in_area(path):
+            raise PermissionDenied(f"Доступ к `{ref}` запрещён: из папки данных агента разрешены только {_areas_text()}")
 
+
+    def _in_area(self, path: Path) -> bool:
+        # Only these DATA_DIR folders are visible to tools (app.db and secrets are not).
+        return any(path.is_relative_to(self.data_dir / area) for area in data_areas())
+
+
+
+def _areas_text() -> str:
+    return ", ".join(f"data:{area}" for area in data_areas())
 
 # What Windows refuses in a file or folder name.
 _FORBIDDEN = set('<>:"|?*\\')

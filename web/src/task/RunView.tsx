@@ -6,9 +6,9 @@ import { Check, CircleSlash, Square, X } from "lucide-react";
 import { useState } from "react";
 
 import { api, ApiError } from "@/api/client";
-import { useRun, useRunLog, useTools } from "@/api/queries";
+import { useRun, useRunLog } from "@/api/queries";
 import type { LogEntry } from "@/api/types";
-import { toolTitle } from "@/chat/tools";
+import { useToolTitle } from "@/chat/tools";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { dateTime, duration } from "@/lib/format";
@@ -78,7 +78,7 @@ export function RunView({ runId }: { runId: string }) {
 }
 
 function Entry({ entry }: { entry: LogEntry }) {
-  const tools = useTools();
+  const title = useToolTitle();
 
   if (entry.kind === "start") {
     const variables = entry.variables as Record<string, unknown> | undefined;
@@ -117,7 +117,7 @@ function Entry({ entry }: { entry: LogEntry }) {
     <details className="rounded-md border text-sm" open={!ok}>
       <summary className="flex cursor-pointer list-none items-center gap-2 px-2 py-1.5">
         <Icon className={cn("size-4 shrink-0", ok ? "text-success" : skipped ? "text-muted-foreground" : "text-destructive")} />
-        <span className="font-medium">{entry.tool ? toolTitle(String(entry.tool), tools.data) : String(entry.step_id ?? entry.step_key)}</span>
+        <span className="font-medium">{entry.tool ? title(String(entry.tool)) : String(entry.step_id ?? entry.step_key)}</span>
         <span className="truncate text-xs text-muted-foreground">
           {entry.step_key}
           {Number(entry.attempt) > 1 && ` · попытка ${entry.attempt}`}

@@ -7,30 +7,10 @@ that is a new task version to approve like any other. One task, one version per 
 
 from __future__ import annotations
 
-from typing import Any, Awaitable, Callable, Iterator
+from typing import Any, Awaitable, Callable
 
-from common.external_tools import is_external, pinned
-
-
-def tool_steps(data: dict[str, Any]) -> Iterator[dict[str, Any]]:
-    """Every step of a raw spec that calls a tool, nested ones too."""
-    def walk(steps: list[Any]) -> Iterator[dict[str, Any]]:
-        for step in steps or []:
-            if not isinstance(step, dict):
-                continue
-
-            # Not a string: validate_spec names it; pinning just leaves it be.
-            if step.get("tool") and isinstance(step["tool"], str):
-                yield step
-
-            yield from walk(step.get("steps") or [])
-
-    yield from walk(data.get("steps") or [] if isinstance(data, dict) else [])
-
-
-def pins(data: dict[str, Any]) -> dict[str, int]:
-    """{tool: version} the spec's external steps run."""
-    return pinned(data)
+from common.external_tools import is_external
+from common.schemas.task import tool_steps
 
 
 def pin(data: dict[str, Any], catalog: dict[str, dict[str, Any]], *, keep: dict[str, int], explicit: bool) -> None:

@@ -101,7 +101,7 @@ def _check_table_rows(document, values: dict[str, Any]) -> None:
                 got = sorted(row) if isinstance(row, dict) else type(row).__name__
                 raise ToolError(
                     f"Строки `{list_name}` должны иметь поля {sorted(keys)}; в строке {i + 1} нет {absent} "
-                    f"(пришло: {got}). Подготовь строки шагом data.map_rows."
+                    f"(пришло: {got}). Подготовь строки шагом, который переложит их в эти поля."
                 )
 
 

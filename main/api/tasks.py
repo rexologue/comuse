@@ -32,8 +32,9 @@ async def list_tasks(tool: str | None = None):
 
 
 @router.get("/tasks/{task_id}", summary="Task, current version and history")
-async def get_task(task_id: str):
-    task = views.task_detail(task_id)
+async def get_task(task_id: str, request: Request):
+    pins = views.current_pins(task_id)
+    task = views.task_detail(task_id, await _tool_versions(request, pins) if pins else {})
     if task is None:
         raise ApiError(status_code=404, message=f"Task `{task_id}` not found")
 
@@ -81,9 +82,7 @@ async def task_settings(task_id: str, request: Request):
 
 @router.post("/tasks/{task_id}/{action}", summary="pause | resume | archive")
 async def task_action(task_id: str, action: str, request: Request):
-    if action not in ("pause", "resume", "archive"):
-        raise ApiError(status_code=404, message=f"Unknown action `{action}`")
-
+    # Which actions there are is the compiler's: an unknown one comes back 404 from it.
     return await request.app.state.orchestrator.set_task_status(task_id, action)
 
 
@@ -124,3 +123,15 @@ async def get_run_log(run_id: str):
 @router.post("/runs/{run_id}/cancel", summary="Cancel a run")
 async def cancel_run(run_id: str, request: Request):
     return await request.app.state.registry.client("runner").post(f"/runs/{run_id}/cancel")
+
+
+async def _tool_versions(request: Request, tools: dict[str, int]) -> dict[str, int]:
+    """The current version of each of these external tools: the executor keeps them.
+    Without its answer the task is shown without the note of a newer version."""
+    try:
+        catalog = (await request.app.state.registry.client("executor").get("/tools"))["tools"]
+
+    except ApiError:
+        return {}
+
+    return {m["name"]: m["version"] for m in catalog if m["name"] in tools and isinstance(m.get("version"), int)}

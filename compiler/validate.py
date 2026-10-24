@@ -13,6 +13,7 @@ from common import templating
 from common.cron import cron_trigger
 from common.external_tools import is_external
 from common.schemas.task import Step, TaskSpec
+from common.utils import strings_in
 
 
 _OUTPUT_REF = re.compile(r"\b([a-z][a-z0-9_]*)\.output((?:\.[A-Za-z_][A-Za-z0-9_]*)*)")
@@ -191,16 +192,8 @@ def _check_output_refs(
 
 
 def _strings(value: Any) -> list[str]:
-    if isinstance(value, str):
-        return [value] if templating.has_template(value) or ".output" in value else []
-
-    if isinstance(value, list):
-        return [s for item in value for s in _strings(item)]
-
-    if isinstance(value, dict):
-        return [s for item in value.values() for s in _strings(item)]
-
-    return []
+    """The strings that may refer to other steps."""
+    return [s for s in strings_in(value) if templating.has_template(s) or ".output" in s]
 
 
 def _resolve(node: dict[str, Any] | bool, defs: dict[str, Any]) -> dict[str, Any]:

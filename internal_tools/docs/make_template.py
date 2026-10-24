@@ -1,7 +1,7 @@
 """Turn a filled-in example report into a reusable docxtpl template.
 
-What varies (a date, a total, the rows of a table) is decided by an LLM outside this
-tool: the agent in chat, an llm.extract step in a task. The tool checks that markup
+What varies (a date, a total, the rows of a table) is decided by a model outside this
+tool: the agent in chat, a step of its own in a task. The tool checks that markup
 against the document and edits the document in code, so formatting and layout stay
 intact."""
 

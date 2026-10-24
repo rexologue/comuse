@@ -3,9 +3,8 @@
 
 import { Check, CircleHelp, X } from "lucide-react";
 
-import { useTools } from "@/api/queries";
 import type { TraceItem } from "@/api/types";
-import { toolTitle } from "@/chat/tools";
+import { useToolTitle } from "@/chat/tools";
 import { cn } from "@/lib/utils";
 
 const STATUS = {
@@ -16,7 +15,7 @@ const STATUS = {
 } as const;
 
 export function ToolCalls({ items }: { items: TraceItem[] }) {
-  const tools = useTools();
+  const title = useToolTitle();
 
   if (items.length === 0) return null;
 
@@ -33,7 +32,7 @@ export function ToolCalls({ items }: { items: TraceItem[] }) {
           <details key={item.id} className="group rounded-md border bg-muted/40 text-xs">
             <summary className="flex cursor-pointer list-none items-center gap-2 px-2 py-1">
               <Icon className={cn("size-3.5 shrink-0", status.className)} aria-label={status.label} />
-              <span className="font-medium">{toolTitle(item.tool, tools.data)}</span>
+              <span className="font-medium">{title(item.tool)}</span>
               <span className="truncate text-muted-foreground">
                 {item.tool.replace(/^meta:/, "")}
                 {version ? ` v${version}` : ""}

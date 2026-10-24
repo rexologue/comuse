@@ -7,17 +7,11 @@ import { useState, type ReactNode } from "react";
 
 import { api } from "@/api/client";
 import { keys, useLlm } from "@/api/queries";
-import type { CheckResult, Provider, RoleName } from "@/api/types";
+import type { CheckResult, Provider, RoleInfo, RoleName } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Section, selectClass, useAction } from "@/settings/common";
-
-const ROLES: { role: RoleName; title: string; hint: string }[] = [
-  { role: "chat", title: "Чат", hint: "агент в чате и сборка задач; модель должна вызывать инструменты" },
-  { role: "instruct", title: "Инструкции", hint: "команды llm.* и разметка шаблонов; не назначена — работает модель чата" },
-  { role: "embed", title: "Эмбеддинги", hint: "отбор команд под запрос; не назначена — агент видит все команды" },
-];
 
 export function Models() {
   const llm = useLlm();
@@ -30,7 +24,7 @@ export function Models() {
     <div className="flex flex-col gap-8">
       <Section title="Роли" description="Какая модель что делает. Перед назначением провайдер проверяется на роль.">
         <div className="flex flex-col gap-3">
-          {ROLES.map((item) => (
+          {llm.data.role_info.map((item) => (
             <RoleRow key={item.role} {...item} providers={llm.data.providers} current={llm.data.roles[item.role]} />
           ))}
         </div>
@@ -39,7 +33,7 @@ export function Models() {
       <Section title="Провайдеры" description="Провайдер — одна модель на OpenAI-совместимом сервере: адрес, ключ, имя модели и название.">
         <div className="flex flex-col gap-2">
           {llm.data.providers.map((provider) => (
-            <ProviderRow key={provider.id} provider={provider} />
+            <ProviderRow key={provider.id} provider={provider} roles={llm.data.role_info} />
           ))}
           {llm.data.providers.length === 0 && <p className="text-sm text-muted-foreground">Провайдеров нет: добавьте первый.</p>}
         </div>
@@ -89,7 +83,7 @@ function RoleRow({ role, title, hint, providers, current }: { role: RoleName; ti
   );
 }
 
-function ProviderRow({ provider }: { provider: Provider }) {
+function ProviderRow({ provider, roles }: { provider: Provider; roles: RoleInfo[] }) {
   const queryClient = useQueryClient();
   const { busy, error, run } = useAction();
   const [check, setCheck] = useState<CheckResult | null>(null);
@@ -112,7 +106,7 @@ function ProviderRow({ provider }: { provider: Provider }) {
         {provider.has_key && <KeyRound className="size-3.5 text-muted-foreground" aria-label="есть ключ" />}
         {provider.roles.map((role) => (
           <Badge key={role} variant="secondary">
-            {ROLES.find((r) => r.role === role)?.title}
+            {roles.find((r) => r.role === role)?.title}
           </Badge>
         ))}
       </div>

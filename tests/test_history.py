@@ -105,3 +105,21 @@ def test_a_call_left_without_a_result_does_not_break_the_chat(settings):
 
     assert [m["role"] for m in messages] == ["user", "assistant", "tool", "tool", "user"]
     assert messages[3]["tool_call_id"] == "c2" and "прерван" in messages[3]["content"]
+
+
+def test_the_transcript_is_the_chats_own_account_of_itself(settings):
+    """What the compiler gets from agent-loop: text, tools that worked, texts to copy."""
+    session_id = history.ensure_session(None, "Разложи файлы")
+    history.add_message(session_id, "user", "Переложи счета в папку «Счета 2026»")
+    call = {"id": "c1", "type": "function", "function": {"name": "fs__move", "arguments": "{}"}}
+    message_id = history.add_message(session_id, "assistant", "", tool_calls=[call])
+    history.add_trace(session_id, message_id, "fs.move", {"src": "a.pdf", "dst": "Счета 2026/"}, {"status": "ok", "output": {"path": "Счета 2026/a.pdf"}}, "ok")
+    history.add_trace(session_id, message_id, "meta:task_list", {}, {"status": "ok", "output": []}, "ok")
+    history.add_trace(session_id, message_id, "mail.send", {"to": ["x@company.local"]}, {"status": "error", "error": "нет"}, "error")
+
+    chat = history.transcript(session_id)
+
+    assert chat["text"].splitlines()[0] == "Пользователь: Переложи счета в папку «Счета 2026»"
+    assert "→ fs.move(" in chat["text"] and "meta:" not in chat["text"]
+    assert chat["done_tools"] == ["fs.move"]
+    assert "Счета 2026/" in chat["given"] and "x@company.local" not in chat["given"]

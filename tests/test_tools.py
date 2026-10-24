@@ -64,7 +64,7 @@ def test_fill_template_checks_fields_and_row_keys(tmp_path):
     with pytest.raises(ToolError, match="total"):
         _render(template, {"items": []}, {}, out)
 
-    with pytest.raises(ToolError, match="data.map_rows"):
+    with pytest.raises(ToolError, match="переложит их в эти поля"):
         _render(template, {"total": 1, "items": [{"key": "a"}]}, {}, out)
 
     _render(template, {"total": "3", "items": [{"name": "Ромашка"}]}, {}, out)
@@ -153,6 +153,8 @@ def test_docx_tables_are_numbered_as_make_template_counts_them(tmp_path):
         ('["a/b.xlsx", "c/d.xlsx"]', ["a/b.xlsx", "c/d.xlsx"]),
         ("a/b.xlsx, c/d.xlsx", ["a/b.xlsx", "c/d.xlsx"]),
         ({"files": [{"path": "a.xlsx", "name": "a.xlsx"}]}, ["a.xlsx"]),
+        # Whichever tool made the listing and whatever it calls it.
+        ({"found": [{"path": "a.xlsx"}], "count": 1, "status": "ok"}, ["a.xlsx"]),
         (["a.xlsx", {"path": "b.xlsx"}], ["a.xlsx", "b.xlsx"]),
         ("Отчёты/Иванов, Петров.docx", ["Отчёты/Иванов, Петров.docx"]),
     ],

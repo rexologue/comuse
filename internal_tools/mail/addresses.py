@@ -27,6 +27,24 @@ def _check_mask(value: str) -> str:
 AddressMask = Annotated[str, AfterValidator(_check_mask), Field(description="Адрес (boss@company.ru) или все адреса домена (*@company.ru)")]
 
 
+_EMAIL_RE = re.compile(r"^[^@\s<>,;]+@[^@\s<>,;]+$")
+
+
+def _check_email(value: str) -> str:
+    """Shape only: one `@`, no spaces or separators. Deliverability is the mail
+    server's call; who may get mail is the approved task or the user's confirmation in
+    chat. Stricter validators reject domains like `company.local`."""
+    value = value.strip()
+
+    if not _EMAIL_RE.match(value):
+        raise ValueError(f"не похоже на адрес почты: {value!r}")
+
+    return value
+
+
+EmailAddress = Annotated[str, AfterValidator(_check_email), Field(description="Адрес почты, например ivanov@company.ru")]
+
+
 def matches(address: str, masks: list[str]) -> bool:
     """Exact comparison of a bare address (not a substring of a header)."""
     address = address.strip().lower()

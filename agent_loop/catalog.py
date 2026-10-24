@@ -9,14 +9,13 @@ import time
 from typing import Any
 
 from common import tunables
+from common.clients.catalog import CatalogCache
 from common.clients.main_client import MainClient
 from common.errors import ApiError
 from common.llm import Role
 
 
 log = logging.getLogger("catalog")
-
-_CATALOG_TTL_SEC = 60
 
 # After an embeddings failure, ranking is skipped for a while instead of paying the
 # connection retries on every chat turn.
@@ -29,8 +28,7 @@ class ToolCatalog:
         self.main  = main
         self.embed = embed
 
-        self._manifests: dict[str, dict[str, Any]] = {}
-        self._loaded_at = 0.0
+        self._catalog = CatalogCache(main)
         self._vectors: dict[str, list[float]] = {}
         # Which embeddings endpoint made the vectors: another model's are not comparable.
         self._vectors_by: tuple | None = None
@@ -38,12 +36,7 @@ class ToolCatalog:
 
 
     async def manifests(self, *, fresh: bool = False) -> dict[str, dict[str, Any]]:
-        if fresh or not self._manifests or time.monotonic() - self._loaded_at > _CATALOG_TTL_SEC:
-            data = await self.main.get("/tools")
-            self._manifests = {tool["name"]: tool for tool in data["tools"]}
-            self._loaded_at = time.monotonic()
-
-        return self._manifests
+        return await self._catalog.get(fresh=fresh)
 
 
     async def select(self, query: str, always: set[str] | None = None) -> list[dict[str, Any]]:

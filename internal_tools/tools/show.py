@@ -21,6 +21,7 @@ class Output(ToolOutput):
     status: str
     manifest: dict[str, Any]
     files: dict[str, str]
+    requirements: list[str]
     packages: list[str]
 
 
@@ -28,7 +29,7 @@ class Output(ToolOutput):
     name="tools.show",
     title="Код своей команды",
     card="Показать код «{name}»",
-    description="Show an own command's version: tool.json, its files with code, the exact packages. Use it before changing a command.",
+    description="Show an own command's version: its manifest, its files with code, its requirements and the exact packages. Use it before changing a command.",
     confirm=False,
     chat_only=True,
 )
@@ -52,5 +53,6 @@ async def show(inp: Input, ctx: ToolContext) -> Output:
         status=view["status"],
         manifest=view["manifest"],
         files=view["files"],
+        requirements=view["requirements"],
         packages=view["packages"],
     )

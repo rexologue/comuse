@@ -7,6 +7,7 @@ stays a list); anything else renders to a string."""
 
 from __future__ import annotations
 
+import inspect
 import re
 from datetime import date, datetime, timedelta
 from types import GeneratorType
@@ -100,6 +101,20 @@ FILTERS = {
     "format_date": format_date,
     "format_number": format_number,
 }
+
+# Filters that only change how a value is printed (ours and Jinja's own): a card names
+# the value without them.
+PRINTING = {"format_date", "format_number", "round", "trim", "string", "int", "float", "upper", "lower", "title", "default", "join"}
+
+
+def describe_filters() -> str:
+    """The filters as a model reads them: `add_days(days)`, `format_date(fmt='%d.%m.%Y')`."""
+    def one(name: str, fn) -> str:
+        params = list(inspect.signature(fn).parameters.values())[1:]
+        args = ", ".join(p.name if p.default is p.empty else f"{p.name}={p.default!r}" for p in params)
+        return f"{name}({args})" if params else name
+
+    return ", ".join(one(name, fn) for name, fn in FILTERS.items())
 
 
 def make_env() -> SandboxedEnvironment:

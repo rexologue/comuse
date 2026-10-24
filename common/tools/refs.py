@@ -1,6 +1,7 @@
-"""Inputs that name files: a path, a list of paths, or a previous step's result
-(`fs.list` output, `{path: …}` items). A loose `Any` gives the model no schema at
-all, and it then sends JSON-encoded arrays or comma-joined paths as one string."""
+"""Inputs that name files: a path, a list of paths, or a previous step's result whose
+items carry a `path` (a file listing, say: whichever tool made it). A loose `Any` gives
+the model no schema at all, and it then sends JSON-encoded arrays or comma-joined paths
+as one string."""
 
 from __future__ import annotations
 
@@ -18,7 +19,7 @@ _SHAPES = Union[str, list[Union[str, dict[str, Any]]], dict[str, Any]]
 FileRefs = Annotated[
     _SHAPES,
     Field(
-        description="Файлы: один путь, список путей ([\"a.xlsx\", \"b.xlsx\"]) или результат fs.list целиком",
+        description="Файлы: один путь, список путей ([\"a.xlsx\", \"b.xlsx\"]) или результат шага со списком файлов целиком",
         json_schema_extra={PATH_ARG: "refs"},
     ),
 ]
@@ -27,7 +28,7 @@ FileRefs = Annotated[
 # front; files it names are still opened through the sandboxed ctx.read_path.
 TextOrFileRefs = Annotated[
     _SHAPES,
-    Field(description="Путь, список путей, результат fs.list или обычный текст"),
+    Field(description="Путь, список путей, результат шага со списком файлов или обычный текст"),
 ]
 
 
@@ -40,7 +41,9 @@ def file_refs(value: Any) -> list[str]:
         if isinstance(value.get("path"), str):
             return [value["path"]]
 
-        return file_refs(value.get("files", []))
+        # A result that holds its files somewhere inside: only nested lists and objects,
+        # a plain text field (a name, a status) is not a path.
+        return [ref for item in value.values() if isinstance(item, (list, dict)) for ref in file_refs(item)]
 
     if isinstance(value, list):
         return [ref for item in value for ref in file_refs(item)]

@@ -5,8 +5,9 @@ import asyncio
 from pydantic import Field
 
 from common.tools import ToolContext, ToolInput, ToolOutput, tool
-from common.tools.fields import EmailAddress, WorkspacePath
+from common.tools.fields import WorkspacePath
 from internal_tools.mail.accounts import mailbox
+from internal_tools.mail.addresses import EmailAddress
 from internal_tools.mail.adapters import imap_smtp
 from internal_tools.mail.settings import MailSettings
 

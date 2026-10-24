@@ -23,6 +23,7 @@ class WriteOutput(ToolOutput):
     card="Написать текст: {instruction}",
     description="Write free text (an email body, a summary) from an instruction and optional context data.",
     confirm=False,
+    uses_llm=True,
 )
 async def write(inp: WriteInput, ctx: ToolContext) -> WriteOutput:
     context = await gather_text(inp.context, ctx, limit=30000) if inp.context is not None else ""
