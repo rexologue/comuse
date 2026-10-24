@@ -17,7 +17,7 @@ import time
 import traceback
 from typing import Any
 
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 
 from common import tunables
 from common.llm import LLM
@@ -26,7 +26,7 @@ from common.secrets import SecretStore
 from common.settings import Settings
 from common.storage.db import session
 from common.storage.models import Account
-from common.tools import Credential, ToolContext, ToolError, ToolSpec, path_refs
+from common.tools import Credential, ToolContext, ToolError, path_refs
 from common.tools.context import PermissionDenied
 from executor.paths import WorkspacePaths
 from executor.registry import ToolRegistry
@@ -64,10 +64,13 @@ class ExecutorRuntime:
             return ExecuteResponse(status="error", error=f"Неизвестный инструмент `{req.tool}`")
 
         try:
-            inp = spec.input_model.model_validate(req.args)
+            inp = spec.parse(req.args)
 
         except ValidationError as e:
             return ExecuteResponse(status="error", error=f"Неверные аргументы `{req.tool}`: {_short_errors(e)}")
+
+        except ToolError as e:
+            return ExecuteResponse(status="error", error=f"Неверные аргументы `{req.tool}`: {e}")
 
         # Per call: the workspace may change through /settings while the executor runs.
         paths = WorkspacePaths(tunables.get("workspace_dir"), self.settings.storage.data_dir)
@@ -92,11 +95,10 @@ class ExecutorRuntime:
         said = {"logs": ctx.logs, "notifications": ctx.notifications}
 
         try:
-            raw = await asyncio.wait_for(
-                spec.fn(inp, ctx),
+            output = await asyncio.wait_for(
+                spec.call(inp, ctx),
                 timeout=spec.timeout or tunables.get("tool_timeout_sec"),
             )
-            output = _dump_output(spec, raw)
 
         except PermissionDenied as e:
             return ExecuteResponse(status="error", error=f"Нет доступа: {e}", **said)
@@ -147,13 +149,6 @@ class ExecutorRuntime:
             raise ToolError(f"Для аккаунта `{name}` нет сохранённого пароля")
 
         return Credential(name=account.name, kind=account.kind, config=dict(account.config), secret=secret)
-
-
-def _dump_output(spec: ToolSpec, raw: Any) -> Any:
-    if isinstance(raw, BaseModel):
-        return raw.model_dump(mode="json")
-
-    return spec.output_model.model_validate(raw).model_dump(mode="json")
 
 
 def _short_errors(e: ValidationError) -> str:

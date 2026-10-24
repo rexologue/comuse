@@ -12,6 +12,7 @@ from common.secrets import SecretStore
 from common.service import create_service_app
 from executor.api import accounts as accounts_api
 from executor.api import execute as execute_api
+from executor.api import external as external_api
 from executor.outputs import sweep as sweep_outputs
 from executor.registry import ToolRegistry
 from executor.runtime import ExecutorRuntime
@@ -22,7 +23,7 @@ async def lifespan(app: FastAPI):
 
     settings = app.state.settings
 
-    registry = ToolRegistry()
+    registry = ToolRegistry(settings.storage)
     registry.load()
 
     secrets = SecretStore.accounts(settings)
@@ -51,6 +52,6 @@ async def lifespan(app: FastAPI):
 app = create_service_app(
     name="executor",
     title="Executor",
-    routers=[(execute_api.router, "tools"), (accounts_api.router, "accounts")],
+    routers=[(execute_api.router, "tools"), (external_api.router, "external tools"), (accounts_api.router, "accounts")],
     lifespan_hook=lifespan,
 )

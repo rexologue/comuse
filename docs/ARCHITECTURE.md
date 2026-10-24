@@ -68,7 +68,7 @@ agent-loop    compiler        runner        executor      scheduler
 | `agent_loop` | 8001 | Чат в формате OpenAI: история, отбор команд, вызовы LLM, вопросы перед действиями, мета-инструменты | `chat_sessions`, `chat_messages`, `trace_events` |
 | `compiler` | 8002 | Чат → задача, проверки по каталогу, правки словами (LLM) и вручную, статусы задач, настройки задач | `tasks`, `task_versions` |
 | `runner` | 8003 | Исполнение версии задачи по шагам, журнал запуска, отмена | `runs`, `run_log` |
-| `executor` | 8004 | Выполнение одной команды, каталог команд, аккаунты и их пароли | `accounts` |
+| `executor` | 8004 | Выполнение одной команды, каталог команд, свои команды и их версии, аккаунты и их пароли | `accounts`, `external_tools`, `external_tool_versions` |
 | `scheduler` | 8005 | Задания cron по активным задачам | — (задания только в памяти) |
 
 Подробно о каждом — в отдельных справочниках: чат — [CHAT.md](CHAT.md), сборка и
@@ -147,8 +147,8 @@ executor/
   runtime.py         конвейер вызова команды
   paths.py           песочница путей
   outputs.py         удаление старых файлов результатов
-  registry.py        каталог команд из internal_tools/
-  api/               execute и каталог, accounts
+  registry.py        каталог команд: internal_tools/ и свои команды
+  api/               execute и каталог, external-tools, accounts
 scheduler/
   jobs.py            задания cron
 common/
@@ -158,6 +158,7 @@ common/
   secrets.py         хранилища секретов: пароли аккаунтов и ключи LLM
   service.py         каркас сервиса: логи в консоль и файл, БД, регистрация, токен, /health
   templating.py      шаблоны задач: Jinja-песочница и фильтры дат
+  external_tools/    свои команды: манифест, версии, пакеты (uv), запуск в отдельном процессе
   documents.py       текст из docx, xlsx, pdf, txt
   retention.py       общий цикл чистки по сроку хранения
   clients/           клиент LLM, клиент main

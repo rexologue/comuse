@@ -45,6 +45,16 @@ async def tool(name: str, request: Request):
     return await reverse_proxy(request, "executor", f"tools/{name}")
 
 
+@router.get("/external-tools", summary="External tools with their versions")
+async def external_tools(request: Request):
+    return await reverse_proxy(request, "executor", "external-tools")
+
+
+@router.api_route("/external-tools/{path:path}", methods=METHODS, summary="External tools: drafts, versions, approval")
+async def external_tool_ops(path: str, request: Request):
+    return await reverse_proxy(request, "executor", f"external-tools/{path}")
+
+
 @router.api_route("/accounts", methods=["GET", "POST"], summary="Accounts (mail and other kinds the tool groups offer)")
 async def accounts(request: Request):
     return await reverse_proxy(request, "executor", "accounts")

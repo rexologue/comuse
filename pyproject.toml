@@ -28,6 +28,8 @@ dependencies = [
     "matplotlib>=3.9",
     "tzdata>=2026.5",
     "alembic>=1.13",
+    # Installs the packages of external tools, each version into its own .venv.
+    "uv>=0.9",
 ]
 
 [project.optional-dependencies]

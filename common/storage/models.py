@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, Integer, String, Text
+from sqlalchemy import JSON, Boolean, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from common.storage.db import Base, UTCDateTime
@@ -206,3 +206,39 @@ class Account(Base):
     config: Mapped[Any] = mapped_column(JSON, default=dict)
     secret_ref: Mapped[str] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class ExternalTool(Base):
+    """A command the user added or the chat wrote (common/external_tools). Its files are
+    in DATA_DIR/external_tools/<name>/<version>/."""
+
+    __tablename__ = "external_tools"
+
+    # The slug: the command is `ext.<name>`.
+    name: Mapped[str] = mapped_column(String, primary_key=True)
+    # The approved version the chat and new tasks call; None until one is approved.
+    current_version: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+
+
+class ExternalToolVersion(Base):
+    __tablename__ = "external_tool_versions"
+    __table_args__ = (UniqueConstraint("name", "version"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String, index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    # draft (one per command, changes in place) | approved (frozen: files match `hash`)
+    status: Mapped[str] = mapped_column(String, default="draft")
+    # Over every file of the version but its .venv; checked before each run.
+    hash: Mapped[str] = mapped_column(String)
+    manifest: Mapped[Any] = mapped_column(JSON)
+    # Exact packages from requirements.lock ("name==version"), shown at approval.
+    packages: Mapped[Any] = mapped_column(JSON, default=list)
+    # user (API, the settings page) | chat (tools.draft)
+    created_by: Mapped[str] = mapped_column(String, default="user")
+    session_id: Mapped[str | None] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+    approved_at: Mapped[datetime | None] = mapped_column(UTCDateTime)

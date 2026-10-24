@@ -167,6 +167,7 @@
 | --- | --- |
 | `GET /tools` | Каталог команд: манифесты со схемами |
 | `GET /tools/{name}` | Манифест одной команды |
+| `GET /external-tools`, `PUT /external-tools/{name}/draft`, … | Свои команды: черновики, версии, одобрение — см. [EXTERNAL_TOOLS.md](EXTERNAL_TOOLS.md#api) |
 | `GET /accounts` | Аккаунты без паролей: `id`, `name`, `kind`, `config` |
 | `GET /accounts/kinds` | Виды аккаунтов, которые объявили группы команд: поля для формы, название секрета, пресеты |
 | `POST /accounts` | Создать или изменить аккаунт (по имени); без `secret` остаётся сохранённый пароль |

@@ -76,6 +76,18 @@ class StorageSettings:
         return self.data_dir / "outputs"
 
 
+    @property
+    def external_tools_dir(self) -> Path:
+        """<name>/<version>/: the files of external tools (common/external_tools)."""
+        return self.data_dir / "external_tools"
+
+
+    @property
+    def uv_cache_dir(self) -> Path:
+        """uv's package cache: next to the tools' .venv folders, so installs hardlink."""
+        return self.data_dir / "cache" / "uv"
+
+
 @dataclass(slots=True, frozen=True)
 class LLMSettings:
     """Models from LLM_* variables; main registers them as providers on start."""

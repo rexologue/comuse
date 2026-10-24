@@ -72,6 +72,21 @@ class ToolSpec:
     output_model: type[BaseModel]
     fn: Callable[[Any, ToolContext], Awaitable[Any]]
 
+    def parse(self, args: dict[str, Any]) -> BaseModel:
+        """The arguments as the tool takes them (pydantic raises ValidationError)."""
+        return self.input_model.model_validate(args)
+
+
+    async def call(self, inp: BaseModel, ctx: ToolContext) -> Any:
+        """Run the tool; its output as JSON-ready data."""
+        raw = await self.fn(inp, ctx)
+
+        if isinstance(raw, BaseModel):
+            return raw.model_dump(mode="json")
+
+        return self.output_model.model_validate(raw).model_dump(mode="json")
+
+
     def manifest(self) -> dict[str, Any]:
         """JSON description shared with agent-loop and compiler (no code, no callables)."""
         return {
@@ -145,12 +160,12 @@ def tool(
     return decorator
 
 
-def path_refs(spec: ToolSpec, inp: BaseModel) -> list[str]:
+def path_refs(spec: ToolSpec, inp: BaseModel | dict[str, Any]) -> list[str]:
     """Every path an input names through its path-typed arguments."""
     refs: list[str] = []
 
     for name, kind in spec.path_args.items():
-        value = getattr(inp, name, None)
+        value = inp.get(name) if isinstance(inp, dict) else getattr(inp, name, None)
         refs += file_refs(value) if kind == "refs" else _strings(value)
 
     return refs

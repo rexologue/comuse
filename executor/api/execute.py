@@ -28,7 +28,7 @@ async def get_tool(name: str, request: Request):
     return spec.manifest()
 
 
-@router.post("/tools/reload", summary="Rescan internal_tools/")
+@router.post("/tools/reload", summary="Rescan internal_tools/ and the current external tool versions")
 async def reload_tools(request: Request):
     request.app.state.registry.load()
 
