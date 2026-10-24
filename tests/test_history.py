@@ -90,3 +90,18 @@ def test_a_plain_client_finds_its_chat_by_the_conversation(settings):
 
     assert history.find_session(_earlier_dialogue(sent)) == session_id
     assert history.find_session(_earlier_dialogue(sent[:2])) is None  # a first message starts a new chat
+
+
+def test_a_call_left_without_a_result_does_not_break_the_chat(settings):
+    """A turn that broke off mid-call: the next turns still make a history the API takes."""
+    session_id = history.ensure_session(None, "Разложи файлы")
+    history.add_message(session_id, "user", "Разложи файлы")
+    calls = [{"id": f"c{i}", "type": "function", "function": {"name": "fs__move", "arguments": "{}"}} for i in (1, 2)]
+    history.add_message(session_id, "assistant", "", tool_calls=calls)
+    history.add_message(session_id, "tool", "ok", tool_call_id="c1", name="fs__move")
+    history.add_message(session_id, "user", "Ну что там?")
+
+    messages = history.llm_history(session_id, limit=20)
+
+    assert [m["role"] for m in messages] == ["user", "assistant", "tool", "tool", "user"]
+    assert messages[3]["tool_call_id"] == "c2" and "прерван" in messages[3]["content"]

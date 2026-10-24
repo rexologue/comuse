@@ -43,6 +43,8 @@ function ToolDraftCard({ tool, version }: { tool: ExternalTool; version: number 
       // A refused approval too: the draft may have changed, and the card shows it anew.
       await queryClient.invalidateQueries({ queryKey: keys.externalTools });
       await queryClient.invalidateQueries({ queryKey: keys.tools });
+      // An open task panel offers the move to a version approved here.
+      await queryClient.invalidateQueries({ queryKey: ["task"] });
       setBusy(null);
     }
   };

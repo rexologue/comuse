@@ -34,6 +34,7 @@ class Output(ToolOutput):
         "the user approves it. Installs its packages on first use. Asks the user every time: the code is not approved yet."
     ),
     confirm="always",
+    chat_only=True,
 )
 async def trial(inp: Input, ctx: ToolContext) -> Output:
     # chat_only refuses a task and ctx.dry_run: an unapproved command runs only on a yes.

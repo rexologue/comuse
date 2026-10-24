@@ -108,6 +108,8 @@ function refresh(queryClient: QueryClient, event: AgentEvent): void {
     queryClient.invalidateQueries({ queryKey: keys.tasks });
     queryClient.invalidateQueries({ queryKey: ["runs"] });
     queryClient.invalidateQueries({ queryKey: ["run"] });
+    // A cron run moved the job's next time on.
+    queryClient.invalidateQueries({ queryKey: keys.jobs });
   }
 
   // A run's message lands in its task's chat.

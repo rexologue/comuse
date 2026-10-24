@@ -13,6 +13,17 @@ from common.schemas.task import Step, TaskSpec, Trigger
 _EXPR = re.compile(r"\{\{-?\s*(.*?)\s*-?\}\}", re.S)
 _STATEMENT = re.compile(r"\{%-?\s*(.*?)\s*-?%\}", re.S)
 
+# What a step does besides its card text and arguments: a change here is a change too.
+_BEHAVIOUR = {
+    "tool": "команда",
+    "when": "условие",
+    "foreach": "перебор",
+    "as_": "имя элемента",
+    "on_error": "при ошибке",
+    "on_empty": "если пусто",
+    "retries": "повторов",
+}
+
 # Filters that only shape how a value is printed: a card names the value without them.
 _PRESENTATION = {"format_date", "format_number", "round", "trim", "string", "int", "float", "upper", "lower", "title", "default", "join"}
 
@@ -40,6 +51,8 @@ def diff_specs(
     reads its own catalog: they may run different versions of an external tool."""
     old_cards = {c["id"]: c for c in _flatten(build_cards(old, catalog))}
     new_cards = {c["id"]: c for c in _flatten(build_cards(new, new_catalog or catalog))}
+    old_steps = {step.id: step for step in old.all_steps()}
+    new_steps = {step.id: step for step in new.all_steps()}
 
     changes: list[dict[str, Any]] = []
 
@@ -47,17 +60,31 @@ def diff_specs(
         before = old_cards.get(step_id)
         if before is None:
             changes.append({"kind": "added", "step": step_id, "after": card["text"]})
+            continue
 
-        elif before["text"] != card["text"] or before["args"] != card["args"] or before.get("version") != card.get("version"):
+        behaviour = _behaviour(old_steps[step_id], new_steps[step_id])
+        if before["text"] != card["text"] or before["args"] != card["args"] or before.get("version") != card.get("version") or behaviour:
             changes.append({
                 "kind": "changed", "step": step_id, "before": before["text"], "after": card["text"],
                 "args_before": before["args"], "args_after": card["args"],
                 "version_before": before.get("version"), "version_after": card.get("version"),
+                "behaviour": behaviour,
             })
 
     for step_id, card in old_cards.items():
         if step_id not in new_cards:
             changes.append({"kind": "removed", "step": step_id, "before": card["text"]})
+
+    kept_old = [step_id for step_id in old_steps if step_id in new_steps]
+    kept_new = [step_id for step_id in new_steps if step_id in old_steps]
+    if kept_old != kept_new:
+        changes.append({"kind": "order", "before": ", ".join(kept_old), "after": ", ".join(kept_new)})
+
+    if old.variables != new.variables:
+        changes.append({"kind": "variables", "before": _pairs(old.variables), "after": _pairs(new.variables)})
+
+    if old.description != new.description:
+        changes.append({"kind": "description", "before": old.description or "—", "after": new.description or "—"})
 
     if old.trigger != new.trigger:
         changes.append({"kind": "trigger", "before": describe_trigger(old.trigger), "after": describe_trigger(new.trigger)})
@@ -67,6 +94,18 @@ def diff_specs(
 
 
     return {"changes": changes, "lines": [_line(c) for c in changes]}
+
+
+def _behaviour(old: Step, new: Step) -> list[dict[str, Any]]:
+    return [
+        {"field": label, "before": getattr(old, name), "after": getattr(new, name)}
+        for name, label in _BEHAVIOUR.items()
+        if getattr(old, name) != getattr(new, name)
+    ]
+
+
+def _pairs(values: dict[str, str]) -> str:
+    return ", ".join(f"{key} = {_readable(value)}" for key, value in values.items()) or "—"
 
 
 def _card(step: Step, catalog: dict[str, dict[str, Any]]) -> dict[str, Any]:
@@ -88,17 +127,23 @@ def _card(step: Step, catalog: dict[str, dict[str, Any]]) -> dict[str, Any]:
         # An external tool's version the step runs; None for internal tools.
         "version": step.tool_version,
         "confirm": manifest.get("confirm"),
-        "text": step.title or _format_card(template, step.args),
+        "text": step.title or _format_card(template, step.args, fallback=manifest.get("title") or step.tool or step.id),
         "args": step.args,
         "children": [],
     }
 
 
-def _format_card(template: str, args: dict[str, Any]) -> str:
+def _format_card(template: str, args: dict[str, Any], *, fallback: str) -> str:
+    """The card with the step's arguments; a card a person or the chat wrote may be
+    broken (`{0}`, `{amount:.2f}`, a lone `{`), and then it is just the tool's title."""
     values = {key: _readable(value) for key, value in args.items()}
-    fields = {name for _, name, _, _ in string.Formatter().parse(template) if name}
 
-    return template.format(**{name: values.get(name, "—") for name in fields})
+    try:
+        fields = {name for _, name, _, _ in string.Formatter().parse(template) if name}
+        return template.format(**{name: values.get(name, "—") for name in fields})
+
+    except (ValueError, IndexError, KeyError, AttributeError):
+        return fallback
 
 
 def _readable(value: Any) -> str:
@@ -170,15 +215,18 @@ def _line(change: dict[str, Any]) -> str:
         return f"− убран шаг: {change['before']}"
 
     if kind == "changed":
+        notes = [
+            f"{item['field']}: {_readable(item['before'])} → {_readable(item['after'])}" for item in change.get("behaviour") or []
+        ]
         if change.get("version_before") != change.get("version_after"):
-            moved = f"версия команды v{change.get('version_before')} → v{change.get('version_after')}"
-            if change["before"] == change["after"] and change.get("args_before") == change.get("args_after"):
-                return f"~ {change['after']}: {moved}"
-            return f"~ было: {change['before']} → стало: {change['after']} ({moved})"
+            notes.insert(0, f"версия команды v{change.get('version_before')} → v{change.get('version_after')}")
 
-        return f"~ было: {change['before']} → стало: {change['after']}"
+        if change["before"] == change["after"] and change.get("args_before") == change.get("args_after"):
+            return f"~ {change['after']}: {'; '.join(notes)}"
 
-    if kind == "trigger":
-        return f"~ расписание: {change['before']} → {change['after']}"
+        line = f"~ было: {change['before']} → стало: {change['after']}"
+        return f"{line} ({'; '.join(notes)})" if notes else line
 
-    return f"~ название: {change['before']} → {change['after']}"
+    labels = {"trigger": "расписание", "order": "порядок шагов", "variables": "переменные", "description": "описание"}
+
+    return f"~ {labels.get(kind, 'название')}: {change['before']} → {change['after']}"

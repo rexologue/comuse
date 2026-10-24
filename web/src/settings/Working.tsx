@@ -3,7 +3,7 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { Lock, RotateCcw } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { api } from "@/api/client";
 import { keys, useSettings } from "@/api/queries";
@@ -17,20 +17,20 @@ export function Working() {
   const settings = useSettings();
   const queryClient = useQueryClient();
   const { busy, error, run } = useAction();
-  const [values, setValues] = useState<Record<string, unknown>>({});
-
-  useEffect(() => {
-    if (settings.data) setValues(Object.fromEntries(settings.data.map((item) => [item.key, item.value])));
-  }, [settings.data]);
+  // Only what the user changed and has not saved: a refetch (after another setting went
+  // back to its default, say) leaves these edits alone.
+  const [edits, setEdits] = useState<Record<string, unknown>>({});
 
   if (settings.isError) return <p className="text-sm text-destructive">{settings.error.message}</p>;
   if (!settings.data) return <p className="text-sm text-muted-foreground">Загрузка…</p>;
 
-  const changed = Object.fromEntries(settings.data.filter((item) => !item.locked && values[item.key] !== item.value).map((item) => [item.key, values[item.key]]));
+  const valueOf = (item: Tunable) => (item.key in edits ? edits[item.key] : item.value);
+  const changed = Object.fromEntries(settings.data.filter((item) => !item.locked && valueOf(item) !== item.value).map((item) => [item.key, valueOf(item)]));
 
   const save = (body: Record<string, unknown>) =>
     run("save", async () => {
       await api("/settings", { method: "PATCH", json: body });
+      setEdits((current) => Object.fromEntries(Object.entries(current).filter(([key]) => !(key in body))));
       await queryClient.invalidateQueries({ queryKey: keys.settings });
     });
 
@@ -49,7 +49,7 @@ export function Working() {
               {item.source === "db" && <Badge variant="secondary">изменено</Badge>}
             </div>
             <div className="flex items-center gap-2">
-              <Control item={item} value={values[item.key]} onChange={(value) => setValues((current) => ({ ...current, [item.key]: value }))} />
+              <Control item={item} value={valueOf(item)} onChange={(value) => setEdits((current) => ({ ...current, [item.key]: value }))} />
               {item.source === "db" && (
                 <Button size="sm" variant="ghost" onClick={() => save({ [item.key]: null })} disabled={busy !== null} title={`По умолчанию: ${String(item.default)}`}>
                   <RotateCcw /> По умолчанию

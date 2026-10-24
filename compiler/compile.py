@@ -62,7 +62,8 @@ class Compiler:
             today=date.today(),
         )
 
-        chat_tools = successful_tools(session_id)
+        # What a task can redo: writing one's own command (chat only) is not among it.
+        chat_tools = successful_tools(session_id) & catalog.keys()
         texts = chat_texts(session_id)
         spec = await self._ask_spec(messages, catalog, chat_tools, texts)
 
@@ -274,7 +275,8 @@ class Compiler:
     async def catalog(self, *, fresh: bool = False) -> dict[str, dict[str, Any]]:
         if fresh or not self._catalog or time.monotonic() - self._catalog_at > _CATALOG_TTL_SEC:
             data = await self.main.get("/tools")
-            self._catalog = {tool["name"]: tool for tool in data["tools"]}
+            # A task never has a chat-only tool as a step: the compiler does not see them.
+            self._catalog = {tool["name"]: tool for tool in data["tools"] if not tool.get("chat_only")}
             self._catalog_at = time.monotonic()
 
         return self._catalog

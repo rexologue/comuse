@@ -195,3 +195,22 @@ def test_tasks_can_be_listed_by_the_tool_they_use(settings):
     found = views.task_list(tool="ext.count")
 
     assert [(task["id"], task["tool_version"]) for task in found] == [(on_tool, 1)]
+
+
+def test_pinning_survives_odd_steps_and_follows_the_users_edit():
+    catalog = {**INTERNAL, "ext.count": V2}
+
+    # A tool that is not a string is left to validate_spec to name.
+    odd = {"title": "x", "steps": [{"id": "a", "tool": 5}, {"id": "b", "tool": {"name": "ext.count"}}]}
+    versions.pin(odd, catalog, keep={}, explicit=False)
+    assert versions.pins(odd) == {}
+
+    # The user moved the second step: that one wins, wherever it stands.
+    two = {"title": "x", "steps": [{"id": "a", "tool": "ext.count", "tool_version": 1}, {"id": "b", "tool": "ext.count", "tool_version": 2}]}
+    versions.pin(two, catalog, keep={"ext.count": 1}, explicit=True)
+    assert [step["tool_version"] for step in two["steps"]] == [2, 2]
+
+    # The model swapped the command for a built-in one: the version goes with it.
+    swapped = {"title": "x", "steps": [{"id": "a", "tool": "fs.list", "tool_version": 1, "args": {}}]}
+    versions.pin(swapped, catalog, keep={"ext.count": 1}, explicit=False)
+    assert "tool_version" not in swapped["steps"][0]

@@ -4,7 +4,7 @@ import { createBrowserRouter, RouterProvider } from "react-router";
 
 import { EventsProvider } from "@/api/events";
 import { Layout } from "@/app/Layout";
-import { ChatPage } from "@/chat/ChatPage";
+import { ChatRoute } from "@/chat/ChatPage";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Home } from "@/pages/Home";
 import { Placeholder } from "@/pages/Placeholder";
@@ -28,7 +28,7 @@ const router = createBrowserRouter([
     element: <Layout />,
     children: [
       { path: "/", element: <Home /> },
-      { path: "/chat/:sessionId", element: <ChatPage /> },
+      { path: "/chat/:sessionId", element: <ChatRoute /> },
       { path: "/task/:taskId", element: <Placeholder title="Задача" text="Задача без чата: её панель справа." /> },
       { path: "/settings", element: settings },
       { path: "/settings/:section", element: settings },

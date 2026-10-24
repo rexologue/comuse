@@ -20,6 +20,7 @@ from common.tools.fields import WorkspacePath
 
 
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,40}$")
+_PLACEHOLDER = re.compile(r"\{\{ [a-z][a-z0-9_]* \}\}")
 
 
 class TemplateField(BaseModel):
@@ -176,13 +177,24 @@ def _apply_markup(document, target: Path, fields: list[TemplateField], tables: l
         _make_row_loop(document.tables[spec.table - 1], spec.header_rows, spec.name, spec.columns)
 
     paragraphs = _text_paragraphs(document, {spec.table - 1 for spec in tables})
-    for field in fields:
+    missing: list[str] = []
+
+    # The longest fragment first: «01.01.2025» becomes a field before «2025» could cut it.
+    for field in sorted(fields, key=lambda f: len(f.example.strip()), reverse=True):
         example = field.example.strip()
-        for paragraph in paragraphs:
-            if example in paragraph.text:
-                _set_paragraph_text(paragraph, paragraph.text.replace(example, "{{ " + field.name + " }}"))
+        placeholder = "{{ " + field.name + " }}"
+        replaced = [_replace_in_runs(paragraph, example, placeholder) for paragraph in paragraphs]
+
+        if not any(replaced):
+            missing.append(
+                f"Поле «{field.name}»: фрагмент «{example}» остался только внутри другого поля "
+                "или в тексте ссылки — возьми фрагмент, который стоит в тексте отдельно"
+            )
 
         example_context[field.name] = example
+
+    if missing:
+        raise ToolError("Разметка не подходит к документу:\n- " + "\n- ".join(missing))
 
     document.save(str(target))
 
@@ -219,13 +231,32 @@ def _set_row_tag(tr, tag: str) -> None:
         node.text = tag if i == 0 else ""
 
 
-def _set_paragraph_text(paragraph, text: str) -> None:
-    """Put all text into the first run, so a placeholder split across runs still works."""
+def _replace_in_runs(paragraph, example: str, placeholder: str) -> bool:
+    """Replace `example` where it stands, even split across runs: the placeholder takes
+    the first of them, the rest of the paragraph keeps its runs and their formatting.
+    Text of links and fields (not runs of the paragraph) is left alone."""
     runs = paragraph.runs
-    if not runs:
-        paragraph.add_run(text)
-        return
+    joined = "".join(run.text for run in runs)
+    # Inside a placeholder made a moment ago («1» in «{{ day_1 }}») is not the document's text.
+    taken = [match.span() for match in _PLACEHOLDER.finditer(joined)]
+    starts = [
+        match.start() for match in re.finditer(re.escape(example), joined)
+        if not any(a < match.end() and match.start() < b for a, b in taken)
+    ]
 
-    runs[0].text = text
-    for run in runs[1:]:
-        run.text = ""
+    # From the end: what is replaced later does not move what comes before.
+    for start in reversed(starts):
+        end, position, first = start + len(example), 0, True
+
+        for run in runs:
+            run_start, run_end = position, position + len(run.text)
+            position = run_end
+            if run_end <= start or run_start >= end:
+                continue
+
+            text = run.text
+            cut_from, cut_to = max(start, run_start) - run_start, min(end, run_end) - run_start
+            run.text = text[:cut_from] + (placeholder if first else "") + text[cut_to:]
+            first = False
+
+    return bool(starts)

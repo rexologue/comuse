@@ -15,6 +15,9 @@ from common.storage.db import session
 from common.storage.models import ChatMessage, ChatSession, Task, TaskVersion, TraceEvent
 from common.utils import new_id, utcnow
 
+# The result of a call whose turn broke off before it answered.
+_NO_RESULT = '{"status": "error", "error": "Вызов прерван: результата нет"}'
+
 
 def ensure_session(session_id: str | None, first_text: str) -> str:
     with session() as db:
@@ -58,16 +61,27 @@ def find_session(dialogue: list[tuple[str, str]]) -> str | None:
 
 
 def _dialogue_tail(session_id: str, count: int) -> list[tuple[str, str]]:
+    """The last `count` messages as the client saw them: text the model wrote next to a
+    tool call ("Сейчас посмотрю папку") never reached it."""
+    tail: list[tuple[str, str]] = []
+
     with session() as db:
         rows = (
-            db.query(ChatMessage.role, ChatMessage.content)
+            db.query(ChatMessage.role, ChatMessage.content, ChatMessage.tool_calls)
             .filter(ChatMessage.session_id == session_id, ChatMessage.role.in_(("user", "assistant")), ChatMessage.content != "")
             .order_by(ChatMessage.id.desc())
-            .limit(count)
-            .all()
+            .yield_per(50)
         )
 
-    return [(role, (content or "").strip()) for role, content in reversed(rows)]
+        for role, content, tool_calls in rows:
+            if tool_calls:
+                continue
+
+            tail.append((role, (content or "").strip()))
+            if len(tail) == count:
+                break
+
+    return list(reversed(tail))
 
 
 def session_exists(session_id: str) -> bool:
@@ -132,8 +146,14 @@ def llm_history(session_id: str, limit: int) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = []
     # Tool calls still waiting for their results, and task notices that arrived meanwhile:
     # an API rejects anything between a call and its results.
-    unanswered: set[str] = set()
+    unanswered: list[str] = []
     deferred: list[dict[str, Any]] = []
+
+    def close_unanswered() -> None:
+        # A turn that broke off mid-call left calls with no result; without one every
+        # later turn would be refused by the API.
+        messages.extend({"role": "tool", "tool_call_id": call_id, "content": _NO_RESULT} for call_id in unanswered)
+        unanswered.clear()
 
     for row in rows:
         if row.role == "notice":
@@ -141,23 +161,29 @@ def llm_history(session_id: str, limit: int) -> list[dict[str, Any]]:
             (deferred if unanswered else messages).append(notice)
             continue
 
-        if row.role == "assistant":
-            message: dict[str, Any] = {"role": "assistant", "content": row.content or ""}
-            if row.tool_calls:
-                message["tool_calls"] = row.tool_calls
-                unanswered = {call["id"] for call in row.tool_calls}
-            messages.append(message)
-
-        elif row.role == "tool":
-            messages.append({"role": "tool", "tool_call_id": row.tool_call_id, "content": row.content})
-            unanswered.discard(row.tool_call_id)
+        if row.role == "tool":
+            if row.tool_call_id in unanswered:
+                messages.append({"role": "tool", "tool_call_id": row.tool_call_id, "content": row.content})
+                unanswered.remove(row.tool_call_id)
 
         else:
-            messages.append({"role": row.role, "content": row.content})
+            close_unanswered()
+
+            if row.role == "assistant":
+                message: dict[str, Any] = {"role": "assistant", "content": row.content or ""}
+                if row.tool_calls:
+                    message["tool_calls"] = row.tool_calls
+                    unanswered = [call["id"] for call in row.tool_calls]
+                messages.append(message)
+
+            else:
+                messages.append({"role": row.role, "content": row.content})
 
         if not unanswered and deferred:
             messages += deferred
             deferred = []
+
+    close_unanswered()
 
     return messages + deferred
 

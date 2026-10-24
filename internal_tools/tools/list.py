@@ -23,6 +23,7 @@ class Output(ToolOutput):
     card="Показать свои команды",
     description="List the user's own commands (ext.*): their versions, which one is current, whether a draft waits for approval.",
     confirm=False,
+    chat_only=True,
 )
 async def list_tools(inp: Input, ctx: ToolContext) -> Output:
     chat_only(ctx)

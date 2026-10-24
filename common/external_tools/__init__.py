@@ -47,8 +47,8 @@ def pinned(spec: dict[str, Any]) -> dict[str, int]:
             if not isinstance(step, dict):
                 continue
 
-            tool = step.get("tool") or ""
-            if is_external(tool) and isinstance(step.get("tool_version"), int):
+            tool = step.get("tool")
+            if isinstance(tool, str) and is_external(tool) and isinstance(step.get("tool_version"), int):
                 found.setdefault(tool, step["tool_version"])
 
             walk(step.get("steps"))

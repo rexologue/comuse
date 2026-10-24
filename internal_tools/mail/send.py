@@ -4,7 +4,7 @@ import asyncio
 
 from pydantic import Field
 
-from common.tools import ToolContext, ToolError, ToolInput, ToolOutput, tool
+from common.tools import ToolContext, ToolInput, ToolOutput, tool
 from common.tools.fields import EmailAddress, WorkspacePath
 from internal_tools.mail.accounts import mailbox
 from internal_tools.mail.adapters import imap_smtp
@@ -28,6 +28,8 @@ class Output(ToolOutput):
     folder: str | None = None
     # The letter was sent, but its copy did not get into Sent: why.
     copy_error: str | None = None
+    # Recipients the server refused (address → its answer); the others got the letter.
+    refused: dict[str, str] = Field(default_factory=dict)
 
 
 @tool(
@@ -62,17 +64,21 @@ async def send(inp: Input, ctx: ToolContext) -> Output:
         folder = await asyncio.to_thread(imap_smtp.append_draft, account.config, account.secret, message)
         return Output(message_id=message["Message-ID"], mode="draft", folder=folder)
 
-    await asyncio.to_thread(imap_smtp.send, account.config, account.secret, message)
+    refused = await asyncio.to_thread(imap_smtp.send, account.config, account.secret, message)
+    sent = Output(message_id=message["Message-ID"], mode="sent", refused=refused)
+    if refused:
+        ctx.log(f"Сервер не принял адресатов: {', '.join(refused)}; остальным письмо ушло")
 
     if not imap_smtp.saves_sent_copy(account.config):
-        return Output(message_id=message["Message-ID"], mode="sent")
+        return sent
 
     try:
-        folder = await asyncio.to_thread(imap_smtp.append_sent, account.config, account.secret, message)
+        sent.folder = await asyncio.to_thread(imap_smtp.append_sent, account.config, account.secret, message)
 
-    except ToolError as e:
-        # The letter is gone already: failing here would get it sent a second time.
+    except Exception as e:
+        # The letter is gone already, whatever broke after: failing here would get it
+        # sent a second time.
         ctx.log(f"Письмо отправлено, но копия в «Отправленных» не сохранилась: {e}")
-        return Output(message_id=message["Message-ID"], mode="sent", copy_error=str(e))
+        sent.copy_error = str(e) or type(e).__name__
 
-    return Output(message_id=message["Message-ID"], mode="sent", folder=folder)
+    return sent

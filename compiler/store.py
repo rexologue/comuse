@@ -57,6 +57,14 @@ def add_version(
     created_by: str,
     session_id: str | None,
 ) -> TaskVersion:
+    # The change was made on `parent`, maybe minutes ago (the model was thinking): an edit
+    # saved meanwhile must not be superseded unseen.
+    if base_version(task_id).id != parent.id:
+        raise ApiError(
+            status_code=409,
+            message="Задачу изменили, пока готовилась эта правка: она не сохранена, сделайте её ещё раз",
+        )
+
     with session() as db:
         last_no = (
             db.query(TaskVersion.version_no)

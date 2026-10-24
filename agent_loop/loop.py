@@ -31,6 +31,7 @@ _RESULT_CHARS = 6000
 
 _MODEL_ATTEMPTS = 3
 
+_STALLED = "Не получилось завершить работу. Попробуйте переформулировать просьбу."
 _NUDGE = "Ты остановился без ответа. Продолжи работу инструментами или коротко сообщи пользователю результат."
 
 
@@ -115,14 +116,24 @@ class AgentLoop:
                 nudged = True
                 continue
 
-            message_id = history.add_message(session_id, "assistant", reply["content"], tool_calls=tool_calls or None)
+            # What the client gets is what is stored: the client's copy of the chat must
+            # match ours for a chat without session_id to be found again.
+            content = reply["content"] or ("" if tool_calls else _STALLED)
+            message_id = history.add_message(session_id, "assistant", content, tool_calls=tool_calls or None)
 
             if not tool_calls:
-                result.content = reply["content"] or "Не получилось завершить работу. Попробуйте переформулировать просьбу."
+                result.content = content
                 return result
 
             for call in tool_calls:
-                output = await self._dispatch(session_id, message_id, call, by_function)
+                try:
+                    output = await self._dispatch(session_id, message_id, call, by_function)
+
+                except Exception as e:
+                    # Every call gets its result, or the chat could not go on.
+                    log.exception("tool call %s failed", call["function"]["name"])
+                    output = {"status": "error", "error": f"Сбой: {e}"}
+
                 event = {"tool": tool_name(call["function"]["name"]), "status": output.get("status")}
                 result.tool_events.append(event)
 

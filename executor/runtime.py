@@ -52,15 +52,17 @@ class ExecutorRuntime:
 
     async def execute(self, req: ExecuteRequest) -> ExecuteResponse:
         started = time.monotonic()
-        response = await self._execute(req)
+        # Looked up once: the version that ran is the one logged, even if another was
+        # approved meanwhile.
+        spec = self.registry.get(req.tool, req.version)
+        response = await self._execute(req, spec)
         response.duration_ms = int((time.monotonic() - started) * 1000)
-        response.version = getattr(self.registry.get(req.tool, req.version), "version", None)
+        response.version = getattr(spec, "version", None)
 
         return response
 
 
-    async def _execute(self, req: ExecuteRequest) -> ExecuteResponse:
-        spec = self.registry.get(req.tool, req.version)
+    async def _execute(self, req: ExecuteRequest, spec) -> ExecuteResponse:
         if spec is None:
             if req.version is not None and self.registry.get(req.tool) is not None:
                 return ExecuteResponse(status="error", error=f"У `{req.tool}` нет одобренной версии v{req.version}")
@@ -99,6 +101,9 @@ class ExecutorRuntime:
         said = {"logs": ctx.logs, "notifications": ctx.notifications}
 
         try:
+            # Building a command's .venv on its first call is not the command's time.
+            await spec.prepare()
+
             output = await asyncio.wait_for(
                 spec.call(inp, ctx),
                 timeout=spec.timeout or tunables.get("tool_timeout_sec"),

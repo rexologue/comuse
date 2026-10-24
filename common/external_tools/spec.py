@@ -87,11 +87,13 @@ class ExternalToolSpec:
         return dict(args)
 
 
-    async def call(self, inp: dict[str, Any], ctx: ToolContext) -> Any:
-        if await asyncio.to_thread(store.files_hash, self.folder) != self.hash:
-            raise ToolError(f"Файлы `{self.name}` v{self.version} изменились после одобрения: команда не запущена")
+    async def prepare(self) -> None:
+        """Its packages, installed on the first call (up to uv's own time limit)."""
+        await self._checked_python()
 
-        python = await asyncio.to_thread(deps.ensure_venv, self.folder, self.storage.uv_cache_dir)
+
+    async def call(self, inp: dict[str, Any], ctx: ToolContext) -> Any:
+        python = await self._checked_python()
 
         request = {
             "args": {key: self._full_paths(key, value, ctx) for key, value in inp.items()},
@@ -132,6 +134,13 @@ class ExternalToolSpec:
             raise ToolError(f"Ответ `{self.name}` не по его схеме: {e.message}") from e
 
         return output
+
+
+    async def _checked_python(self) -> Path:
+        if await asyncio.to_thread(store.files_hash, self.folder) != self.hash:
+            raise ToolError(f"Файлы `{self.name}` v{self.version} изменились после одобрения: команда не запущена")
+
+        return await asyncio.to_thread(deps.ensure_venv, self.folder, self.storage.uv_cache_dir)
 
 
     def _full_paths(self, key: str, value: Any, ctx: ToolContext) -> Any:

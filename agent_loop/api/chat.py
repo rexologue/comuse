@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from typing import Any
 
@@ -21,6 +22,7 @@ from common.utils import new_id
 
 
 router = APIRouter()
+log = logging.getLogger("chat")
 
 MODEL_NAME = "office-agent"
 
@@ -80,6 +82,10 @@ async def delete_session(session_id: str, request: Request):
     if task_id := history.task_chats().get(session_id):
         raise ApiError(status_code=409, message=f"Это чат задачи `{task_id}`: он живёт, пока жива задача")
 
+    # A running turn would go on writing into a chat that is gone.
+    if request.app.state.loop.busy(session_id):
+        raise ApiError(status_code=409, message="В этом чате агент ещё работает: удалите его, когда он закончит")
+
     history.delete_session(session_id)
     request.app.state.loop.forget([session_id])
 
@@ -109,11 +115,19 @@ async def _stream(task: asyncio.Task):
         except TimeoutError:
             yield ": keepalive\n\n"
 
+        except Exception:
+            break  # The turn failed: its error is read below.
+
     try:
         result: TurnResult = task.result()
 
-    except ApiError as e:
-        yield f"data: {json.dumps(e.body(), ensure_ascii=False)}\n\n"
+    except Exception as e:
+        # Whatever broke, the client gets an error and the end of the stream.
+        error = e if isinstance(e, ApiError) else ApiError(status_code=500, message=f"Сбой агента: {e!r}")
+        if not isinstance(e, ApiError):
+            log.error("chat turn failed", exc_info=e)
+
+        yield f"data: {json.dumps(error.body(), ensure_ascii=False)}\n\n"
         yield "data: [DONE]\n\n"
         return
 

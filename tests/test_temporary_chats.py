@@ -71,9 +71,13 @@ def test_the_list_says_which_chats_stay(settings):
 async def client(settings):
     class Loop:
         forgotten: list[str] = []
+        working: set[str] = set()
 
         def forget(self, ids):
             self.forgotten += ids
+
+        def busy(self, session_id):
+            return session_id in self.working
 
     app = FastAPI()
     install_error_handlers(app)
@@ -89,6 +93,11 @@ async def test_a_temporary_chat_can_go_now_and_a_tasks_chat_cannot(client):
     temporary = _chat("Привет")
     built = _chat("Собери задачу")
     _task_from(built)
+
+    # Not while the agent is still working in it.
+    loop.working = {temporary}
+    assert (await client.delete(f"/sessions/{temporary}")).status_code == 409
+    loop.working = set()
 
     assert (await client.delete(f"/sessions/{temporary}")).status_code == 200
     assert (await client.delete(f"/sessions/{built}")).status_code == 409

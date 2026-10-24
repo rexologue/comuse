@@ -49,17 +49,21 @@ async def aggregate(inp: Input, ctx: ToolContext) -> Output:
     if not paths:
         raise ToolError("Нет файлов для подсчёта")
 
+    wanted = [*inp.sum_columns, *([inp.group_by] if inp.group_by else [])]
     rows: list[dict[str, Any]] = []
+
     for path in paths:
         if not path.is_file():
             raise ToolError(f"Файл `{ctx.to_ref(path)}` не найден")
 
-        rows += await asyncio.to_thread(_read_rows, path, inp.sheet)
+        header, file_rows = await asyncio.to_thread(_read_rows, path, inp.sheet)
 
-    if rows:
-        missing = [c for c in [*inp.sum_columns, *([inp.group_by] if inp.group_by else [])] if c not in rows[0]]
-        if missing:
-            raise ToolError(f"Нет колонок {missing}; есть: {list(rows[0])}")
+        # Every file: a column named a little differently in one of them would count as 0.
+        missing = [c for c in wanted if c not in header]
+        if file_rows and missing:
+            raise ToolError(f"В `{ctx.to_ref(path)}` нет колонок {missing}; есть: {header}")
+
+        rows += file_rows
 
     totals = {column: sum(_number(row.get(column)) for row in rows) for column in inp.sum_columns}
 
@@ -83,25 +87,36 @@ async def aggregate(inp: Input, ctx: ToolContext) -> Output:
     return Output(files=len(paths), rows=len(rows), totals=totals, groups=groups)
 
 
-def _read_rows(path, sheet: str | None) -> list[dict[str, Any]]:
+def _read_rows(path, sheet: str | None) -> tuple[list[str], list[dict[str, Any]]]:
+    """The file's header and its rows."""
     if path.suffix.lower() == ".csv":
         import csv
 
         with path.open(encoding="utf-8-sig", newline="") as fh:
-            return list(csv.DictReader(fh))
+            reader = csv.DictReader(fh)
+            rows = list(reader)
+
+        return list(reader.fieldnames or []), rows
 
     from openpyxl import load_workbook
 
+    # read_only keeps the file open until close(): on a Windows share an open file is locked.
     workbook = load_workbook(str(path), read_only=True, data_only=True)
-    worksheet = workbook[sheet] if sheet else workbook.worksheets[0]
 
-    values = worksheet.iter_rows(values_only=True)
-    header = [str(c).strip() if c is not None else f"col_{i + 1}" for i, c in enumerate(next(values, []))]
-    rows = [dict(zip(header, row)) for row in values if any(v is not None for v in row)]
+    try:
+        try:
+            worksheet = workbook[sheet] if sheet else workbook.worksheets[0]
 
-    workbook.close()
+        except KeyError as e:
+            raise ToolError(f"В `{path.name}` нет листа «{sheet}»; есть: {workbook.sheetnames}") from e
 
-    return rows
+        values = worksheet.iter_rows(values_only=True)
+        header = [str(c).strip() if c is not None else f"col_{i + 1}" for i, c in enumerate(next(values, []))]
+
+        return header, [dict(zip(header, row)) for row in values if any(v is not None for v in row)]
+
+    finally:
+        workbook.close()
 
 
 def _number(value: Any) -> float:

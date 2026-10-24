@@ -63,6 +63,7 @@ function AccountRow({ account, kind }: { account: Account; kind: AccountKindSpec
           variant="outline"
           onClick={() =>
             run("check", async () => {
+              setChecked(null);
               const result = await api<{ status: string }>(`/accounts/${account.name}/check`, { method: "POST" });
               setChecked(result.status === "ok" ? "Вход удался" : result.status === "unchecked" ? "Этот вид не умеет проверять вход" : result.status);
             })

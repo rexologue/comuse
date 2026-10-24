@@ -10,7 +10,9 @@ from common.tools import ToolContext, ToolError, ToolInput, ToolOutput, tool
 from common.tools.fields import WorkspacePath
 
 
-_LOOP = re.compile(r"\{%-?\s*(?:tr|tc|p|r)?\s*for\s+([A-Za-z_]\w*)\s+in\s+([A-Za-z_]\w*)")
+# `{%tr for row in sales %}` and its `{%tr endfor %}`: the keys of a loop are read
+# between the two, so two tables that both say `row` keep their own columns.
+_LOOP_TAG = re.compile(r"\{%-?\s*(?:tr|tc|p|r)?\s*(?:for\s+([A-Za-z_]\w*)\s+in\s+([A-Za-z_]\w*)|(endfor))")
 
 
 class Input(ToolInput):
@@ -86,8 +88,8 @@ def _check_table_rows(document, values: dict[str, Any]) -> None:
 
     xml = document.patch_xml(document.get_xml())
 
-    for loop_var, list_name in _LOOP.findall(xml):
-        keys = set(re.findall(rf"\b{re.escape(loop_var)}\.([A-Za-z_][A-Za-z0-9_]*)", xml))
+    for loop_var, list_name, body in _loops(xml):
+        keys = set(re.findall(rf"\b{re.escape(loop_var)}\.([A-Za-z_][A-Za-z0-9_]*)", body))
         rows = values.get(list_name)
 
         if not keys or not isinstance(rows, list):
@@ -101,6 +103,24 @@ def _check_table_rows(document, values: dict[str, Any]) -> None:
                     f"Строки `{list_name}` должны иметь поля {sorted(keys)}; в строке {i + 1} нет {absent} "
                     f"(пришло: {got}). Подготовь строки шагом data.map_rows."
                 )
+
+
+def _loops(xml: str) -> list[tuple[str, str, str]]:
+    """(loop variable, list, the text between `for` and its `endfor`), nested loops too."""
+    found: list[tuple[str, str, str]] = []
+    open_loops: list[tuple[str, str, int]] = []
+
+    for match in _LOOP_TAG.finditer(xml):
+        if match.group(3) is None:
+            open_loops.append((match.group(1), match.group(2), match.end()))
+        elif open_loops:
+            loop_var, list_name, start = open_loops.pop()
+            found.append((loop_var, list_name, xml[start:match.start()]))
+
+    # A loop with no endfor: docxtpl will say so; its keys reach to the end.
+    found += [(loop_var, list_name, xml[start:]) for loop_var, list_name, start in open_loops]
+
+    return found
 
 
 def _docx_name(name: str) -> str:

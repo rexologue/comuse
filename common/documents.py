@@ -99,20 +99,22 @@ def _read_xlsx(path: Path) -> str:
     workbook = load_workbook(str(path), read_only=True, data_only=True)
     parts: list[str] = []
 
-    for sheet in workbook.worksheets:
-        rows = []
-        for i, row in enumerate(sheet.iter_rows(values_only=True)):
-            if i >= MAX_SHEET_ROWS:
-                rows.append([f"… ещё строки (показаны первые {MAX_SHEET_ROWS})"])
-                break
+    try:
+        for sheet in workbook.worksheets:
+            rows = []
+            for i, row in enumerate(sheet.iter_rows(values_only=True)):
+                if i >= MAX_SHEET_ROWS:
+                    rows.append([f"… ещё строки (показаны первые {MAX_SHEET_ROWS})"])
+                    break
 
-            cells = [cell_to_text(v) for v in row]
-            if any(cells):
-                rows.append(cells)
+                cells = [cell_to_text(v) for v in row]
+                if any(cells):
+                    rows.append(cells)
 
-        parts.append(f"## Лист «{sheet.title}»\n\n{markdown_table(rows)}")
+            parts.append(f"## Лист «{sheet.title}»\n\n{markdown_table(rows)}")
 
-    workbook.close()
+    finally:
+        workbook.close()
 
     return "\n\n".join(parts)
 

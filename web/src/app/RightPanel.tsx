@@ -4,7 +4,7 @@
 import { ArrowLeft, Bell, Workflow, X } from "lucide-react";
 import { useMatch, useSearchParams } from "react-router";
 
-import { useChats } from "@/api/queries";
+import { useChats, useTasks } from "@/api/queries";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { EventFeed } from "@/events/EventFeed";
@@ -18,10 +18,16 @@ export function RightPanel({ overlay = false, eventsOpen, onCloseEvents, onClose
   const chatMatch = useMatch("/chat/:sessionId");
   const taskMatch = useMatch("/task/:taskId");
   const chats = useChats();
+  const tasks = useTasks();
   const [search, setSearch] = useSearchParams();
 
   const sessionId = chatMatch?.params.sessionId;
-  const openTask = taskMatch?.params.taskId ?? chats.data?.find((chat) => chat.id === sessionId)?.task_id ?? null;
+  // The task list knows every task's chat; the chats list only the newest ones.
+  const openTask =
+    taskMatch?.params.taskId ??
+    tasks.data?.find((task) => task.source_session_id === sessionId)?.id ??
+    chats.data?.find((chat) => chat.id === sessionId)?.task_id ??
+    null;
 
   const runId = search.get("run");
   const versionId = search.get("version");
@@ -72,7 +78,7 @@ export function RightPanel({ overlay = false, eventsOpen, onCloseEvents, onClose
         ) : detail === "version" && openTask && versionId ? (
           <VersionView taskId={openTask} versionId={versionId} />
         ) : openTask ? (
-          <TaskPanel taskId={openTask} />
+          <TaskPanel key={openTask} taskId={openTask} />
         ) : null}
       </ScrollArea>
     </aside>

@@ -215,7 +215,11 @@ def _describe_fields(schema: dict[str, Any], *, with_required: bool) -> str:
     return "; ".join(parts) or "—"
 
 
-def _resolve(prop: dict[str, Any], defs: dict[str, Any]) -> dict[str, Any]:
+def _resolve(prop: dict[str, Any] | bool, defs: dict[str, Any]) -> dict[str, Any]:
+    # `true` in a schema a person or the chat wrote: any value.
+    if not isinstance(prop, dict):
+        return {}
+
     ref = prop.get("$ref")
     if ref and ref.startswith("#/$defs/"):
         return {**defs.get(ref.split("/")[-1], {}), **{k: v for k, v in prop.items() if k != "$ref"}}

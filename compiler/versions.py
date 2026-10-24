@@ -19,7 +19,8 @@ def tool_steps(data: dict[str, Any]) -> Iterator[dict[str, Any]]:
             if not isinstance(step, dict):
                 continue
 
-            if step.get("tool"):
+            # Not a string: validate_spec names it; pinning just leaves it be.
+            if step.get("tool") and isinstance(step["tool"], str):
                 yield step
 
             yield from walk(step.get("steps") or [])
@@ -35,18 +36,23 @@ def pins(data: dict[str, Any]) -> dict[str, int]:
 def pin(data: dict[str, Any], catalog: dict[str, dict[str, Any]], *, keep: dict[str, int], explicit: bool) -> None:
     """Set `tool_version` on the external steps, in place: the version in `keep` (the task
     so far), else the current one. With `explicit` (the user's own edit) a version the
-    step already names wins; the model's are overwritten."""
+    step already names wins — the one that differs from the task's, wherever the step
+    stands; the model's are overwritten, and a step it moved to a built-in tool loses its
+    version."""
     chosen: dict[str, int] = {}
 
     if explicit:
         for step in tool_steps(data):
-            if is_external(step["tool"]) and isinstance(step.get("tool_version"), int):
-                chosen.setdefault(step["tool"], step["tool_version"])
+            tool, version = step["tool"], step.get("tool_version")
+            if is_external(tool) and isinstance(version, int) and (tool not in chosen or version != keep.get(tool)):
+                chosen[tool] = version
 
     for step in tool_steps(data):
         tool = step["tool"]
 
         if not is_external(tool):
+            if not explicit:
+                step.pop("tool_version", None)
             continue
 
         version = chosen.get(tool) or keep.get(tool) or (catalog.get(tool) or {}).get("version")

@@ -68,6 +68,8 @@ class ToolSpec:
     timeout: int | None
     # Always offered to the chat agent, whatever the request (looking around starts there).
     core: bool
+    # Only a chat calls it (it talks with the person); a task never has it as a step.
+    chat_only: bool
     input_model: type[ToolInput]
     output_model: type[BaseModel]
     fn: Callable[[Any, ToolContext], Awaitable[Any]]
@@ -75,6 +77,10 @@ class ToolSpec:
     def parse(self, args: dict[str, Any]) -> BaseModel:
         """The arguments as the tool takes them (pydantic raises ValidationError)."""
         return self.input_model.model_validate(args)
+
+
+    async def prepare(self) -> None:
+        """What a call needs before its timeout starts; nothing for a built-in tool."""
 
 
     async def call(self, inp: BaseModel, ctx: ToolContext) -> Any:
@@ -106,6 +112,7 @@ class ToolSpec:
             # How to use the tool's group, for the agent and the compiler (None: no guide).
             "guide": guide_of(self.name),
             "core": self.core,
+            "chat_only": self.chat_only,
             "source": "internal",
         }
 
@@ -123,6 +130,7 @@ def tool(
     secrets: tuple[str, ...] = (),
     timeout: int | None = None,
     core: bool = False,
+    chat_only: bool = False,
 ):
     """Register a tool. The function's first parameter annotation is its input model,
     its return annotation the output model; both become JSON schemas for the LLM."""
@@ -144,6 +152,7 @@ def tool(
             path_args=_path_args(hints[params[0]]),
             timeout=timeout,
             core=core,
+            chat_only=chat_only,
             input_model=hints[params[0]],
             output_model=hints["return"],
             fn=fn,

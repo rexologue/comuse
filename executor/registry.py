@@ -39,6 +39,8 @@ class ToolRegistry:
             specs[spec.name] = spec
 
         self._specs = specs
+        # A version swept away since must not run from the cache.
+        self._older = {}
 
         log.info("tools loaded: %d (%s)", len(self._specs), ", ".join(sorted(self._specs)))
 

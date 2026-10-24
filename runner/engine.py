@@ -14,6 +14,7 @@ from datetime import date, datetime
 from typing import Any
 
 from jinja2 import TemplateError
+from pydantic import ValidationError
 
 from common import templating
 from common.clients.main_client import MainClient
@@ -86,13 +87,25 @@ class RunEngine:
         if run.status in RUN_FINISHED:
             return run_detail(run_id)
 
-        spec = TaskSpec.model_validate(version.spec)
         state = _State()
+        journal = _Journal(run)
+
+        try:
+            spec = TaskSpec.model_validate(version.spec)
+
+        except ValidationError as e:
+            # Closed like any failure: a run left queued would block every next one.
+            error = f"Версия задачи не читается: {e.error_count()} ошибок, первая — {e.errors()[0]['msg']}"
+            self._close(run_id, journal, state, "failed", error)
+            await self.main.publish(
+                "run.finished",
+                {"run_id": run_id, "task_id": run.task_id, "title": task.title, "status": "failed", "error": error, "dry_run": run.dry_run},
+            )
+            return run_detail(run_id)
 
         self.update(run_id, status="running", started_at=utcnow())
         await self.main.publish("run.started", {"run_id": run_id, "task_id": run.task_id, "title": task.title, "dry_run": run.dry_run})
 
-        journal = _Journal(run)
         walk = _Walk(self, run, spec, state, journal, title=task.title, task_settings=task.settings or {})
 
         try:
@@ -243,7 +256,7 @@ class _Walk:
             key = f"{prefix}{step.id}"
 
             if step.when and not self._evaluate(step.when, ctx, key):
-                self._finish(key, step, None, status="skipped", inputs=None)
+                self._finish(key, step, None, status="skipped", inputs=None, not_needed=True)
                 ctx[step.id] = {"output": None}
                 continue
 
@@ -382,8 +395,11 @@ class _Walk:
             raise _Fail(f"Шаг `{key}`: выражение {expr!r} не вычисляется: {e}") from e
 
 
-    def _finish(self, key: str, step: Step, output: Any, *, status: str, inputs: Any, record: bool = True) -> Any:
-        self.state.done[key] = {"output": output, "status": status}
+    def _finish(
+        self, key: str, step: Step, output: Any, *, status: str, inputs: Any, record: bool = True, not_needed: bool = False,
+    ) -> Any:
+        # not_needed: skipped by its `when`, which says nothing about whether anything was found.
+        self.state.done[key] = {"output": output, "status": status, "not_needed": not_needed}
 
         if record and step.foreach is not None:
             self._record(key, step, status=status, inputs=inputs, output=output)
@@ -422,8 +438,11 @@ class _Walk:
 
 def _found_nothing(state: _State) -> bool:
     """Every step ran and came back empty: a scheduled check that had nothing to handle.
-    A skipped step (failed with on_error=skip) is something worth seeing."""
-    return bool(state.done) and all(done["status"] == "ok" and _is_empty(done["output"]) for done in state.done.values())
+    A skipped step (failed with on_error=skip) is something worth seeing; one its `when`
+    left out (send only if something was found) is not."""
+    ran = [done for done in state.done.values() if not done["not_needed"]]
+
+    return bool(ran) and all(done["status"] == "ok" and _is_empty(done["output"]) for done in ran)
 
 
 def _is_empty(output: Any) -> bool:

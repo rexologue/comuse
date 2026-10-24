@@ -49,6 +49,7 @@ class Output(ToolOutput):
         "A draft written by the user or another chat is never replaced."
     ),
     confirm=False,
+    chat_only=True,
 )
 async def draft(inp: Input, ctx: ToolContext) -> Output:
     chat_only(ctx)

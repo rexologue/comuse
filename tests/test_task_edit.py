@@ -153,3 +153,51 @@ async def test_archiving_a_task_voids_its_drafts_approval(settings):
     await orchestrator.set_task_status("task_1", "archive")
 
     assert orchestrator._get(draft["approval_id"])["status"] == "cancelled"
+
+
+async def test_every_change_of_a_step_shows_in_the_diff(settings):
+    task_id = _task()
+    compiler = _compiler(settings)
+
+    result = await compiler.edit(
+        task_id, spec=None, summary=None,
+        ops=[{"op": "add", "path": "/steps/0/on_error", "value": "retry"}, {"op": "add", "path": "/steps/0/retries", "value": 2}],
+    )
+    assert any("при ошибке: fail → retry" in line and "повторов: 0 → 2" in line for line in result["diff"])
+
+    result = await compiler.edit(task_id, spec=None, summary=None, ops=[{"op": "add", "path": "/variables/boss", "value": "a@company.local"}])
+    assert any("переменные" in line and "boss" in line for line in result["diff"])
+
+
+async def test_an_edit_made_meanwhile_is_not_superseded(settings):
+    task_id = _task()
+    base = store.base_version(task_id)
+
+    # Someone saved an edit while this one was being prepared on `base`.
+    await _compiler(settings).edit(task_id, spec=None, summary=None, ops=[{"op": "replace", "path": "/title", "value": "Другая"}])
+
+    with pytest.raises(ApiError) as e:
+        store.add_version(task_id, TaskSpec.model_validate(SPEC), parent=base, patch=None, cards=[], summary="", created_by="llm", session_id=None)
+    assert e.value.status_code == 409
+
+
+def test_a_broken_card_or_schema_of_an_own_command_breaks_nothing():
+    from compiler.cards import build_cards
+    from compiler.prompts import format_catalog
+    from compiler.validate import validate_spec
+
+    manifest = {
+        **CATALOG["fs.list"], "name": "ext.odd", "title": "Странная", "card": "Сумма {amount:.2f} {0} {",
+        "input_schema": {"type": "object", "properties": {"amount": True}}, "version": 1,
+    }
+    catalog = {**CATALOG, "ext.odd": manifest}
+    spec = validate_spec({"title": "x", "steps": [{"id": "a", "tool": "ext.odd", "tool_version": 1, "args": {"amount": 5}}]}, catalog)
+
+    assert build_cards(spec, catalog)[0]["text"] == "Странная"
+    assert "ext.odd" in format_catalog(catalog)
+
+
+async def test_chat_only_tools_are_not_offered_to_tasks(settings):
+    catalog = await _compiler(settings).catalog()
+
+    assert "tools.draft" not in catalog and "fs.list" in catalog

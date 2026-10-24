@@ -316,3 +316,25 @@ async def test_a_run_cancelled_in_the_queue_is_closed_like_any_other(settings):
     # The queued run's coroutine, when it gets its turn, finds it closed and does nothing.
     await engine.execute("run_1")
     assert main.calls == [] and len(run_log("run_1")) == 1
+
+
+async def test_a_step_its_when_left_out_does_not_hide_an_empty_check(settings):
+    spec = {
+        "title": "Проверка почты",
+        "steps": [
+            {"id": "found", "tool": "mail.search", "args": {"account": "work"}},
+            {"id": "reply", "tool": "mail.send", "when": "{{ found.output.messages }}", "args": {"account": "work", "to": ["a@company.local"], "subject": "s", "body": "b"}},
+        ],
+    }
+    main = FakeMain({"mail.search": lambda args, ctx: {"output": {"messages": []}}})
+
+    run = await RunEngine(main).execute(_make_run(spec))
+
+    assert run["status"] == "empty"
+
+
+async def test_a_version_that_does_not_read_fails_instead_of_staying_queued(settings):
+    run = await RunEngine(FakeMain({})).execute(_make_run({"title": "Старая", "steps": [{"id": "x"}]}))
+
+    assert run["status"] == "failed" and "не читается" in run["error"]
+    assert [entry["kind"] for entry in run_log("run_1")] == ["end"]

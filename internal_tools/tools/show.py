@@ -30,6 +30,7 @@ class Output(ToolOutput):
     card="Показать код «{name}»",
     description="Show an own command's version: tool.json, its files with code, the exact packages. Use it before changing a command.",
     confirm=False,
+    chat_only=True,
 )
 async def show(inp: Input, ctx: ToolContext) -> Output:
     chat_only(ctx)

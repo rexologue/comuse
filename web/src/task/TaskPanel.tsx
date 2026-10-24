@@ -22,8 +22,10 @@ import { TaskSettingsForm } from "@/task/TaskSettingsForm";
 export function TaskPanel({ taskId }: { taskId: string }) {
   const task = useTask(taskId);
 
-  // A task not approved yet has no active version: its newest draft stands in.
-  const draftId = task.data && !task.data.current_version ? task.data.versions[0]?.id : null;
+  // A task not approved yet has no active version: its newest draft stands in (or, with
+  // every draft rejected, its newest version, shown without the draft's buttons).
+  const versions = task.data?.versions ?? [];
+  const draftId = task.data && !task.data.current_version ? (versions.find((v) => v.status === "draft") ?? versions[0])?.id : null;
   const draft = useVersion(taskId, draftId);
 
   if (task.isError) return <p className="p-4 text-sm text-destructive">{task.error.message}</p>;
@@ -155,7 +157,7 @@ function Scenario({ task, version }: { task: TaskDetail; version: Version | null
       {task.tool_updates.map((update) => (
         <ToolUpdateNote key={update.tool} taskId={task.id} update={update} />
       ))}
-      {!task.current_version && version && (
+      {!task.current_version && version?.status === "draft" && (
         <div className="pt-2">
           <DraftActions taskId={task.id} versionId={version.id} />
         </div>

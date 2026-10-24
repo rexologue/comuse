@@ -43,6 +43,15 @@ def _read(path, inp: ReadInput) -> ReadOutput:
 
     workbook = load_workbook(str(path), read_only=True, data_only=True)
 
+    # read_only keeps the file open until close(): on a Windows share an open file is locked.
+    try:
+        return _read_sheet(workbook, inp)
+
+    finally:
+        workbook.close()
+
+
+def _read_sheet(workbook, inp: ReadInput) -> ReadOutput:
     try:
         sheet = workbook[inp.sheet] if inp.sheet else workbook.worksheets[0]
 
@@ -65,8 +74,6 @@ def _read(path, inp: ReadInput) -> ReadOutput:
         total += 1
         if len(rows) < inp.max_rows:
             rows.append({columns[i]: _jsonable(v) for i, v in enumerate(values) if i < len(columns)})
-
-    workbook.close()
 
     return ReadOutput(columns=columns, rows=rows, total_rows=total)
 

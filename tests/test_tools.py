@@ -210,3 +210,81 @@ async def test_fs_list_stays_in_its_folder(settings, tmp_path):
     # A link out of the workspace is left out, the rest is listed.
     listed = await list_files(Input(), ctx)
     assert [f.path for f in listed.files] == ["a.txt"]
+
+
+def test_a_template_with_two_tables_fills(tmp_path):
+    """Both loops say `row`: each table's columns are its own."""
+    from docx import Document
+
+    from internal_tools.docs.fill_template import _render
+    from internal_tools.docs.make_template import TemplateTable, _make
+
+    example = _example(tmp_path / "example.docx")
+    document = Document(str(example))
+    second = document.add_table(rows=2, cols=2)
+    for row, values in zip(second.rows, [("Месяц", "Итого"), ("Май", "9")]):
+        for cell, value in zip(row.cells, values):
+            cell.text = value
+    document.save(str(example))
+
+    template = tmp_path / "t.docx"
+    _make(example, template, [], [
+        TemplateTable(table=1, name="sales", header_rows=1, columns=["client", "amount"]),
+        TemplateTable(table=2, name="months", header_rows=1, columns=["month", "total"]),
+    ])
+
+    out = tmp_path / "out.docx"
+    _render(template, {"sales": [{"client": "Альфа", "amount": "5"}], "months": [{"month": "Июнь", "total": "7"}]}, {}, out)
+
+    assert [[c.text for c in r.cells] for r in Document(str(out)).tables[1].rows] == [["Месяц", "Итого"], ["Июнь", "7"]]
+
+
+def test_fields_inside_fields_and_formatting(tmp_path):
+    from docx import Document
+
+    from internal_tools.docs.make_template import TemplateField, _make
+
+    example = tmp_path / "example.docx"
+    document = Document()
+    paragraph = document.add_paragraph("Дата: 01.01.2025, год 2025 — ")
+    paragraph.add_run("важно").bold = True
+    document.save(str(example))
+
+    template = tmp_path / "t.docx"
+    year = TemplateField(name="year", description="", example="2025")
+    day = TemplateField(name="day", description="", example="01.01.2025")
+    _make(example, template, [year, day], [])
+
+    paragraph = Document(str(template)).paragraphs[0]
+    assert paragraph.text == "Дата: {{ day }}, год {{ year }} — важно"
+    assert paragraph.runs[-1].bold and paragraph.runs[-1].text == "важно"
+
+    # «1» is left only inside the other fields: said so, not dropped in silence.
+    with pytest.raises(ToolError, match="«one».*только внутри другого поля"):
+        _make(example, tmp_path / "t2.docx", [year, day, TemplateField(name="one", description="", example="1")], [])
+
+
+async def test_aggregate_checks_the_columns_of_every_file(settings):
+    from openpyxl import Workbook
+
+    from common import tunables
+    from common.tools import ToolContext
+    from executor.paths import WorkspacePaths
+    from internal_tools.xlsx.aggregate import Input, aggregate
+
+    workspace = tunables.get("workspace_dir")
+    for name, header in (("q1.xlsx", "Сумма"), ("q2.xlsx", "Сумма, руб")):
+        book = Workbook()
+        book.active.append([header])
+        book.active.append([100])
+        book.save(workspace / name)
+
+    ctx = ToolContext(mode="chat", settings=settings, paths=WorkspacePaths(workspace, settings.storage.data_dir), llm=None)
+
+    with pytest.raises(ToolError, match="q2.xlsx.*Сумма"):
+        await aggregate(Input(inputs=["q1.xlsx", "q2.xlsx"], sum_columns=["Сумма"]), ctx)
+
+    with pytest.raises(ToolError, match="нет листа «Май»"):
+        await aggregate(Input(inputs=["q1.xlsx"], sheet="Май", sum_columns=["Сумма"]), ctx)
+
+    assert (await aggregate(Input(inputs=["q1.xlsx"], sum_columns=["Сумма"]), ctx)).totals == {"Сумма": 100.0}

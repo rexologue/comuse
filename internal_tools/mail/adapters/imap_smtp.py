@@ -244,7 +244,8 @@ def build_message(
     message["To"] = ", ".join(to)
     if cc:
         message["Cc"] = ", ".join(cc)
-    message["Subject"] = subject
+    # A line break from a model's text is not a header error: one line, as mail clients do.
+    message["Subject"] = " ".join(subject.split())
     message["Date"] = formatdate(localtime=True)
     message["Message-ID"] = make_msgid()
     message.set_content(body)
@@ -257,9 +258,23 @@ def build_message(
     return message
 
 
-def send(config: dict[str, Any], secret: str, message: EmailMessage) -> None:
+def send(config: dict[str, Any], secret: str, message: EmailMessage) -> dict[str, str]:
+    """The recipients the server refused (address → its answer); the others got it."""
     with _smtp(config, secret) as smtp:
-        smtp.send_message(message)
+        try:
+            refused = smtp.send_message(message)
+
+        except smtplib.SMTPRecipientsRefused as e:
+            raise ToolError(f"Сервер не принял ни одного адресата: {_refusals(e.recipients)}") from e
+
+        except (smtplib.SMTPException, OSError) as e:
+            raise ToolError(f"Не удалось отправить письмо: {e}") from e
+
+    return _refusals(refused)
+
+
+def _refusals(recipients: dict[str, tuple[int, bytes]]) -> dict[str, str]:
+    return {address: f"{code} {text.decode(errors='replace')}" for address, (code, text) in recipients.items()}
 
 
 def append_draft(config: dict[str, Any], secret: str, message: EmailMessage) -> str:
@@ -315,6 +330,8 @@ class _imap:
             self.conn.login(self.config.get("username") or self.config["email"], self.secret)
 
         except (imaplib.IMAP4.error, OSError) as e:
+            # __exit__ does not run when __enter__ fails: the socket is closed here.
+            _close(getattr(self, "conn", None))
             raise ToolError(f"Не удалось войти в IMAP {host}:{port} ({security}): {e}") from e
 
         return self.conn
@@ -354,6 +371,7 @@ class _smtp:
                 self.conn.login(self.config.get("username") or self.config["email"], self.secret)
 
         except (smtplib.SMTPException, OSError) as e:
+            _close(getattr(self, "conn", None))
             raise ToolError(f"Не удалось войти в SMTP {host}:{port} ({security}): {e}") from e
 
         return self.conn
@@ -365,6 +383,18 @@ class _smtp:
 
         except (smtplib.SMTPException, OSError):
             pass
+
+
+def _close(conn) -> None:
+    """A connection whose login failed: only its socket, there is nothing to say to the server."""
+    try:
+        if isinstance(conn, smtplib.SMTP):
+            conn.close()
+        elif conn is not None:
+            conn.shutdown()
+
+    except (OSError, imaplib.IMAP4.error):
+        pass
 
 
 def _select(imap: imaplib.IMAP4, folder: str, *, readonly: bool) -> None:
@@ -381,7 +411,8 @@ def _special_folder(imap: imaplib.IMAP4, flag: str, fallback: str, what: str) ->
     status, rows = imap.list()
     if status == "OK":
         for row in rows or []:
-            if row is None:
+            # A name sent as a literal comes as a tuple: not one of the flagged folders.
+            if not isinstance(row, bytes):
                 continue
 
             match = _LIST_RE.match(row.decode(errors="replace"))

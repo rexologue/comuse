@@ -19,6 +19,15 @@ from executor.registry import ToolRegistry
 from executor.runtime import ExecutorRuntime
 
 
+
+def _sweep_tool_versions(storage, registry: ToolRegistry) -> int:
+    removed = external_tools.sweep_unused(storage)
+    if removed:
+        registry.load()
+
+    return removed
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
 
@@ -28,7 +37,7 @@ async def lifespan(app: FastAPI):
     registry.load()
 
     secrets = SecretStore.accounts(settings)
-    # Only llm.* tools and template markup need the LLM; without one the rest still work.
+    # Only llm.* tools need the LLM; without one the rest still work.
     llm = LLM(settings)
 
     tunables.get("workspace_dir").mkdir(parents=True, exist_ok=True)
@@ -41,7 +50,7 @@ async def lifespan(app: FastAPI):
 
     sweepers = [
         asyncio.create_task(sweep_forever("output folders", lambda: sweep_outputs(settings.storage))),
-        asyncio.create_task(sweep_forever("external tool versions", lambda: external_tools.sweep_unused(settings.storage))),
+        asyncio.create_task(sweep_forever("external tool versions", lambda: _sweep_tool_versions(settings.storage, registry))),
     ]
 
     try:

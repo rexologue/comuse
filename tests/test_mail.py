@@ -211,7 +211,7 @@ async def test_send_follows_the_task_mail_settings(monkeypatch, mode, task_setti
 
     monkeypatch.setattr(imap_smtp, "append_draft", lambda *a: "Drafts")
     monkeypatch.setattr(imap_smtp, "append_sent", lambda *a: "Sent")
-    monkeypatch.setattr(imap_smtp, "send", lambda *a: None)
+    monkeypatch.setattr(imap_smtp, "send", lambda *a: {})
 
     out = await send(Input(account="work", to=["boss@company.local"], subject="s", body="b"), _send_context(mode, task_settings, dry_run=dry_run))
 
@@ -233,7 +233,7 @@ async def test_a_server_that_keeps_sent_mail_gets_no_second_copy(monkeypatch):
     from internal_tools.mail.adapters.presets import PRESETS
     from internal_tools.mail.send import Input, send
 
-    monkeypatch.setattr(imap_smtp, "send", lambda *a: None)
+    monkeypatch.setattr(imap_smtp, "send", lambda *a: {})
     monkeypatch.setattr(imap_smtp, "append_sent", lambda *a: pytest.fail("Gmail keeps the copy itself"))
 
     out = await send(Input(account="work", to=["boss@company.local"], subject="s", body="b"), _sent_context(PRESETS["gmail"]))
@@ -247,8 +247,11 @@ async def test_a_failed_copy_does_not_fail_a_sent_letter(monkeypatch):
     def no_sent_folder(*a):
         raise ToolError("Нет папки отправленных и не удалось её создать")
 
+    def connection_lost(*a):
+        raise TimeoutError("timed out")
+
     sent = []
-    monkeypatch.setattr(imap_smtp, "send", lambda *a: sent.append(a))
+    monkeypatch.setattr(imap_smtp, "send", lambda *a: sent.append(a) or {})
     monkeypatch.setattr(imap_smtp, "append_sent", no_sent_folder)
 
     out = await send(Input(account="work", to=["boss@company.local"], subject="s", body="b"), _sent_context({}))
@@ -256,6 +259,11 @@ async def test_a_failed_copy_does_not_fail_a_sent_letter(monkeypatch):
     # Sent once; an error here would make the agent try again and send it twice.
     assert len(sent) == 1
     assert out.mode == "sent" and out.folder is None and "отправленных" in out.copy_error
+
+    # Not only our own errors: a lost connection during APPEND is not a failed send either.
+    monkeypatch.setattr(imap_smtp, "append_sent", connection_lost)
+    out = await send(Input(account="work", to=["boss@company.local"], subject="s", body="b"), _sent_context({}))
+    assert len(sent) == 2 and out.mode == "sent" and "timed out" in out.copy_error
 
 
 class FakeFolders:
@@ -344,3 +352,22 @@ def test_an_attachment_is_saved_under_a_safe_name(sent, saved):
     from internal_tools.mail.adapters.imap_smtp import _attachment_name
 
     assert _attachment_name(sent, 1) == saved
+
+
+
+async def test_recipients_the_server_refused_are_named(monkeypatch):
+    from internal_tools.mail.send import Input, send
+
+    monkeypatch.setattr(imap_smtp, "send", lambda *a: {"typo@company.local": "550 no such user"})
+    monkeypatch.setattr(imap_smtp, "append_sent", lambda *a: "Sent")
+
+    out = await send(Input(account="work", to=["boss@company.local"], cc=["typo@company.local"], subject="s", body="b"), _sent_context({}))
+
+    assert out.mode == "sent" and out.refused == {"typo@company.local": "550 no such user"}
+
+
+def test_a_subject_with_line_breaks_is_one_line():
+    message = imap_smtp.build_message({"email": "a@company.local"}, to=["b@company.local"], cc=[], subject="Отчёт\r\nза май", body="", attachments=[])
+
+    assert message["Subject"] == "Отчёт за май"
+

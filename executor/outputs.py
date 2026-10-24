@@ -27,6 +27,14 @@ def sweep(storage: StorageSettings) -> int:
 
 
 def _last_change(folder: Path) -> datetime:
-    stamps = [folder.stat().st_mtime, *(path.stat().st_mtime for path in folder.rglob("*"))]
+    stamps = [folder.stat().st_mtime]
+
+    # lstat: a link that leads nowhere, or a file gone mid-scan, must not stop the sweep.
+    for path in folder.rglob("*"):
+        try:
+            stamps.append(path.lstat().st_mtime)
+
+        except OSError:
+            continue
 
     return datetime.fromtimestamp(max(stamps), tz=timezone.utc)

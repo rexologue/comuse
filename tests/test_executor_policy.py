@@ -59,7 +59,7 @@ def _runtime(settings):
     ],
 )
 async def test_path_arguments_are_checked_before_the_tool_runs(settings, tool, args):
-    response = await _runtime(settings)._execute(ExecuteRequest(tool=tool, args=args, context=ExecContext(mode="run")))
+    response = await _runtime(settings).execute(ExecuteRequest(tool=tool, args=args, context=ExecContext(mode="run")))
 
     assert response.status == "error" and "Нет доступа" in response.error
 
@@ -67,7 +67,7 @@ async def test_path_arguments_are_checked_before_the_tool_runs(settings, tool, a
 async def test_unknown_account_is_refused_before_the_tool_runs(settings):
     request = ExecuteRequest(tool="mail.search", args={"account": "nope"}, context=ExecContext(mode="run"))
 
-    response = await _runtime(settings)._execute(request)
+    response = await _runtime(settings).execute(request)
 
     assert response.status == "error" and "nope" in response.error
 
@@ -92,7 +92,7 @@ async def test_what_a_tool_said_before_failing_reaches_the_caller(settings, monk
     runtime = _runtime(settings)
     monkeypatch.setattr(runtime.registry, "get", lambda name, version=None: replace(SPECS["data.map_rows"], fn=fails))
 
-    response = await runtime._execute(ExecuteRequest(tool="data.map_rows", args={"rows": [], "fields": {}}, context=ExecContext(mode="run")))
+    response = await runtime.execute(ExecuteRequest(tool="data.map_rows", args={"rows": [], "fields": {}}, context=ExecContext(mode="run")))
 
     assert response.status == "error"
     assert response.logs == ["прочитал 3 файла"] and response.notifications == ["начинаю"]

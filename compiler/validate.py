@@ -145,6 +145,11 @@ def _check_tool_step(
         if isinstance(value, str) and _ABSOLUTE_PATH.match(value):
             errors.append(f"{where}.args.{key}: абсолютный путь {value!r}; используй путь относительно рабочей папки")
 
+        if not isinstance(properties[key], dict):
+            if properties[key] is False:
+                errors.append(f"{where}.args.{key}: аргумент не принимает никаких значений")
+            continue
+
         try:
             jsonschema.validate(value, {**properties[key], "$defs": schema.get("$defs", {})})
 
@@ -198,7 +203,11 @@ def _strings(value: Any) -> list[str]:
     return []
 
 
-def _resolve(node: dict[str, Any], defs: dict[str, Any]) -> dict[str, Any]:
+def _resolve(node: dict[str, Any] | bool, defs: dict[str, Any]) -> dict[str, Any]:
+    # `true` (anything) in a schema a person or the chat wrote: nothing more to check.
+    if not isinstance(node, dict):
+        return {}
+
     ref = node.get("$ref", "")
     if ref.startswith("#/$defs/"):
         return defs.get(ref.split("/")[-1], {})

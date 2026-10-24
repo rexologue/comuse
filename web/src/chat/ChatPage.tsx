@@ -9,7 +9,7 @@ import { useNavigate, useParams } from "react-router";
 
 import { api, ApiError } from "@/api/client";
 import { useEvents } from "@/api/events";
-import { keys, useChat, useChats, useTools } from "@/api/queries";
+import { keys, useChat, useChats, useTasks, useTools } from "@/api/queries";
 import type { ChatDetail, ChatReply, TraceItem } from "@/api/types";
 import { ConfirmBar } from "@/chat/ConfirmBar";
 import { Composer } from "@/chat/Composer";
@@ -21,12 +21,21 @@ import { Button } from "@/components/ui/button";
 
 type Live = { tool: string; status: string };
 
-export function ChatPage() {
+// One page per chat: a turn in flight, its error and its «Повторить» belong to the chat
+// it was sent from, not to whichever chat is open when it ends.
+export function ChatRoute() {
+  const { sessionId } = useParams();
+
+  return <ChatPage key={sessionId} />;
+}
+
+function ChatPage() {
   const { sessionId } = useParams();
   const isNew = sessionId === "new";
 
   const chat = useChat(isNew ? undefined : sessionId);
   const chats = useChats();
+  const tasks = useTasks();
   const tools = useTools();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -36,6 +45,15 @@ export function ChatPage() {
   // The message that failed to go, to send again as it was.
   const [error, setError] = useState<{ text: string; message: string } | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
+  // False once the user went to another page: a late answer must not take them back.
+  const shown = useRef(true);
+
+  useEffect(() => {
+    shown.current = true;
+    return () => {
+      shown.current = false;
+    };
+  }, []);
 
   // A turn this page did not start (another tab, before a reload) still runs: wait for it.
   const elsewhere = sending === null && Boolean(chat.data?.busy);
@@ -57,12 +75,6 @@ export function ChatPage() {
     bottom.current?.scrollIntoView({ block: "end" });
   }, [chat.data, sending, live.length]);
 
-  // Another chat opened: forget this one's turn state.
-  useEffect(() => {
-    setError(null);
-    setLive([]);
-  }, [sessionId]);
-
   const send = async (text: string) => {
     setSending(text);
     setLive([]);
@@ -77,8 +89,10 @@ export function ChatPage() {
       await queryClient.invalidateQueries({ queryKey: keys.chat(reply.session_id) });
       queryClient.invalidateQueries({ queryKey: keys.chats });
       queryClient.invalidateQueries({ queryKey: ["approvals"] });
+      // The turn may have written or rewritten a command's draft: its card shows the new code.
+      queryClient.invalidateQueries({ queryKey: keys.externalTools });
 
-      if (isNew) navigate(`/chat/${reply.session_id}`, { replace: true });
+      if (isNew && shown.current) navigate(`/chat/${reply.session_id}`, { replace: true });
     } catch (e) {
       setError({ text, message: failure(e) });
     } finally {
@@ -88,9 +102,12 @@ export function ChatPage() {
   };
 
   const summary = chats.data?.find((item) => item.id === sessionId);
+  // The chats list holds the newest ones only; the task list knows every task's chat.
+  const taskChat = Boolean(summary?.task_id) || Boolean(tasks.data?.some((task) => task.source_session_id === sessionId));
   const waiting = !working && chat.data ? pendingQuestions(chat.data) : [];
 
-  if (chat.isError) {
+  // One failed poll keeps the history on screen; only a chat that never loaded is an error.
+  if (chat.isError && !chat.data) {
     return <p className="p-6 text-sm text-muted-foreground">{chat.error instanceof ApiError && chat.error.status === 404 ? "Такого чата нет: возможно, он удалён." : chat.error.message}</p>;
   }
 
@@ -98,8 +115,8 @@ export function ChatPage() {
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex h-11 shrink-0 items-center gap-2 border-b px-4">
         <h1 className="truncate text-sm font-medium">{isNew ? "Новый чат" : chat.data?.title || "Чат"}</h1>
-        {summary?.task_id && <span className="text-xs text-muted-foreground">· чат задачи</span>}
-        {summary && summary.task_id === null && <DeleteChat sessionId={summary.id} />}
+        {taskChat && <span className="text-xs text-muted-foreground">· чат задачи</span>}
+        {summary && !taskChat && <DeleteChat sessionId={summary.id} />}
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -169,6 +186,7 @@ export function pendingQuestions(chat: ChatDetail): TraceItem[] {
 
 function DeleteChat({ sessionId }: { sessionId: string }) {
   const [armed, setArmed] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 
@@ -179,15 +197,28 @@ function DeleteChat({ sessionId }: { sessionId: string }) {
   }, [armed]);
 
   const remove = async () => {
-    await api(`/agent/sessions/${sessionId}`, { method: "DELETE" });
-    queryClient.invalidateQueries({ queryKey: keys.chats });
-    navigate("/", { replace: true });
+    setArmed(false);
+    try {
+      await api(`/agent/sessions/${sessionId}`, { method: "DELETE" });
+      queryClient.invalidateQueries({ queryKey: keys.chats });
+      navigate("/", { replace: true });
+    } catch (e) {
+      setError(failure(e));
+    }
+  };
+
+  const arm = () => {
+    setError(null);
+    setArmed(true);
   };
 
   return (
-    <Button variant={armed ? "destructive" : "ghost"} size="sm" className="ml-auto" onClick={armed ? remove : () => setArmed(true)}>
-      <Trash2 /> {armed ? "Точно удалить?" : "Удалить чат"}
-    </Button>
+    <>
+      {error && <span className="ml-auto truncate text-xs text-destructive">{error}</span>}
+      <Button variant={armed ? "destructive" : "ghost"} size="sm" className={error ? "" : "ml-auto"} onClick={armed ? remove : arm}>
+        <Trash2 /> {armed ? "Точно удалить?" : "Удалить чат"}
+      </Button>
+    </>
   );
 }
 

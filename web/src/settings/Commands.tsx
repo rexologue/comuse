@@ -48,8 +48,11 @@ export function Commands() {
 
 function OwnCommand({ tool }: { tool: ExternalTool }) {
   const [open, setOpen] = useState(tool.draft_version !== null);
-  const [shown, setShown] = useState<number>(tool.draft_version ?? tool.current_version ?? tool.versions.at(-1)?.version ?? 1);
+  const fallback = tool.draft_version ?? tool.current_version ?? tool.versions.at(-1)?.version ?? 1;
+  const [picked, setPicked] = useState<number>(fallback);
   const [editing, setEditing] = useState(false);
+  // A draft thrown away (or swept) is no longer there to show.
+  const shown = tool.versions.some((version) => version.version === picked) ? picked : fallback;
 
   return (
     <div className="flex flex-col gap-3 rounded-lg border p-3">
@@ -67,7 +70,7 @@ function OwnCommand({ tool }: { tool: ExternalTool }) {
         <>
           <div className="flex flex-wrap gap-1">
             {tool.versions.map((version) => (
-              <Button key={version.version} size="sm" variant={version.version === shown ? "secondary" : "ghost"} onClick={() => setShown(version.version)}>
+              <Button key={version.version} size="sm" variant={version.version === shown ? "secondary" : "ghost"} onClick={() => setPicked(version.version)}>
                 v{version.version}
                 <span className="text-xs text-muted-foreground">
                   {version.status === "draft" ? "черновик" : version.version === tool.current_version ? "текущая" : "одобрена"} ·{" "}
@@ -77,7 +80,14 @@ function OwnCommand({ tool }: { tool: ExternalTool }) {
             ))}
           </div>
           {editing ? (
-            <CommandForm tool={tool} base={shown} onDone={() => setEditing(false)} />
+            <CommandForm
+              tool={tool}
+              base={shown}
+              onDone={(saved) => {
+                setEditing(false);
+                if (saved) setPicked(saved);
+              }}
+            />
           ) : (
             <VersionDetail tool={tool} version={shown} onEdit={() => setEditing(true)} />
           )}
@@ -101,6 +111,8 @@ function VersionDetail({ tool, version, onEdit }: { tool: ExternalTool; version:
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: keys.externalTools });
     await queryClient.invalidateQueries({ queryKey: keys.tools });
+    // A task panel offers the move to a version approved here.
+    await queryClient.invalidateQueries({ queryKey: ["task"] });
   };
 
   return (
@@ -190,21 +202,33 @@ def run(args, ctx):
 
 // A new command, or a draft of the next version on top of `base` (its files and
 // manifest as the starting point).
-function CommandForm({ tool, base, onDone }: { tool?: ExternalTool; base?: number; onDone: () => void }) {
+function CommandForm({ tool, base, onDone }: { tool?: ExternalTool; base?: number; onDone: (saved?: number) => void }) {
   const queryClient = useQueryClient();
+  const tools = useExternalTools();
   const source = useExternalToolVersion(tool?.name ?? "", base ?? 0, tool !== undefined && base !== undefined);
-  const { busy, error, run } = useAction();
+  const { busy, error, setError, run } = useAction();
 
   if (tool && !source.data) return <p className="text-sm text-muted-foreground">Загрузка…</p>;
 
-  return <CommandFields key={source.data?.hash ?? "new"} tool={tool} source={source.data} busy={busy !== null} error={error} onDone={onDone} save={(name, body) =>
+  // A command has one draft, saved in place: saving here replaces whatever draft it has.
+  const replaces = (name: string) => (tool ?? tools.data?.find((known) => known.name === name))?.draft_version ?? null;
+
+  return <CommandFields key={source.data?.hash ?? "new"} tool={tool} source={source.data} busy={busy !== null} error={error} onDone={() => onDone()} save={(name, body) => {
+    if (!tool && tools.data?.some((known) => known.name === name)) {
+      setError(`Команда ext.${name} уже есть: откройте её и сделайте новую версию`);
+      return;
+    }
+
+    const draft = replaces(name);
+    if (draft !== null && draft !== base && !window.confirm(`У команды уже есть черновик v${draft}. Заменить его этим?`)) return;
+
     run("save", async () => {
-      await api(`/external-tools/${name}/draft`, { method: "PUT", json: body });
+      const saved = await api<{ version: number }>(`/external-tools/${name}/draft`, { method: "PUT", json: body });
       await queryClient.invalidateQueries({ queryKey: keys.externalTools });
       await queryClient.invalidateQueries({ queryKey: ["external-tools", name] });
-      onDone();
-    })
-  } />;
+      onDone(saved.version);
+    });
+  }} />;
 }
 
 function CommandFields({
