@@ -54,6 +54,7 @@ class ExecutorRuntime:
         started = time.monotonic()
         response = await self._execute(req)
         response.duration_ms = int((time.monotonic() - started) * 1000)
+        response.version = getattr(self.registry.get(req.tool, req.version), "version", None)
 
         return response
 

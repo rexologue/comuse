@@ -143,8 +143,10 @@ async def test_a_step_runs_the_version_it_pins(settings):
         request = ExecuteRequest(tool="ext.count_lines", version=version, args={"file": "a.txt"}, context=ExecContext(mode="run", run_id="run_t"))
         return await runtime.execute(request)
 
-    assert (await call(None)).output["out"] == "вторая"
-    assert (await call(1)).output["out"] == "первая"
+    current, older = await call(None), await call(1)
+
+    assert (current.output["out"], current.version) == ("вторая", 2)
+    assert (older.output["out"], older.version) == ("первая", 1)
     assert "нет одобренной версии v7" in (await call(7)).error
 
 
@@ -182,3 +184,14 @@ def test_the_task_view_tells_of_a_newer_version(settings):
         db.commit()
 
     assert views.task_detail(task_id)["tool_updates"] == [{"tool": "ext.count", "version": 1, "current": 2}]
+
+
+def test_tasks_can_be_listed_by_the_tool_they_use(settings):
+    from main import views
+
+    on_tool = _task(_spec(1))
+    _task({"title": "Другое", "steps": [{"id": "files", "tool": "fs.list", "args": {"folder": "."}}]})
+
+    found = views.task_list(tool="ext.count")
+
+    assert [(task["id"], task["tool_version"]) for task in found] == [(on_tool, 1)]

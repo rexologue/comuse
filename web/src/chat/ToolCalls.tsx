@@ -25,13 +25,19 @@ export function ToolCalls({ items }: { items: TraceItem[] }) {
       {items.map((item) => {
         const status = STATUS[item.status] ?? STATUS.ok;
         const Icon = status.icon;
+        // An own command's version that ran (the executor reports it): titles change
+        // between versions, the number says which one it was.
+        const version = (item.result as { version?: number } | null)?.version;
 
         return (
           <details key={item.id} className="group rounded-md border bg-muted/40 text-xs">
             <summary className="flex cursor-pointer list-none items-center gap-2 px-2 py-1">
               <Icon className={cn("size-3.5 shrink-0", status.className)} aria-label={status.label} />
               <span className="font-medium">{toolTitle(item.tool, tools.data)}</span>
-              <span className="truncate text-muted-foreground">{item.tool.replace(/^meta:/, "")}</span>
+              <span className="truncate text-muted-foreground">
+                {item.tool.replace(/^meta:/, "")}
+                {version ? ` v${version}` : ""}
+              </span>
             </summary>
             <div className="space-y-1 border-t px-2 py-1.5">
               <Json label="Аргументы" value={item.args} />

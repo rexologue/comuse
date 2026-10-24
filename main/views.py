@@ -11,12 +11,28 @@ from common.storage.models import ExternalTool, Run, Task, TaskVersion
 from common.storage.queries import run_dict
 
 
-def task_list() -> list[dict[str, Any]]:
+def task_list(*, tool: str | None = None) -> list[dict[str, Any]]:
+    """Tasks not archived; with `tool` (ext.*), only those whose active version, or newest
+    draft before the first approval, runs it — with `tool_version`."""
     with session() as db:
         tasks = db.query(Task).filter(Task.status != "archived").order_by(Task.created_at.desc()).all()
-        versions = {v.id: v for v in db.query(TaskVersion).filter(TaskVersion.task_id.in_([t.id for t in tasks]))}
+        rows = db.query(TaskVersion).filter(TaskVersion.task_id.in_([t.id for t in tasks])).order_by(TaskVersion.version_no).all()
 
-    return [_task_summary(t, versions.get(t.current_version_id)) for t in tasks]
+    versions = {v.id: v for v in rows}
+    if tool is None:
+        return [_task_summary(t, versions.get(t.current_version_id)) for t in tasks]
+
+    newest = {v.task_id: v for v in rows}
+    found = []
+
+    for task in tasks:
+        version = versions.get(task.current_version_id) or newest.get(task.id)
+        pinned_version = pinned(version.spec).get(tool) if version else None
+
+        if pinned_version is not None:
+            found.append({**_task_summary(task, versions.get(task.current_version_id)), "tool_version": pinned_version})
+
+    return found
 
 
 def task_detail(task_id: str) -> dict[str, Any] | None:

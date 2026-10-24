@@ -34,6 +34,8 @@ class ExecuteResponse(BaseModel):
     error: str | None = None
     artifacts: list[str] = Field(default_factory=list)
     duration_ms: int = 0
+    # The version of an external tool (ext.*) that ran: the chat trace and run log keep it.
+    version: int | None = None
     # For the caller's log (the executor keeps none): a crash's traceback, what the
     # tool wrote with ctx.log(), and messages for the user it sent with ctx.notify().
     traceback: str | None = None

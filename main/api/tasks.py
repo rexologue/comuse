@@ -26,9 +26,9 @@ class RunBody(BaseModel):
 # TASKS
 # -----------------------------
 
-@router.get("/tasks", summary="Tasks with their active scenario cards")
-async def list_tasks():
-    return {"tasks": views.task_list()}
+@router.get("/tasks", summary="Tasks with their active scenario cards; `tool` — only those using it (with its version)")
+async def list_tasks(tool: str | None = None):
+    return {"tasks": views.task_list(tool=tool)}
 
 
 @router.get("/tasks/{task_id}", summary="Task, current version and history")
