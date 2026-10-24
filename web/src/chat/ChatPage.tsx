@@ -14,6 +14,7 @@ import type { ChatDetail, ChatReply, TraceItem } from "@/api/types";
 import { ConfirmBar } from "@/chat/ConfirmBar";
 import { Composer } from "@/chat/Composer";
 import { DraftCards } from "@/chat/DraftCard";
+import { ToolDraftCards } from "@/chat/ToolDraftCard";
 import { MessageList, UserBubble } from "@/chat/MessageList";
 import { toolTitle } from "@/chat/tools";
 import { Button } from "@/components/ui/button";
@@ -106,6 +107,7 @@ export function ChatPage() {
           {isNew && sending === null && <p className="text-center text-sm text-muted-foreground">Опишите, что нужно сделать: с файлами, документами, таблицами или почтой.</p>}
           {chat.data && <MessageList messages={chat.data.messages} trace={chat.data.trace} />}
           {!isNew && sessionId && !working && <DraftCards sessionId={sessionId} />}
+          {!isNew && sessionId && !working && <ToolDraftCards sessionId={sessionId} />}
 
           {sending !== null && (
             <>

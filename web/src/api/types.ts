@@ -175,6 +175,36 @@ export type Tunable = {
   description: string;
 };
 
+// GET /external-tools (docs/EXTERNAL_TOOLS.md).
+export type ExternalToolVersionItem = {
+  version: number;
+  status: "draft" | "approved";
+  title: string | null;
+  created_by: "user" | "chat";
+  session_id: string | null;
+  created_at: string;
+  approved_at: string | null;
+};
+
+export type ExternalTool = {
+  name: string;
+  tool: string;
+  title: string | null;
+  current_version: number | null;
+  draft_version: number | null;
+  versions: ExternalToolVersionItem[];
+};
+
+export type ExternalToolVersion = ExternalToolVersionItem & {
+  name: string;
+  tool: string;
+  current: boolean;
+  manifest: { title: string; description: string; confirm: boolean | "always"; input_schema: unknown; output_schema: unknown };
+  packages: string[];
+  hash: string;
+  files: Record<string, string>;
+};
+
 // GET /accounts, /accounts/kinds (docs/TOOLS.md#виды-аккаунтов).
 export type Account = { id: string; name: string; kind: string; config: Record<string, unknown> };
 

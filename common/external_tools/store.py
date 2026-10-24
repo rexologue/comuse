@@ -222,7 +222,6 @@ def version_view(storage: StorageSettings, name: str, version: int, *, files: bo
         "manifest": row.manifest,
         "packages": row.packages,
         "hash": row.hash,
-        "session_id": row.session_id,
     }
 
     if files:
@@ -339,6 +338,8 @@ def _summary(row: ExternalToolVersion) -> dict[str, Any]:
         "status": row.status,
         "title": (row.manifest or {}).get("title"),
         "created_by": row.created_by,
+        # The chat that wrote the version: its card is shown there.
+        "session_id": row.session_id,
         "created_at": row.created_at.isoformat(),
         "approved_at": row.approved_at.isoformat() if row.approved_at else None,
     }

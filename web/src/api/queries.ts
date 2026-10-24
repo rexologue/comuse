@@ -11,6 +11,8 @@ import type {
   ChatDetail,
   ChatSummary,
   Diff,
+  ExternalTool,
+  ExternalToolVersion,
   Job,
   LlmOverview,
   LogEntry,
@@ -30,6 +32,8 @@ export const keys = {
   chats: ["chats"] as const,
   jobs: ["jobs"] as const,
   tools: ["tools"] as const,
+  externalTools: ["external-tools"] as const,
+  externalToolVersion: (name: string, version: number) => ["external-tools", name, version] as const,
   chat: (id: string) => ["chat", id] as const,
   task: (id: string) => ["task", id] as const,
   version: (taskId: string, id: string) => ["task", taskId, "version", id] as const,
@@ -165,6 +169,18 @@ export function useLlm() {
 
 export function useSettings() {
   return useQuery({ queryKey: keys.settings, queryFn: async () => (await api<{ settings: Tunable[] }>("/settings")).settings });
+}
+
+export function useExternalTools() {
+  return useQuery({ queryKey: keys.externalTools, queryFn: async () => (await api<{ tools: ExternalTool[] }>("/external-tools")).tools });
+}
+
+export function useExternalToolVersion(name: string, version: number, enabled = true) {
+  return useQuery({
+    queryKey: keys.externalToolVersion(name, version),
+    queryFn: () => api<ExternalToolVersion>(`/external-tools/${name}/versions/${version}`),
+    enabled,
+  });
 }
 
 export function useAccounts() {
