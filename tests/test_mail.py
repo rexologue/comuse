@@ -144,9 +144,10 @@ async def test_mark_touches_nothing_in_a_dry_run(monkeypatch):
 
 
 class FakeIMAP:
-    def __init__(self, capabilities):
+    def __init__(self, capabilities, uids=(b"7",)):
         self.capabilities = capabilities
         self.commands: list[tuple] = []
+        self.uids = uids
 
 
     def select(self, folder, readonly=False):
@@ -158,6 +159,9 @@ class FakeIMAP:
 
 
     def uid(self, command, *args):
+        if command == "SEARCH":
+            return "OK", [b" ".join(self.uids)]
+
         self.commands.append((command, *args))
         return "OK", [b"done"]
 
@@ -183,6 +187,17 @@ def test_move_never_purges_other_mail(monkeypatch, capabilities, commands):
     assert imap_smtp.mark({}, "", folder="INBOX", uid=7, seen=None, move_to="Archive") == "Archive"
     assert [c[0] for c in fake.commands] == commands
     assert all(c[1] == "7" for c in fake.commands)
+
+
+def test_moving_a_letter_that_is_gone_is_an_error(monkeypatch):
+    """MOVE of a UID that is not there answers OK: without a look first it would report success."""
+    fake = FakeIMAP(("MOVE",), uids=())
+    monkeypatch.setattr(imap_smtp._imap, "__enter__", lambda self: fake)
+    monkeypatch.setattr(imap_smtp._imap, "__exit__", lambda self, *exc: None)
+
+    with pytest.raises(ToolError, match="не найдено"):
+        imap_smtp.mark({}, "", folder="INBOX", uid=7, seen=None, move_to="Archive")
+    assert fake.commands == []
 
 
 def _send_context(mode, task_settings, *, dry_run=False):

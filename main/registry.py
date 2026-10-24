@@ -4,6 +4,7 @@ calls to it get 503."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime
 
@@ -23,6 +24,7 @@ class ServiceRegistry:
 
         self._urls: dict[str, str] = {}
         self._seen: dict[str, datetime] = {}
+        # By service name: one client per service, for its current address.
         self._clients: dict[str, MainClient] = {}
 
 
@@ -50,13 +52,18 @@ class ServiceRegistry:
 
 
     def client(self, name: str) -> MainClient:
-        """Internal-token client bound to a service's current address."""
+        """Internal-token client bound to a service's current address; the one for an
+        address it left (a restart on another port) is closed."""
         url = self.url(name)
+        current = self._clients.get(name)
 
-        if url not in self._clients:
-            self._clients[url] = MainClient(base_url=url, internal_token=self.internal_token)
+        if current is None or current.base_url != url:
+            if current is not None:
+                asyncio.get_running_loop().create_task(current.close())
 
-        return self._clients[url]
+            self._clients[name] = MainClient(base_url=url, internal_token=self.internal_token)
+
+        return self._clients[name]
 
 
     def status(self) -> dict[str, dict[str, str | None]]:

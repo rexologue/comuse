@@ -125,3 +125,11 @@ async def test_sampling_values_are_checked(client):
 
     assert response.status_code == 400
     assert response.json()["error"]["details"] == {"llm_chat_temperature": "не больше 2", "llm_chat_top_p": "нужно число, а не 'много'"}
+
+
+def test_a_float_setting_must_be_a_finite_number():
+    from common.tunables import _parse_float
+
+    for value in ("nan", "inf", "-inf"):
+        with pytest.raises(ValueError, match="конечное"):
+            _parse_float(value, 0, 2)

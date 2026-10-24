@@ -8,6 +8,7 @@ LLM) stays in common/settings.py and the environment only."""
 
 from __future__ import annotations
 
+import math
 import logging
 import os
 from dataclasses import dataclass
@@ -222,6 +223,10 @@ def _parse_float(value: Any, low: float | None, high: float | None) -> float | N
 
     except (TypeError, ValueError):
         raise ValueError(f"нужно число, а не {value!r}") from None
+
+    # "nan" passes every bound check and then breaks each request's JSON.
+    if not math.isfinite(number):
+        raise ValueError(f"нужно конечное число, а не {value!r}")
 
     if low is not None and number < low:
         raise ValueError(f"не меньше {low:g}")

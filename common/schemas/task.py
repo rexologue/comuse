@@ -57,6 +57,10 @@ class Step(BaseModel):
             if self.tool is not None:
                 raise ValueError(f"step `{self.id}`: foreach step cannot have its own `tool`")
 
+            # Retrying a whole loop would redo what its items already did: items retry themselves.
+            if self.on_error == "retry" or self.retries:
+                raise ValueError(f"step `{self.id}`: foreach cannot retry; give its nested steps on_error=retry")
+
         elif self.tool is None:
             raise ValueError(f"step `{self.id}`: either `tool` or `foreach` + `steps` is required")
 

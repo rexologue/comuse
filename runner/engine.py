@@ -49,6 +49,8 @@ class RunEngine:
     def __init__(self, main: MainClient):
 
         self.main = main
+        # Set when the service stops: a run cut off then says so, not "did not finish in time".
+        self.stopping = False
 
         self._cancelled: set[str] = set()
 
@@ -130,7 +132,18 @@ class RunEngine:
             # The caller stopped waiting (wait=true timed out) or the service is stopping:
             # the run ends here instead of staying "running" with no end in its log.
             state.result = {"artifacts": state.artifacts}
-            self._close(run_id, journal, state, "failed", "Запуск прерван: не уложился во время ожидания")
+            error = "Запуск прерван: сервис остановлен" if self.stopping else "Запуск прерван: не уложился во время ожидания"
+            self._close(run_id, journal, state, "failed", error)
+
+            try:
+                await self.main.publish(
+                    "run.finished",
+                    {"run_id": run_id, "task_id": run.task_id, "title": task.title, "status": "failed", "error": error, "dry_run": run.dry_run},
+                )
+
+            except Exception:
+                pass  # main may be stopping too: the run is closed all the same.
+
             raise
 
         if status == "succeeded" and not run.dry_run and _found_nothing(state):
@@ -147,7 +160,8 @@ class RunEngine:
 
 
     def _close(self, run_id: str, journal: _Journal, state: _State, status: str, error: str | None) -> None:
-        journal.add("end", {"status": status, "error": error, "result": state.result})
+        # Long outputs (a document's text) are cut in the log, as in the step entries.
+        journal.add("end", {"status": status, "error": error, "result": _clip(state.result)})
         self.update(run_id, status=status, error=error, result=state.result, finished_at=utcnow())
         self._cancelled.discard(run_id)
 
@@ -270,19 +284,29 @@ class _Walk:
 
 
     async def _foreach(self, step: Step, ctx: dict[str, Any], key: str) -> list[Any]:
+        """on_error=skip: an item that fails is left (its error in its result) and the
+        next goes on; on_empty: what an empty list means, as for a tool step."""
         items = self._evaluate(step.foreach, ctx, key)
         if not isinstance(items, list):
-            raise _Fail(f"Шаг `{key}`: foreach ожидает список, получено {type(items).__name__}")
+            return await self._handle_error(step, key, None, f"foreach ожидает список, получено {type(items).__name__}", record=True)
 
         results = []
         for i, item in enumerate(items):
             inner = {**ctx, step.as_: item}
-            await self._steps(step.steps or [], inner, prefix=f"{key}[{i}].")
-            results.append({child.id: inner.get(child.id, {}).get("output") for child in step.steps or []})
 
-        self._finish(key, step, results, status="ok", inputs={"items": len(items)})
+            try:
+                await self._steps(step.steps or [], inner, prefix=f"{key}[{i}].")
+                failed = None
 
-        return results
+            except _Fail as e:
+                if step.on_error != "skip":
+                    raise
+                failed = str(e)
+
+            result = {child.id: inner.get(child.id, {}).get("output") for child in step.steps or []}
+            results.append({**result, "error": failed} if failed else result)
+
+        return await self._check_empty(step, key, {"items": len(items)}, results)
 
 
     async def _tool_step(self, step: Step, key: str, ctx: dict[str, Any]) -> Any:
@@ -295,6 +319,10 @@ class _Walk:
         attempts = 1 + (step.retries if step.on_error == "retry" else 0)
 
         for attempt in range(1, attempts + 1):
+            # A cancel between attempts stops here, not after every retry has run.
+            if attempt > 1 and self.engine.is_cancelled(self.run.id):
+                raise _Stop("cancelled", "Отменено пользователем")
+
             response = await self._call(step, key, args, attempt=attempt)
             status = response["status"]
             self.state.artifacts += [a for a in response.get("artifacts", []) if a not in self.state.artifacts]
@@ -303,6 +331,11 @@ class _Walk:
 
             if status == "ok":
                 return await self._check_empty(step, key, args, response["output"])
+
+            # Whether a call that ran out of time did its job is unknown: a retry could send
+            # the same letter twice.
+            if response.get("timed_out"):
+                break
 
             if attempt < attempts:
                 await asyncio.sleep(_RETRY_BACKOFF_SEC * attempt)

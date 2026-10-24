@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from common.tools import ToolContext, ToolError, ToolInput, ToolOutput, tool
 from common.tools.refs import FileRefs, file_refs
+from common.utils import parse_number
 
 
 class Input(ToolInput):
@@ -120,14 +121,9 @@ def _read_rows(path, sheet: str | None) -> tuple[list[str], list[dict[str, Any]]
 
 
 def _number(value: Any) -> float:
-    if value is None or value == "":
-        return 0.0
-
-    if isinstance(value, (int, float)):
-        return float(value)
-
+    """An empty cell adds nothing; text that is not a number is an error, not a 0."""
     try:
-        return float(str(value).replace(" ", "").replace(" ", "").replace(",", "."))
+        return parse_number(value) or 0.0
 
     except ValueError as e:
         raise ToolError(f"Значение {value!r} не число") from e

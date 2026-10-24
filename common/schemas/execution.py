@@ -36,6 +36,8 @@ class ExecuteResponse(BaseModel):
     duration_ms: int = 0
     # The version of an external tool (ext.*) that ran: the chat trace and run log keep it.
     version: int | None = None
+    # The tool did not finish in time: what it did meanwhile is unknown, so it is not retried.
+    timed_out: bool = False
     # For the caller's log (the executor keeps none): a crash's traceback, what the
     # tool wrote with ctx.log(), and messages for the user it sent with ctx.notify().
     traceback: str | None = None

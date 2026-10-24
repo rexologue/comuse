@@ -45,7 +45,7 @@ async def fill_template(inp: Input, ctx: ToolContext) -> Output:
         raise ToolError("Поддерживаются только шаблоны .docx")
 
     images = {name: ctx.read_path(ref) for name, ref in inp.images.items()}
-    output = ctx.output_path(_docx_name(inp.output_name))
+    output = ctx.output_path(inp.output_name, suffix=".docx")
 
     await asyncio.to_thread(_render, template, inp.context, images, output)
 
@@ -121,9 +121,3 @@ def _loops(xml: str) -> list[tuple[str, str, str]]:
     found += [(loop_var, list_name, xml[start:]) for loop_var, list_name, start in open_loops]
 
     return found
-
-
-def _docx_name(name: str) -> str:
-    cleaned = re.sub(r"[\\/:*?\"<>|]+", "_", name).strip() or "document"
-
-    return cleaned if cleaned.lower().endswith(".docx") else f"{cleaned}.docx"

@@ -118,7 +118,7 @@ class ExecutorRuntime:
             return ExecuteResponse(status="error", error=str(e), **said)
 
         except TimeoutError:
-            return ExecuteResponse(status="error", error=f"`{spec.name}` не уложился в таймаут", **said)
+            return ExecuteResponse(status="error", error=f"`{spec.name}` не уложился в таймаут", timed_out=True, **said)
 
         except Exception as e:
             log.exception("tool %s crashed", spec.name)

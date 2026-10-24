@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-import re
 from typing import Any, Literal
 
 from pydantic import Field
 
 from common.tools import ToolContext, ToolError, ToolInput, ToolOutput, tool
+from common.utils import parse_number
 
 
 class Input(ToolInput):
@@ -53,8 +53,7 @@ async def _draw(inp: Input, ctx: ToolContext, kind: Literal["bar", "line"]) -> O
         labels.append(str(row[inp.label_key]))
         values.append(_number(row[inp.value_key]))
 
-    name = re.sub(r"[\\/:*?\"<>|]+", "_", inp.output_name)
-    path = ctx.output_path(name if name.lower().endswith(".png") else f"{name}.png")
+    path = ctx.output_path(inp.output_name, suffix=".png")
 
     await asyncio.to_thread(_render, path, kind, labels, values, inp.title)
 
@@ -77,18 +76,22 @@ def _render(path, kind, labels, values, title) -> None:
     ax.set_title(title)
     ax.grid(axis="y", alpha=0.3)
     ax.spines[["top", "right"]].set_visible(False)
-    plt.xticks(rotation=30, ha="right")
+    # On these axes, not pyplot's current ones: charts of other runs render at the same time.
+    ax.tick_params(axis="x", labelrotation=30)
+    plt.setp(ax.get_xticklabels(), ha="right")
     fig.tight_layout()
     fig.savefig(str(path))
     plt.close(fig)
 
 
 def _number(value: Any) -> float:
-    if isinstance(value, (int, float)):
-        return float(value)
-
     try:
-        return float(str(value).replace(" ", "").replace(" ", "").replace(",", "."))
+        number = parse_number(value)
 
-    except ValueError as e:
-        raise ToolError(f"Значение {value!r} не число") from e
+    except ValueError:
+        number = None
+
+    if number is None:
+        raise ToolError(f"Значение {value!r} не число")
+
+    return number

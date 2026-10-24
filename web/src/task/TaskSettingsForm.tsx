@@ -3,7 +3,7 @@
 // the code.
 
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { api, ApiError } from "@/api/client";
 import { keys, useTaskSettings } from "@/api/queries";
@@ -123,22 +123,33 @@ function Field({ field, value, onChange }: { field: SettingField; value: unknown
 
   // A list of strings: one per line.
   if (type === "array") {
-    return (
-      <label className="flex flex-col gap-1">
-        {label}
-        <Textarea
-          value={Array.isArray(value) ? value.join("\n") : ""}
-          onChange={(e) => onChange(e.target.value.split("\n").map((line) => line.trim()).filter(Boolean))}
-          placeholder="по одному на строку"
-        />
-      </label>
-    );
+    return <LinesField label={label} value={value} onChange={onChange} />;
   }
 
   return (
     <label className="flex flex-col gap-1">
       {label}
       <Input value={value === null || value === undefined ? "" : String(value)} onChange={(e) => onChange(e.target.value)} />
+    </label>
+  );
+}
+
+// The text as typed (a new line, a space between words) stays while typing; the list
+// is what it splits into.
+function LinesField({ label, value, onChange }: { label: ReactNode; value: unknown; onChange: (value: unknown) => void }) {
+  const [text, setText] = useState(Array.isArray(value) ? value.join("\n") : "");
+
+  return (
+    <label className="flex flex-col gap-1">
+      {label}
+      <Textarea
+        value={text}
+        onChange={(e) => {
+          setText(e.target.value);
+          onChange(e.target.value.split("\n").map((line) => line.trim()).filter(Boolean));
+        }}
+        placeholder="по одному на строку"
+      />
     </label>
   );
 }

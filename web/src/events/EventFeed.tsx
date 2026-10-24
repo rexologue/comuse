@@ -3,10 +3,10 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { FileClock, LoaderCircle, Square } from "lucide-react";
-import { useEffect, useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 
-import { api } from "@/api/client";
+import { api, ApiError } from "@/api/client";
 import { useApprovals, useRecentEvents, useTasks } from "@/api/queries";
 import type { TaskSummary } from "@/api/types";
 import { Button } from "@/components/ui/button";
@@ -43,8 +43,16 @@ export function EventFeed({ onOpen }: { onOpen: () => void }) {
     onOpen();
   };
 
+  const [cancelError, setCancelError] = useState<string | null>(null);
+
   const cancel = async (runId: string) => {
-    await api(`/runs/${runId}/cancel`, { method: "POST" });
+    setCancelError(null);
+    try {
+      await api(`/runs/${runId}/cancel`, { method: "POST" });
+    } catch (e) {
+      // Already finished (409) or the runner is away: say so instead of doing nothing.
+      setCancelError(e instanceof ApiError ? e.message : String(e));
+    }
     queryClient.invalidateQueries({ queryKey: ["run", runId] });
   };
 
@@ -80,6 +88,7 @@ export function EventFeed({ onOpen }: { onOpen: () => void }) {
               </div>
             );
           })}
+          {cancelError && <p className="px-1 text-xs text-destructive">{cancelError}</p>}
         </Pinned>
       )}
 

@@ -199,6 +199,11 @@ def mark(config: dict[str, Any], secret: str, *, folder: str, uid: int, seen: bo
     with _imap(config, secret) as imap:
         _select(imap, folder, readonly=False)
 
+        # MOVE and COPY of a UID that is not there answer OK and do nothing.
+        status, data = imap.uid("SEARCH", "UID", str(uid))
+        if status != "OK" or not data or not data[0] or str(uid).encode() not in data[0].split():
+            raise ToolError(f"Письмо {uid} в «{folder}» не найдено")
+
         if seen is not None:
             status, data = imap.uid("STORE", str(uid), "+FLAGS" if seen else "-FLAGS", r"(\Seen)")
             if status != "OK" or not data or data[0] is None:

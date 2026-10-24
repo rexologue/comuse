@@ -146,3 +146,21 @@ async def test_structured_calls_keep_the_sampling():
     await llm.structured([{"role": "user", "content": "?"}], model="m", schema=SCHEMA, sampling=Sampling(thinking=False))
 
     assert llm.bodies[0]["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+async def test_a_mode_left_on_a_server_error_is_not_kept():
+    """One upstream hiccup must not move every later call off strict json_schema."""
+    class Hiccup(ScriptedLLM):
+        async def chat(self, messages, *, model, response_format=None, **kwargs):
+            if response_format and response_format["type"] == "json_schema" and not self.modes:
+                self.modes.append("json_schema")
+                raise ApiError(status_code=502, message="upstream hiccup")
+
+            return await super().chat(messages, model=model, response_format=response_format, **kwargs)
+
+    llm = Hiccup({"json_schema": ['{"n": 2}'], "json_object": ['{"n": 1}']})
+
+    await llm.structured([{"role": "user", "content": "?"}], model="m", schema=SCHEMA, attempts=1)
+    await llm.structured([{"role": "user", "content": "?"}], model="m", schema=SCHEMA, attempts=1)
+
+    assert llm.modes == ["json_schema", "json_object", "json_schema"]

@@ -189,6 +189,7 @@ class LLMClient:
         conversation = list(messages)
         last_error = "no attempts made"
         attempt = 0
+        passing = False
 
         while attempt < attempts:
             try:
@@ -202,6 +203,8 @@ class LLMClient:
 
             except ApiError as e:
                 if mode < _LAST_MODE and e.status_code in (400, 422, 500, 502):
+                    # A server error may be a passing one: the mode it led to is not kept.
+                    passing |= e.status_code >= 500
                     log.warning("structured mode %s failed for %s (%s), trying the next", _MODES[mode], model, e.message)
                     mode += 1
                     continue
@@ -230,7 +233,8 @@ class LLMClient:
 
                 data = None
 
-            self._structured_mode[model] = mode
+            if not passing:
+                self._structured_mode[model] = mode
 
             try:
                 if data is None:

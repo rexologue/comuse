@@ -84,3 +84,18 @@ def strings_in(value: Any) -> list[str]:
         return [s for item in value for s in strings_in(item)]
 
     return []
+
+
+def parse_number(value: Any) -> float | None:
+    """A number as a table holds it: 1 234,5 → 1234.5; None for an empty cell. Raises
+    ValueError for anything else."""
+    if value is None or value == "":
+        return None
+
+    if isinstance(value, bool):
+        raise ValueError(f"{value!r} не число")
+
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    return float(str(value).replace(" ", "").replace("\u00a0", "").replace(",", "."))

@@ -106,6 +106,7 @@ def _resolve(body: RunBody) -> tuple[Task, TaskVersion]:
             if version.status != "approved" and not body.dry_run:
                 raise ApiError(status_code=409, message="Only approved versions can run for real; use dry_run")
 
+            _check_task(task, body)
             return task, version
 
         if not body.task_id:
@@ -118,10 +119,18 @@ def _resolve(body: RunBody) -> tuple[Task, TaskVersion]:
         if not task.current_version_id:
             raise ApiError(status_code=409, message=f"Task `{task.id}` has no approved version yet")
 
-        if task.status == "archived":
-            raise ApiError(status_code=409, message=f"Task `{task.id}` is archived")
-
+        _check_task(task, body)
         return task, db.get(TaskVersion, task.current_version_id)
+
+
+def _check_task(task: Task, body: RunBody) -> None:
+    """An archived task runs for real no more, however it is asked for; a schedule fires
+    only for an active one (a pause the scheduler missed still holds)."""
+    if task.status == "archived" and not body.dry_run:
+        raise ApiError(status_code=409, message=f"Task `{task.id}` is archived")
+
+    if body.trigger == "cron" and task.status != "active":
+        raise ApiError(status_code=409, message=f"Task `{task.id}` is {task.status}: its schedule does not run it")
 
 
 def _ensure_idle(task_id: str) -> None:

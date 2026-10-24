@@ -205,6 +205,12 @@ async def list_models(body: ModelsQuery, request: Request):
     try:
         return {"models": sorted(await client.models())}
 
+    except ApiError as e:
+        # The model server's 401 is not this API's: a wrong key there is a bad gateway here.
+        if e.status_code < 500:
+            raise ApiError(status_code=502, message=f"Сервер моделей ответил {e.status_code}: {e.message}", details={"status": e.status_code}) from e
+        raise
+
     finally:
         await client.close()
 

@@ -6,6 +6,8 @@ import asyncio
 import logging
 from typing import Any
 
+from sqlalchemy import func
+
 from common.retention import cutoff
 from common.storage.db import session
 from common.storage.models import Event
@@ -52,9 +54,12 @@ class EventBus:
 
 
 def sweep() -> int:
-    """Events older than `retention_days` go; a client replays only recent ones anyway."""
+    """Events older than `retention_days` go; a client replays only recent ones anyway.
+    The newest stays whatever its age: SQLite gives the next event the highest id + 1, and
+    an emptied table would start over at 1, below the id a client resumes from."""
     with session() as db:
-        removed = db.query(Event).filter(Event.created_at < cutoff()).delete(synchronize_session=False)
+        newest = db.query(func.max(Event.id)).scalar() or 0
+        removed = db.query(Event).filter(Event.created_at < cutoff(), Event.id < newest).delete(synchronize_session=False)
         db.commit()
 
     return removed

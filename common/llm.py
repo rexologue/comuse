@@ -17,6 +17,7 @@ and its key is read from the store only then."""
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 
@@ -133,6 +134,11 @@ class LLM:
         key = (endpoint.provider, endpoint.version, timeout, retries, no_proxy)
 
         if key not in self._clients:
+            # The provider's earlier settings (another address, timeout, proxy): their
+            # client and its connections go.
+            for old in [k for k in self._clients if k[0] == endpoint.provider]:
+                _close_later(self._clients.pop(old))
+
             self._clients[key] = LLMClient(
                 base_url=endpoint.base_url,
                 api_key=(self._keys.get(endpoint.provider) or "") if endpoint.has_key else "",
@@ -188,3 +194,11 @@ class Role:
             raise LLMNotConfigured(self.name)
 
         return self.llm.client(endpoint), endpoint
+
+
+def _close_later(client: LLMClient) -> None:
+    try:
+        asyncio.get_running_loop().create_task(client.close())
+
+    except RuntimeError:
+        pass  # No loop running (a script): the process ends with it anyway.

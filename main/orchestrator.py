@@ -4,6 +4,7 @@ a task version: runs never wait for anyone."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -22,6 +23,9 @@ class Orchestrator:
 
         self.registry = registry
         self.bus      = bus
+        # One change of a task at a time: an approval answered while a new draft is being
+        # made must not end up "cancelled" with its version active.
+        self._locks: dict[str, asyncio.Lock] = {}
 
 
     # -----------------------------
@@ -62,16 +66,21 @@ class Orchestrator:
         if approval is None:
             raise ApiError(status_code=404, message=f"Approval `{approval_id}` not found")
 
-        if approval.status != "pending":
-            raise ApiError(status_code=409, message=f"Approval `{approval_id}` is already {approval.status}")
+        async with self._lock(approval.task_id):
+            # Read again under the lock: a change of the task may have voided it meanwhile.
+            with session() as db:
+                approval = db.get(Approval, approval_id)
 
-        if approval.kind != "version_approve":
-            raise ApiError(status_code=409, message=f"Approval `{approval_id}` of kind `{approval.kind}` cannot be answered")
+            if approval.status != "pending":
+                raise ApiError(status_code=409, message=f"Approval `{approval_id}` is already {approval.status}")
 
-        if approve:
-            await self.approve_version(approval.task_id, approval.task_version_id)
-        else:
-            await self.reject_version(approval.task_id, approval.task_version_id)
+            if approval.kind != "version_approve":
+                raise ApiError(status_code=409, message=f"Approval `{approval_id}` of kind `{approval.kind}` cannot be answered")
+
+            if approve:
+                await self._approve_version(approval.task_id, approval.task_version_id)
+            else:
+                await self._reject_version(approval.task_id, approval.task_version_id)
 
         return self._get(approval_id)
 
@@ -87,24 +96,37 @@ class Orchestrator:
 
 
     async def patch(self, body: dict[str, Any]) -> dict[str, Any]:
-        result = await self.registry.client("compiler").post("/patch", json=body)
+        async with self._lock(str(body.get("task_id"))):
+            result = await self.registry.client("compiler").post("/patch", json=body)
 
-        return self._with_version_approval(result, body.get("session_id"))
+            return self._with_version_approval(result, body.get("session_id"))
 
 
     async def edit(self, task_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        result = await self.registry.client("compiler").post(f"/tasks/{task_id}/versions", json=body)
+        async with self._lock(task_id):
+            result = await self.registry.client("compiler").post(f"/tasks/{task_id}/versions", json=body)
 
-        return self._with_version_approval(result, None)
+            return self._with_version_approval(result, None)
 
 
     async def move_tool_version(self, task_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        result = await self.registry.client("compiler").post(f"/tasks/{task_id}/tool-versions", json=body)
+        async with self._lock(task_id):
+            result = await self.registry.client("compiler").post(f"/tasks/{task_id}/tool-versions", json=body)
 
-        return self._with_version_approval(result, None)
+            return self._with_version_approval(result, None)
 
 
     async def approve_version(self, task_id: str, version_id: str) -> dict[str, Any]:
+        async with self._lock(task_id):
+            return await self._approve_version(task_id, version_id)
+
+
+    async def reject_version(self, task_id: str, version_id: str) -> dict[str, Any]:
+        async with self._lock(task_id):
+            return await self._reject_version(task_id, version_id)
+
+
+    async def _approve_version(self, task_id: str, version_id: str) -> dict[str, Any]:
         result = await self.registry.client("compiler").post(f"/tasks/{task_id}/versions/{version_id}/approve")
 
         self._resolve_version_approvals(version_id, "approved")
@@ -114,7 +136,7 @@ class Orchestrator:
         return result
 
 
-    async def reject_version(self, task_id: str, version_id: str) -> dict[str, Any]:
+    async def _reject_version(self, task_id: str, version_id: str) -> dict[str, Any]:
         result = await self.registry.client("compiler").post(f"/tasks/{task_id}/versions/{version_id}/reject")
 
         self._resolve_version_approvals(version_id, "rejected")
@@ -124,16 +146,21 @@ class Orchestrator:
 
 
     async def set_task_status(self, task_id: str, action: str) -> dict[str, Any]:
-        result = await self.registry.client("compiler").post(f"/tasks/{task_id}/{action}")
+        async with self._lock(task_id):
+            result = await self.registry.client("compiler").post(f"/tasks/{task_id}/{action}")
 
-        # An archived task's drafts wait for nobody.
-        if action == "archive":
-            self._cancel_task_approvals(task_id)
+            # An archived task's drafts wait for nobody.
+            if action == "archive":
+                self._cancel_task_approvals(task_id)
 
         await self._reload_triggers(task_id)
         self.bus.publish(f"task.{action}", {"task_id": task_id})
 
         return result
+
+
+    def _lock(self, task_id: str) -> asyncio.Lock:
+        return self._locks.setdefault(task_id, asyncio.Lock())
 
 
     def _with_version_approval(self, result: dict[str, Any], session_id: str | None) -> dict[str, Any]:

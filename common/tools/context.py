@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar
@@ -101,9 +102,15 @@ class ToolContext:
         return path
 
 
-    def output_path(self, filename: str) -> Path:
-        """A file under `data:outputs/<run or session>/`, recorded as an artifact."""
-        path = self.output_dir() / (Path(filename).name or "output")
+    def output_path(self, filename: str, suffix: str = "") -> Path:
+        """A file under `data:outputs/<run or session>/`, recorded as an artifact. The
+        name may come from a model: what Windows refuses becomes `_`, and `suffix`
+        (".docx") is added when the name lacks it."""
+        name = re.sub(r'[\\/:*?"<>|]+', "_", filename).strip(" .") or "output"
+        if suffix and not name.lower().endswith(suffix):
+            name += suffix
+
+        path = self.output_dir() / name
 
         self.artifacts.append(self.to_ref(path))
 

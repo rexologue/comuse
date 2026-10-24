@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 from typing import Any
 
 from pydantic import Field
@@ -29,8 +28,7 @@ class WriteOutput(ToolOutput):
     confirm=False,
 )
 async def write_table(inp: WriteInput, ctx: ToolContext) -> WriteOutput:
-    name = re.sub(r"[\\/:*?\"<>|]+", "_", inp.output_name)
-    path = ctx.output_path(name if name.lower().endswith(".xlsx") else f"{name}.xlsx")
+    path = ctx.output_path(inp.output_name, suffix=".xlsx")
 
     await asyncio.to_thread(_write, path, inp)
 

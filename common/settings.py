@@ -249,10 +249,13 @@ def load_dotenv(path: Path) -> dict[str, str]:
             continue
 
         key, value = line.split("=", 1)
-        value = value.split(" #", 1)[0].strip()
+        value = value.strip()
 
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
-            value = value[1:-1]
+        # A quoted value is taken whole (a password may hold " #"); a comment may follow it.
+        if value[:1] in ("'", '"') and value[0] in value[1:]:
+            value = value[1 : value.index(value[0], 1)]
+        else:
+            value = value.split(" #", 1)[0].strip()
 
         values[key.strip()] = value
 

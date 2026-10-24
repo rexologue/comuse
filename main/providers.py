@@ -172,8 +172,11 @@ async def check(client: LLMClient, model: str, role: str) -> dict[str, Any]:
             await client.chat([{"role": "user", "content": "Ответь одним словом: готов?"}], model=model, sampling=llm.role_sampling("instruct"))
 
         else:
-            [vector] = await client.embed(["проверка связи"], model=model)
-            return {"ok": True, "dimensions": len(vector)}
+            vectors = await client.embed(["проверка связи"], model=model)
+            if len(vectors) != 1:
+                return {"ok": False, "error": f"на один текст сервер вернул векторов: {len(vectors)}"}
+
+            return {"ok": True, "dimensions": len(vectors[0])}
 
     except ApiError as e:
         return {"ok": False, "error": e.message}

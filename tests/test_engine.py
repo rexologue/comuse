@@ -254,6 +254,41 @@ def test_old_events_go(settings):
     assert len(events.recent()) == 1
 
 
+def test_the_newest_event_stays_so_ids_never_go_back(settings):
+    """A client resumes from the last id it saw: an emptied table would start over at 1."""
+    from datetime import timedelta
+
+    from common.storage.models import Event
+    from common.utils import utcnow
+    from main import events
+
+    with session() as db:
+        for _ in range(3):
+            db.add(Event(type="run.finished", payload={}, created_at=utcnow() - timedelta(days=30)))
+        db.commit()
+
+    assert events.sweep() == 2
+    newest = events.recent()[-1]["id"]
+
+    with session() as db:
+        db.add(Event(type="run.finished", payload={}))
+        db.commit()
+
+    assert events.recent(since=newest)[0]["id"] == newest + 1
+
+
+async def test_a_service_on_a_new_address_gets_a_new_client(settings):
+    from main.registry import ServiceRegistry
+
+    registry = ServiceRegistry(internal_token="")
+    registry.register("executor", "http://127.0.0.1:9001")
+    first = registry.client("executor")
+    assert registry.client("executor") is first
+
+    registry.register("executor", "http://127.0.0.1:9002")
+    assert registry.client("executor").base_url == "http://127.0.0.1:9002"
+
+
 async def test_runs_endpoint_creates_and_executes_a_run(settings):
     from types import SimpleNamespace
 
@@ -338,3 +373,97 @@ async def test_a_version_that_does_not_read_fails_instead_of_staying_queued(sett
 
     assert run["status"] == "failed" and "не читается" in run["error"]
     assert [entry["kind"] for entry in run_log("run_1")] == ["end"]
+
+
+async def test_a_step_that_ran_out_of_time_is_not_retried(settings, monkeypatch):
+    """Whether it sent the letter is unknown: a retry could send it twice."""
+    monkeypatch.setattr("runner.engine._RETRY_BACKOFF_SEC", 0)
+    spec = {"title": "Письмо", "steps": [{"id": "send", "tool": "mail.send", "args": {}, "on_error": "retry", "retries": 3}]}
+    main = FakeMain({"mail.send": lambda args, ctx: {"status": "error", "error": "не уложился в таймаут", "timed_out": True}})
+
+    run = await RunEngine(main).execute(_make_run(spec))
+
+    assert run["status"] == "failed" and len(main.calls) == 1
+
+
+async def test_a_cancel_stops_the_retries(settings, monkeypatch):
+    monkeypatch.setattr("runner.engine._RETRY_BACKOFF_SEC", 0)
+    spec = {"title": "Сбой", "steps": [{"id": "boom", "tool": "fs.list", "args": {}, "on_error": "retry", "retries": 5}]}
+    engine = None
+
+    def fails(args, ctx):
+        engine._cancelled.add("run_1")
+        return {"status": "error", "error": "нет папки"}
+
+    engine = RunEngine(FakeMain({"fs.list": fails}))
+    run = await engine.execute(_make_run(spec))
+
+    assert run["status"] == "cancelled" and len(engine.main.calls) == 1
+
+
+async def test_foreach_skips_a_failed_item_and_knows_an_empty_list(settings):
+    spec = {
+        "title": "Каждый файл",
+        "steps": [
+            {"id": "files", "tool": "fs.list", "args": {}},
+            {"id": "each", "foreach": "{{ files.output.files }}", "as": "file", "on_error": "skip", "on_empty": "fail",
+             "steps": [{"id": "move", "tool": "fs.move", "args": {"src": "{{ file.path }}", "dst": "Архив/"}}]},
+        ],
+    }
+
+    def move(args, ctx):
+        return {"status": "error", "error": "занят"} if args["src"].endswith("a.txt") else {"output": {"path": "Архив/b.txt"}}
+
+    main = FakeMain({**_tools(), "fs.move": move})
+    run = await RunEngine(main).execute(_make_run(spec))
+    assert run["status"] == "succeeded" and len(main.calls) == 3
+
+    each = next(e for e in run_log("run_1") if e["kind"] == "step" and e["step_key"] == "each")
+    assert [item.get("error") is not None for item in each["output"]] == [True, False]
+
+    with session() as db:
+        db.query(Run).delete()
+        db.query(TaskVersion).delete()
+        db.query(Task).delete()
+        db.commit()
+
+    empty = await RunEngine(FakeMain({"fs.list": lambda a, c: {"output": {"files": []}}})).execute(_make_run(spec))
+    assert empty["status"] == "failed" and "ничего не вернул" in empty["error"]
+
+
+def test_a_foreach_cannot_retry_as_a_whole():
+    from common.schemas.task import TaskSpec
+
+    with pytest.raises(ValueError, match="foreach cannot retry"):
+        TaskSpec.model_validate({"title": "t", "steps": [{"id": "each", "foreach": "{{ x }}", "on_error": "retry", "steps": [{"id": "a", "tool": "fs.list"}]}]})
+
+
+def test_an_archived_or_paused_task_is_not_run_behind_its_back(settings):
+    from common.errors import ApiError
+    from runner.api.runs import RunBody, _resolve
+
+    _make_run(SPEC)
+
+    for status, body in (
+        ("archived", RunBody(task_version_id="ver_1")),             # by its version, not only by the task
+        ("paused", RunBody(task_id="task_1", trigger="cron")),      # a pause the scheduler missed
+    ):
+        with session() as db:
+            db.get(Task, "task_1").status = status
+            db.commit()
+
+        with pytest.raises(ApiError) as e:
+            _resolve(body)
+        assert e.value.status_code == 409
+
+    # A dry run of an archived task's version is still allowed.
+    assert _resolve(RunBody(task_version_id="ver_1", dry_run=True))[1].id == "ver_1"
+
+
+def test_a_run_a_restart_cut_off_ends_its_log(settings):
+    from runner.main import _close_interrupted_runs
+
+    _make_run(SPEC)
+    _close_interrupted_runs()
+
+    assert [(e["kind"], e["status"]) for e in run_log("run_1")] == [("end", "failed")]

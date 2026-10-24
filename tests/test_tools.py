@@ -329,3 +329,21 @@ def test_a_model_step_gets_text_not_file_names(settings):
 
     assert gather_text("Счёт № 5 от ООО «Ромашка»", ctx) == "Счёт № 5 от ООО «Ромашка»"
     assert gather_text({"documents": [{"path": "a.txt", "text": "текст"}]}, ctx).startswith('{"documents"')
+
+
+def test_an_output_name_from_a_model_becomes_a_file_name(settings):
+    _, ctx = _workspace_ctx(settings)
+    settings.storage.outputs_dir.mkdir(parents=True, exist_ok=True)
+    ctx.session_id = "ses_names"
+
+    assert ctx.output_path("Отчёт: май/июнь", suffix=".docx").name == "Отчёт_ май_июнь.docx"
+    assert ctx.output_path("итог.DOCX", suffix=".docx").name == "итог.DOCX"
+    assert ctx.output_path("..", suffix=".png").name == "output.png"
+
+
+def test_numbers_as_tables_hold_them():
+    from common.utils import parse_number
+
+    assert parse_number("1 234,5") == 1234.5 and parse_number("") is None and parse_number(3) == 3.0
+    with pytest.raises(ValueError):
+        parse_number("много")

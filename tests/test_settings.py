@@ -58,9 +58,10 @@ def test_unknown_service(env):
 
 def test_dotenv_comments_and_quotes(tmp_path):
     path = tmp_path / ".env"
-    path.write_text('A=1 # comment\nB="two words"\n# skipped\nC=\n', encoding="utf-8")
+    path.write_text('A=1 # comment\nB="two words"\n# skipped\nC=\nD="abc #def" # a password\nE=\'x\'\n', encoding="utf-8")
 
-    assert load_dotenv(path) == {"A": "1", "B": "two words", "C": ""}
+    # A quoted value is whole, " #" inside it included.
+    assert load_dotenv(path) == {"A": "1", "B": "two words", "C": "", "D": "abc #def", "E": "x"}
 
 
 def test_embeddings_default_to_the_chat_server(env, monkeypatch):

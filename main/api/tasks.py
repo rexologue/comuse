@@ -56,13 +56,13 @@ async def get_diff(task_id: str, version_id: str, request: Request):
 
 
 @router.post("/tasks/{task_id}/versions", summary="Edit a task by hand (spec or JSON Patch ops) → draft version + diff + approval")
-async def edit_task(task_id: str, request: Request):
-    return await request.app.state.orchestrator.edit(task_id, await request.json())
+async def edit_task(task_id: str, body: dict[str, Any], request: Request):
+    return await request.app.state.orchestrator.edit(task_id, body)
 
 
 @router.post("/tasks/{task_id}/tool-versions", summary="Move the task to another version of an external tool → draft version + approval")
-async def move_tool_version(task_id: str, request: Request):
-    return await request.app.state.orchestrator.move_tool_version(task_id, await request.json())
+async def move_tool_version(task_id: str, body: dict[str, Any], request: Request):
+    return await request.app.state.orchestrator.move_tool_version(task_id, body)
 
 
 @router.post("/tasks/{task_id}/versions/{version_id}/approve", summary="Make a version active")
