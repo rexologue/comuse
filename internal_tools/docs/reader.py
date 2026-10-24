@@ -1,4 +1,5 @@
-"""Turn office files into plain text/markdown an LLM can read."""
+"""Office files as text: what docs.read gives a model step or the agent. Tables become
+markdown, numbered «Таблица T1», «Таблица T2»… — the numbers docs.make_template takes."""
 
 from __future__ import annotations
 

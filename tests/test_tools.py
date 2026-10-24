@@ -139,7 +139,7 @@ def test_make_template_names_every_problem_of_the_markup(tmp_path):
 
 
 def test_docx_tables_are_numbered_as_make_template_counts_them(tmp_path):
-    from common.documents import read_document
+    from internal_tools.docs.reader import read_document
 
     text = read_document(_example(tmp_path / "example.docx"))
 
@@ -290,3 +290,42 @@ async def test_aggregate_checks_the_columns_of_every_file(settings):
         await aggregate(Input(inputs=["q1.xlsx"], sheet="Май", sum_columns=["Сумма"]), ctx)
 
     assert (await aggregate(Input(inputs=["q1.xlsx"], sum_columns=["Сумма"]), ctx)).totals == {"Сумма": 100.0}
+
+
+def _workspace_ctx(settings):
+    from common import tunables
+    from common.tools import ToolContext
+    from executor.paths import WorkspacePaths
+
+    workspace = tunables.get("workspace_dir")
+    return workspace, ToolContext(mode="chat", settings=settings, paths=WorkspacePaths(workspace, settings.storage.data_dir), llm=None)
+
+
+async def test_docs_read_reads_one_document_or_several(settings):
+    from internal_tools.docs.read import Input, read
+
+    workspace, ctx = _workspace_ctx(settings)
+    (workspace / "a.txt").write_text("первый")
+    (workspace / "b.txt").write_text("второй")
+
+    one = await read(Input(path="a.txt"), ctx)
+    assert (one.path, one.text) == ("a.txt", "первый")
+
+    both = await read(Input(path={"files": [{"path": "a.txt"}, {"path": "b.txt"}]}), ctx)
+    assert [d.path for d in both.documents] == ["a.txt", "b.txt"]
+    assert both.text == "### Файл a.txt\n\nпервый\n\n### Файл b.txt\n\nвторой"
+
+
+def test_a_model_step_gets_text_not_file_names(settings):
+    """llm.* does not read files: a path would reach the model as a name."""
+    from internal_tools.llm.inputs import gather_text
+
+    workspace, ctx = _workspace_ctx(settings)
+    (workspace / "a.txt").write_text("текст")
+
+    for value in ("a.txt", ["a.txt"], {"files": [{"path": "a.txt", "name": "a.txt"}]}):
+        with pytest.raises(ToolError, match="нужен его текст"):
+            gather_text(value, ctx)
+
+    assert gather_text("Счёт № 5 от ООО «Ромашка»", ctx) == "Счёт № 5 от ООО «Ромашка»"
+    assert gather_text({"documents": [{"path": "a.txt", "text": "текст"}]}, ctx).startswith('{"documents"')

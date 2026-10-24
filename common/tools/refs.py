@@ -24,13 +24,6 @@ FileRefs = Annotated[
     ),
 ]
 
-# Files or plain text (llm.* inputs): text is not a path, so nothing is checked up
-# front; files it names are still opened through the sandboxed ctx.read_path.
-TextOrFileRefs = Annotated[
-    _SHAPES,
-    Field(description="Путь, список путей, результат шага со списком файлов или обычный текст"),
-]
-
 
 def file_refs(value: Any) -> list[str]:
     """Flatten any accepted shape into a list of path references."""

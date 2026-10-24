@@ -9,7 +9,7 @@ from internal_tools.llm.inputs import gather_text
 
 
 class ClassifyInput(ToolInput):
-    input: Any = Field(description="Текст, путь к файлу или результат предыдущего шага")
+    input: Any = Field(description="Текст или результат предыдущего шага (документ — его прочитанный text)")
     labels: list[str] = Field(min_length=2, description="Возможные категории")
     instruction: str = Field(default="", description="Как различать категории")
 
@@ -23,12 +23,12 @@ class ClassifyOutput(ToolOutput):
     name="llm.classify",
     title="Определить категорию",
     card="Определить категорию: {labels}",
-    description="Classify a document or text into exactly one of the given labels.",
+    description="Classify a text (a document's text read by an earlier step) into exactly one of the given labels.",
     confirm=False,
     uses_llm=True,
 )
 async def classify(inp: ClassifyInput, ctx: ToolContext) -> ClassifyOutput:
-    text = await gather_text(inp.input, ctx, limit=20000)
+    text = gather_text(inp.input, ctx, limit=20000)
 
     schema = {
         "type": "object",

@@ -49,7 +49,8 @@ _FOREACH_EXAMPLE = {
     "foreach": "{{ reports.output.items }}",
     "as": "item",
     "steps": [
-        {"id": "kind", "tool": "example.judge", "args": {"input": "{{ item.path }}"}},
+        {"id": "doc", "tool": "example.open", "args": {"what": "{{ item.path }}"}},
+        {"id": "kind", "tool": "example.judge", "args": {"input": "{{ doc.output.text }}"}},
         {"id": "move", "tool": "example.put", "args": {"what": "{{ item.path }}", "where": "Документы/{{ kind.output.label }}/"}},
     ],
 }

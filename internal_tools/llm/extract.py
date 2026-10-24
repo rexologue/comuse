@@ -6,12 +6,11 @@ import jsonschema
 from pydantic import Field
 
 from common.tools import ToolContext, ToolError, ToolInput, ToolOutput, tool
-from common.tools.refs import TextOrFileRefs
 from internal_tools.llm.inputs import gather_text
 
 
 class ExtractInput(ToolInput):
-    inputs: TextOrFileRefs = Field(description="Откуда извлекать: путь, список путей или результат шага со списком файлов; можно и обычный текст")
+    inputs: Any = Field(description="Откуда извлекать: текст (документ — его text, прочитанный предыдущим шагом) или результат предыдущего шага")
     instruction: str = Field(description="Что именно извлечь")
     output_schema: dict[str, Any] = Field(
         description="JSON Schema результата, например {'type':'object','properties':{'revenue':{'type':'number'}}}"
@@ -27,14 +26,14 @@ class ExtractOutput(ToolOutput):
     title="Извлечь данные",
     card="Извлечь данные: {instruction}",
     description=(
-        "Extract structured data from documents or text with the LLM; the result follows "
-        "output_schema (JSON Schema). Inputs may be file paths or a step's file listing."
+        "Extract structured data from a text (documents read by an earlier step) with the LLM; the "
+        "result follows output_schema (JSON Schema)."
     ),
     confirm=False,
     uses_llm=True,
 )
 async def extract(inp: ExtractInput, ctx: ToolContext) -> ExtractOutput:
-    text = await gather_text(inp.inputs, ctx)
+    text = gather_text(inp.inputs, ctx)
     if not text:
         raise ToolError("Нет входных данных для извлечения")
 

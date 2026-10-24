@@ -10,7 +10,7 @@ from internal_tools.llm.inputs import gather_text
 
 class WriteInput(ToolInput):
     instruction: str = Field(description="Что написать: письмо, резюме, комментарий")
-    context: Any = Field(default=None, description="Данные или документы, на которые опираться")
+    context: Any = Field(default=None, description="Данные или текст документов (прочитанный предыдущим шагом), на которые опираться")
 
 
 class WriteOutput(ToolOutput):
@@ -26,7 +26,7 @@ class WriteOutput(ToolOutput):
     uses_llm=True,
 )
 async def write(inp: WriteInput, ctx: ToolContext) -> WriteOutput:
-    context = await gather_text(inp.context, ctx, limit=30000) if inp.context is not None else ""
+    context = gather_text(inp.context, ctx, limit=30000)
 
     message = await ctx.llm.complete(
         [

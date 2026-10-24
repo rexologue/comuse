@@ -89,12 +89,14 @@ JSON-схему.
 - В `foreach` текущий элемент лежит под именем `as`, а результат всего шага — список,
   где для каждого элемента собраны результаты вложенных шагов по их `id`.
 - Файлы передаются ссылками, а не содержимым: путь, список путей или результат
-  `fs.list` целиком (`{{ sales_files.output.files }}`).
+  `fs.list` целиком (`{{ sales_files.output.files }}`). Шаг модели (`llm.*`) получает
+  текст: документ читает шаг перед ним (`docs.read`), а дальше идёт его `.output.text`.
 
 ```json
 {"id": "sort", "foreach": "{{ files.output.files }}", "as": "file", "steps": [
+  {"id": "doc", "tool": "docs.read", "args": {"path": "{{ file.path }}"}},
   {"id": "kind", "tool": "llm.classify",
-   "args": {"input": "{{ file.path }}", "labels": ["договор", "счёт", "акт"]}},
+   "args": {"input": "{{ doc.output.text }}", "labels": ["договор", "счёт", "акт"]}},
   {"id": "move", "tool": "fs.move",
    "args": {"src": "{{ file.path }}", "dst": "Документы/{{ kind.output.label }}/"}}
 ]}
