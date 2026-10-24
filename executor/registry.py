@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from common.external_tools import store
+from common.external_tools import PREFIX, is_external, store
 from common.external_tools.spec import ExternalToolSpec
 from common.settings import StorageSettings
 from common.tools import ToolSpec, discover
@@ -19,6 +19,9 @@ class ToolRegistry:
     def __init__(self, storage: StorageSettings):
         self.storage = storage
         self._specs: dict[str, ToolSpec | ExternalToolSpec] = {}
+        # Approved versions other than the current one, loaded when a task asks: they
+        # never change.
+        self._older: dict[tuple[str, int], ExternalToolSpec] = {}
 
 
     def load(self) -> None:
@@ -40,8 +43,21 @@ class ToolRegistry:
         log.info("tools loaded: %d (%s)", len(self._specs), ", ".join(sorted(self._specs)))
 
 
-    def get(self, name: str) -> ToolSpec | ExternalToolSpec | None:
-        return self._specs.get(name)
+    def get(self, name: str, version: int | None = None) -> ToolSpec | ExternalToolSpec | None:
+        """The tool; for an external one with `version`, that approved version."""
+        spec = self._specs.get(name)
+
+        if version is None or not is_external(name) or (spec is not None and spec.version == version):
+            return spec
+
+        if (name, version) not in self._older:
+            row = store.approved_version(name.removeprefix(PREFIX), version)
+            if row is None:
+                return None
+
+            self._older[(name, version)] = ExternalToolSpec.of(row, self.storage)
+
+        return self._older[(name, version)]
 
 
     def catalog(self) -> list[dict[str, Any]]:

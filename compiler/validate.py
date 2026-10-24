@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from common import templating
 from common.cron import cron_trigger
+from common.external_tools import is_external
 from common.schemas.task import Step, TaskSpec
 
 
@@ -108,6 +109,17 @@ def _check_tool_step(
     if manifest is None:
         errors.append(f"{where}: инструмента `{step.tool}` нет; доступны: {sorted(catalog)}")
         return
+
+    if is_external(step.tool):
+        # The catalog holds the version the task runs (compiler/versions.py).
+        if step.tool_version != manifest.get("version"):
+            errors.append(
+                f"{where}: у `{step.tool}` нет версии v{step.tool_version}; одобренная текущая — v{manifest.get('version')}"
+            )
+            return
+
+    elif step.tool_version is not None:
+        errors.append(f"{where}: tool_version бывает только у своих команд (ext.*), у `{step.tool}` его быть не должно")
 
     errors += [f"{where}.args: {err}" for err in templating.check_syntax(step.args)]
     _check_names(templating.referenced_names(step.args), visible, f"{where}.args", errors)

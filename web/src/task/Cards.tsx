@@ -16,7 +16,12 @@ export function Cards({ cards, prefix = "" }: { cards: Card[]; prefix?: string }
               <span className="w-6 shrink-0 text-right text-muted-foreground tabular-nums">{number}.</span>
               <div className="min-w-0">
                 <div>{card.text}</div>
-                {card.tool && <div className="text-xs text-muted-foreground">{card.tool}</div>}
+                {card.tool && (
+                  <div className="text-xs text-muted-foreground">
+                    {card.tool}
+                    {card.version ? ` v${card.version}` : ""}
+                  </div>
+                )}
               </div>
             </div>
             {card.children.length > 0 && (

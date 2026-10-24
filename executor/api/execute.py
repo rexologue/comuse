@@ -19,11 +19,11 @@ async def list_tools(request: Request):
     return {"tools": request.app.state.registry.catalog()}
 
 
-@router.get("/tools/{name}", summary="One tool manifest")
-async def get_tool(name: str, request: Request):
-    spec = request.app.state.registry.get(name)
+@router.get("/tools/{name}", summary="One tool manifest; `version` — an approved version of an external tool")
+async def get_tool(name: str, request: Request, version: int | None = None):
+    spec = request.app.state.registry.get(name, version)
     if spec is None:
-        raise ApiError(status_code=404, message=f"Tool `{name}` not found")
+        raise ApiError(status_code=404, message=f"Tool `{name}`{f' v{version}' if version else ''} not found")
 
     return spec.manifest()
 

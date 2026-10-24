@@ -7,6 +7,7 @@ from fastapi import FastAPI
 
 from common import tunables
 from common.llm import LLM
+from common.external_tools import store as external_tools
 from common.retention import sweep_forever
 from common.secrets import SecretStore
 from common.service import create_service_app
@@ -38,14 +39,18 @@ async def lifespan(app: FastAPI):
     app.state.secrets = secrets
     app.state.runtime = ExecutorRuntime(settings, registry, secrets, llm)
 
-    sweeper = asyncio.create_task(sweep_forever("output folders", lambda: sweep_outputs(settings.storage)))
+    sweepers = [
+        asyncio.create_task(sweep_forever("output folders", lambda: sweep_outputs(settings.storage))),
+        asyncio.create_task(sweep_forever("external tool versions", lambda: external_tools.sweep_unused(settings.storage))),
+    ]
 
     try:
         yield
 
     finally:
-        sweeper.cancel()
-        await asyncio.gather(sweeper, return_exceptions=True)
+        for sweeper in sweepers:
+            sweeper.cancel()
+        await asyncio.gather(*sweepers, return_exceptions=True)
         await llm.close()
 
 

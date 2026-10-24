@@ -332,7 +332,7 @@ class _Walk:
         try:
             response = await self.engine.main.post(
                 "/executor/execute",
-                json={"tool": step.tool, "args": args, "context": context},
+                json={"tool": step.tool, "version": step.tool_version, "args": args, "context": context},
             )
 
         except ApiError as e:
@@ -409,6 +409,7 @@ class _Walk:
         data = {
             "step_id": step.id,
             "tool": step.tool,
+            "tool_version": step.tool_version,
             "attempt": attempt,
             "status": status,
             "input": inputs,

@@ -59,6 +59,11 @@ async def edit_task(task_id: str, request: Request):
     return await request.app.state.orchestrator.edit(task_id, await request.json())
 
 
+@router.post("/tasks/{task_id}/tool-versions", summary="Move the task to another version of an external tool → draft version + approval")
+async def move_tool_version(task_id: str, request: Request):
+    return await request.app.state.orchestrator.move_tool_version(task_id, await request.json())
+
+
 @router.post("/tasks/{task_id}/versions/{version_id}/approve", summary="Make a version active")
 async def approve(task_id: str, version_id: str, request: Request):
     return await request.app.state.orchestrator.approve_version(task_id, version_id)

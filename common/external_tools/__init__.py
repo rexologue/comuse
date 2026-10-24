@@ -22,6 +22,7 @@ What makes it safe to run is the person who read and approved it."""
 from __future__ import annotations
 
 import re
+from typing import Any
 
 
 PREFIX = "ext."
@@ -35,3 +36,23 @@ def full_name(name: str) -> str:
 
 def is_external(tool: str) -> bool:
     return tool.startswith(PREFIX)
+
+
+def pinned(spec: dict[str, Any]) -> dict[str, int]:
+    """{tool: version} the external steps of a task spec run (nested steps too)."""
+    found: dict[str, int] = {}
+
+    def walk(steps: Any) -> None:
+        for step in steps or []:
+            if not isinstance(step, dict):
+                continue
+
+            tool = step.get("tool") or ""
+            if is_external(tool) and isinstance(step.get("tool_version"), int):
+                found.setdefault(tool, step["tool_version"])
+
+            walk(step.get("steps"))
+
+    walk(spec.get("steps") if isinstance(spec, dict) else None)
+
+    return found

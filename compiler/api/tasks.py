@@ -25,6 +25,12 @@ class PatchBody(BaseModel):
     session_id: str | None = None
 
 
+class ToolVersionBody(BaseModel):
+    tool: str
+    # None: the tool's current approved version.
+    version: int | None = None
+
+
 @router.post("/compile", summary="Chat session → draft task (nothing runs)")
 async def compile_task(body: CompileBody, request: Request):
     return await request.app.state.compiler.compile(body.session_id, title=body.title, hint=body.hint)
@@ -45,6 +51,11 @@ class EditBody(BaseModel):
 @router.post("/tasks/{task_id}/versions", summary="The user's own edit, no LLM → new draft version and diff")
 async def edit_task(task_id: str, body: EditBody, request: Request):
     return await request.app.state.compiler.edit(task_id, spec=body.spec, ops=body.ops, summary=body.summary)
+
+
+@router.post("/tasks/{task_id}/tool-versions", summary="Move the task's steps to another version of an external tool → draft version")
+async def move_tool_version(task_id: str, body: ToolVersionBody, request: Request):
+    return await request.app.state.compiler.move_to_tool_version(task_id, body.tool, body.version)
 
 
 @router.post("/validate", summary="Check a spec against the tool catalog")

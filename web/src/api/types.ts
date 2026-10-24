@@ -74,7 +74,16 @@ export type ChatReply = {
 };
 
 // A step as the user reads it (compiler/cards.py); foreach steps have children.
-export type Card = { id: string; tool: string | null; text: string; args: Record<string, unknown>; confirm?: boolean | "always"; children: Card[] };
+export type Card = {
+  id: string;
+  tool: string | null;
+  // The version of an external tool (ext.*) the step runs.
+  version?: number | null;
+  text: string;
+  args: Record<string, unknown>;
+  confirm?: boolean | "always";
+  children: Card[];
+};
 
 export type VersionStatus = "draft" | "approved" | "rejected" | "superseded";
 
@@ -90,7 +99,10 @@ export type Version = VersionItem & {
   approved_at: string | null;
 };
 
-export type TaskDetail = TaskSummary & { current_version: Version | null; versions: VersionItem[] };
+// An external tool with a newer approved version than the task runs.
+export type ToolUpdate = { tool: string; version: number; current: number };
+
+export type TaskDetail = TaskSummary & { current_version: Version | null; versions: VersionItem[]; tool_updates: ToolUpdate[] };
 
 export type Change = { kind: "added" | "removed" | "changed" | "trigger" | "title"; step?: string; before?: string; after?: string };
 

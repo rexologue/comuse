@@ -14,11 +14,11 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from common.external_tools import NAME_RE, deps, full_name
+from common.external_tools import NAME_RE, PREFIX, deps, full_name, pinned
 from common.external_tools.manifest import Manifest
 from common.settings import StorageSettings
 from common.storage.db import session
-from common.storage.models import ExternalTool, ExternalToolVersion
+from common.storage.models import ExternalTool, ExternalToolVersion, Run, Task, TaskVersion
 from common.tools import ToolError
 from common.utils import new_id, utcnow
 
@@ -138,6 +138,41 @@ def approve(storage: StorageSettings, name: str, version: int) -> dict[str, Any]
     return version_view(storage, name, version)
 
 
+def sweep_unused(storage: StorageSettings) -> int:
+    """Delete approved versions nothing runs any more: not current, and not pinned by a
+    task version that is a draft, active, or still has a run going."""
+    with session() as db:
+        current = {(t.name, t.current_version) for t in db.query(ExternalTool)}
+        live_tasks = {t.id for t in db.query(Task).filter(Task.status != "archived")}
+        running = {r.task_version_id for r in db.query(Run).filter(Run.status.in_(("queued", "running")))}
+        specs = [
+            v.spec
+            for v in db.query(TaskVersion)
+            if v.id in running or (v.task_id in live_tasks and v.status in ("draft", "approved"))
+        ]
+        old = [
+            row for row in db.query(ExternalToolVersion).filter_by(status="approved")
+            if (row.name, row.version) not in current
+        ]
+
+    used = {(tool.removeprefix(PREFIX), version) for spec in specs for tool, version in pinned(spec).items()}
+    removed = 0
+
+    for row in old:
+        if (row.name, row.version) in used:
+            continue
+
+        shutil.rmtree(version_dir(storage, row.name, row.version), ignore_errors=True)
+
+        with session() as db:
+            db.query(ExternalToolVersion).filter_by(id=row.id).delete()
+            db.commit()
+
+        removed += 1
+
+    return removed
+
+
 def current_versions() -> list[ExternalToolVersion]:
     """The approved version each command runs now (for the executor's registry)."""
     with session() as db:
@@ -145,6 +180,11 @@ def current_versions() -> list[ExternalToolVersion]:
         rows = db.query(ExternalToolVersion).filter(ExternalToolVersion.name.in_(list(tools))).all()
 
     return [row for row in rows if tools[row.name] == row.version]
+
+
+def approved_version(name: str, version: int) -> ExternalToolVersion | None:
+    with session() as db:
+        return db.query(ExternalToolVersion).filter_by(name=name, version=version, status="approved").one_or_none()
 
 
 def tool_list() -> list[dict[str, Any]]:

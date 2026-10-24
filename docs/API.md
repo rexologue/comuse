@@ -72,6 +72,7 @@
 | `POST /compiler/compile` | Собрать задачу из чата → черновик и одобрение |
 | `POST /compiler/patch` | Правка словами (LLM) → черновик новой версии, diff и одобрение |
 | `POST /tasks/{id}/versions` | Правка вручную без LLM → черновик новой версии, diff и одобрение |
+| `POST /tasks/{id}/tool-versions` | `{"tool": "ext.x", "version": 3}` (без `version` — текущая) → черновик, где шаги этой команды на новой версии, diff и одобрение; шаги не подходят к её схемам — `422` со списком |
 | `POST /tasks/{id}/versions/{v}/approve` | Сделать версию активной |
 | `POST /tasks/{id}/versions/{v}/reject` | Отклонить черновик |
 | `POST /tasks/{id}/pause`, `/resume`, `/archive` | Приостановить, возобновить, убрать в архив |
@@ -166,7 +167,7 @@
 | Маршрут | Что делает |
 | --- | --- |
 | `GET /tools` | Каталог команд: манифесты со схемами |
-| `GET /tools/{name}` | Манифест одной команды |
+| `GET /tools/{name}` | Манифест одной команды; `?version=N` — одобренная версия своей команды |
 | `GET /external-tools`, `PUT /external-tools/{name}/draft`, … | Свои команды: черновики, версии, одобрение — см. [EXTERNAL_TOOLS.md](EXTERNAL_TOOLS.md#api) |
 | `GET /accounts` | Аккаунты без паролей: `id`, `name`, `kind`, `config` |
 | `GET /accounts/kinds` | Виды аккаунтов, которые объявили группы команд: поля для формы, название секрета, пресеты |

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import time
@@ -22,7 +23,7 @@ from common.storage.db import session
 from common import templating
 from common.storage.models import ChatMessage, TaskVersion, TraceEvent
 from common.utils import truncate
-from compiler import prompts, store, task_settings
+from compiler import prompts, store, task_settings, versions
 from compiler.cards import build_cards, describe_trigger, diff_specs, summarize
 from compiler.validate import SpecError, validate_spec
 
@@ -41,6 +42,8 @@ class Compiler:
 
         self._catalog: dict[str, dict[str, Any]] = {}
         self._catalog_at = 0.0
+        # Manifests of approved external tool versions: they never change.
+        self._versions: dict[tuple[str, int], dict[str, Any] | None] = {}
 
 
     async def compile(self, session_id: str, *, title: str | None = None, hint: str | None = None) -> dict[str, Any]:
@@ -90,6 +93,10 @@ class Compiler:
         texts: list[str],
     ) -> TaskSpec:
         def validate(data: Any) -> TaskSpec:
+            # A new task runs the current version of each external tool.
+            if isinstance(data, dict):
+                versions.pin(data, catalog, keep={}, explicit=False)
+
             spec = validate_spec(data, catalog)
             check_reflects_chat(spec, chat_tools)
             check_verbatim(spec, texts)
@@ -106,8 +113,9 @@ class Compiler:
 
 
     async def patch(self, task_id: str, instruction: str, *, session_id: str | None = None) -> dict[str, Any]:
-        catalog = await self.catalog()
         base = store.base_version(task_id)
+        kept = versions.pins(base.spec)
+        catalog = await self.catalog_for(kept)
 
         messages = prompts.patch_messages(spec=base.spec, instruction=instruction, catalog=catalog, today=date.today())
 
@@ -117,6 +125,9 @@ class Compiler:
 
             except (jsonpatch.JsonPatchException, jsonpointer.JsonPointerException) as e:
                 raise ValueError(f"JSON Patch не применяется: {e}") from e
+
+            # The model keeps the task's tool versions, whatever it wrote.
+            versions.pin(patched, catalog, keep=kept, explicit=False)
 
             return data, validate_spec(patched, catalog)
 
@@ -146,8 +157,8 @@ class Compiler:
         if (spec is None) == (ops is None):
             raise ApiError(status_code=422, message="Нужно одно из двух: spec (задача целиком) или ops (JSON Patch)")
 
-        catalog = await self.catalog()
         base = store.base_version(task_id)
+        base_catalog = await self.catalog_for(versions.pins(base.spec))
 
         if ops is not None:
             try:
@@ -156,13 +167,52 @@ class Compiler:
             except (jsonpatch.JsonPatchException, jsonpointer.JsonPointerException) as e:
                 raise ApiError(status_code=422, message=f"JSON Patch не применяется: {e}") from e
 
+        # The user's own edit may name another version; the rest stays as the task had it.
+        versions.pin(spec, base_catalog, keep=versions.pins(base.spec), explicit=True)
+        catalog = await self.catalog_for(versions.pins(spec))
+
         try:
             checked = validate_spec(spec, catalog)
 
         except SpecError as e:
             raise ApiError(status_code=422, message="Задача не прошла проверку", details={"errors": e.errors}) from e
 
-        return self._new_version(task_id, base, checked, catalog, patch=ops, summary=summary, created_by="manual", session_id=None)
+        return self._new_version(
+            task_id, base, checked, catalog, base_catalog=base_catalog, patch=ops, summary=summary, created_by="manual", session_id=None
+        )
+
+
+    async def move_to_tool_version(self, task_id: str, tool: str, version: int | None) -> dict[str, Any]:
+        """A draft where every step of `tool` runs `version` (the current one if None);
+        checked against that version's schemas like any edit."""
+        base = store.base_version(task_id)
+        # Fresh: the version just approved must count as current, cache or not.
+        current = (await self.catalog(fresh=True)).get(tool, {}).get("version")
+        target = version or current
+
+        if target is None:
+            raise ApiError(status_code=404, message=f"У `{tool}` нет одобренной версии")
+
+        spec = copy.deepcopy(base.spec)
+        steps = [step for step in versions.tool_steps(spec) if step["tool"] == tool]
+
+        if not steps:
+            raise ApiError(status_code=422, message=f"В задаче нет шагов с `{tool}`")
+
+        before = steps[0].get("tool_version")
+        if all(step.get("tool_version") == target for step in steps):
+            raise ApiError(status_code=422, message=f"Задача уже на `{tool}` v{target}")
+
+        for step in steps:
+            step["tool_version"] = target
+
+        try:
+            return await self.edit(task_id, spec=spec, ops=None, summary=f"{tool}: v{before} → v{target}")
+
+        except ApiError as e:
+            if e.status_code == 422 and e.details:
+                e.message = f"Шаги задачи не подходят к `{tool}` v{target}: поправьте задачу словами"
+            raise
 
 
     def _new_version(
@@ -172,13 +222,14 @@ class Compiler:
         spec: TaskSpec,
         catalog: dict[str, dict[str, Any]],
         *,
+        base_catalog: dict[str, dict[str, Any]] | None = None,
         patch: list[dict[str, Any]] | None,
         summary: str | None,
         created_by: str,
         session_id: str | None,
     ) -> dict[str, Any]:
         cards = build_cards(spec, catalog)
-        diff = diff_specs(TaskSpec.model_validate(base.spec), spec, catalog)
+        diff = diff_specs(TaskSpec.model_validate(base.spec), spec, base_catalog or catalog, catalog)
 
         if not diff["changes"]:
             raise ApiError(status_code=422, message="Изменение ничего не меняет в задаче")
@@ -210,19 +261,42 @@ class Compiler:
         if not version.parent_version_id:
             return {"changes": [], "lines": ["Первая версия задачи"]}
 
-        catalog = await self.catalog()
         parent = store.get_version(task_id, version.parent_version_id)
 
-        return diff_specs(TaskSpec.model_validate(parent.spec), TaskSpec.model_validate(version.spec), catalog)
+        return diff_specs(
+            TaskSpec.model_validate(parent.spec),
+            TaskSpec.model_validate(version.spec),
+            await self.catalog_for(versions.pins(parent.spec)),
+            await self.catalog_for(versions.pins(version.spec)),
+        )
 
 
-    async def catalog(self) -> dict[str, dict[str, Any]]:
-        if not self._catalog or time.monotonic() - self._catalog_at > _CATALOG_TTL_SEC:
+    async def catalog(self, *, fresh: bool = False) -> dict[str, dict[str, Any]]:
+        if fresh or not self._catalog or time.monotonic() - self._catalog_at > _CATALOG_TTL_SEC:
             data = await self.main.get("/tools")
             self._catalog = {tool["name"]: tool for tool in data["tools"]}
             self._catalog_at = time.monotonic()
 
         return self._catalog
+
+
+    async def catalog_for(self, pinned: dict[str, int]) -> dict[str, dict[str, Any]]:
+        """The catalog as a task with these external tool versions sees it."""
+        return await versions.overlay(await self.catalog(), pinned, self._version_manifest)
+
+
+    async def _version_manifest(self, tool: str, version: int) -> dict[str, Any] | None:
+        if (tool, version) not in self._versions:
+            try:
+                self._versions[(tool, version)] = await self.main.get(f"/tools/{tool}", params={"version": version})
+
+            except ApiError as e:
+                if e.status_code != 404:
+                    raise
+
+                return None
+
+        return self._versions[(tool, version)]
 
 
 def successful_tools(session_id: str) -> set[str]:

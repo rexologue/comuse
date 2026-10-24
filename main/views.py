@@ -5,8 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 from common.cron import describe_schedule
+from common.external_tools import PREFIX, pinned
 from common.storage.db import session
-from common.storage.models import Run, Task, TaskVersion
+from common.storage.models import ExternalTool, Run, Task, TaskVersion
 from common.storage.queries import run_dict
 
 
@@ -36,6 +37,8 @@ def task_detail(task_id: str) -> dict[str, Any] | None:
     return {
         **_task_summary(task, current),
         "current_version": version_dict(current) if current else None,
+        # External tools with a newer approved version than the task runs.
+        "tool_updates": _tool_updates(current.spec if current else {}),
         "versions": [
             {
                 "id": v.id,
@@ -108,6 +111,24 @@ def _task_summary(task: Task, current: TaskVersion | None) -> dict[str, Any]:
         "created_at": task.created_at.isoformat(),
         "updated_at": task.updated_at.isoformat() if task.updated_at else None,
     }
+
+
+def _tool_updates(spec: dict[str, Any]) -> list[dict[str, Any]]:
+    runs = pinned(spec)
+    if not runs:
+        return []
+
+    with session() as db:
+        current = {
+            PREFIX + row.name: row.current_version
+            for row in db.query(ExternalTool).filter(ExternalTool.name.in_([t.removeprefix(PREFIX) for t in runs]))
+        }
+
+    return [
+        {"tool": tool, "version": version, "current": current[tool]}
+        for tool, version in sorted(runs.items())
+        if current.get(tool) and current[tool] > version
+    ]
 
 
 def _schedule(spec: dict[str, Any]) -> str | None:

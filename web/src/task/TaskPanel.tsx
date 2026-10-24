@@ -9,7 +9,7 @@ import { useNavigate, useSearchParams } from "react-router";
 
 import { api, ApiError } from "@/api/client";
 import { keys, useJobs, useTask, useTaskRuns, useVersion } from "@/api/queries";
-import type { Run, TaskDetail, Version } from "@/api/types";
+import type { Run, TaskDetail, ToolUpdate, Version } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { dateTime } from "@/lib/format";
@@ -152,12 +152,54 @@ function Scenario({ task, version }: { task: TaskDetail; version: Version | null
   return (
     <Block title={task.current_version ? "Сценарий" : "Сценарий черновика"}>
       {version ? <Cards cards={version.cards} /> : <p className="text-sm text-muted-foreground">Загрузка…</p>}
+      {task.tool_updates.map((update) => (
+        <ToolUpdateNote key={update.tool} taskId={task.id} update={update} />
+      ))}
       {!task.current_version && version && (
         <div className="pt-2">
           <DraftActions taskId={task.id} versionId={version.id} />
         </div>
       )}
     </Block>
+  );
+}
+
+// A new version of an external tool changes nothing in the task by itself: moving to
+// it is a new task version, approved like any other.
+function ToolUpdateNote({ taskId, update }: { taskId: string; update: ToolUpdate }) {
+  const queryClient = useQueryClient();
+  const [, setSearch] = useSearchParams();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const move = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await api<{ version_id: string }>(`/tasks/${taskId}/tool-versions`, { method: "POST", json: { tool: update.tool, version: update.current } });
+      await queryClient.invalidateQueries({ queryKey: keys.task(taskId) });
+      setSearch((search) => {
+        search.set("version", result.version_id);
+        return search;
+      });
+    } catch (e) {
+      const errors = e instanceof ApiError ? ((e.details as { errors?: string[] } | null)?.errors ?? []) : [];
+      setError([e instanceof Error ? e.message : String(e), ...errors].join("\n"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-2 flex flex-col gap-1.5 rounded-md border border-dashed p-2 text-sm">
+      <span>
+        У команды {update.tool} есть версия v{update.current}, задача работает на v{update.version}.
+      </span>
+      <Button size="sm" variant="outline" className="self-start" onClick={move} disabled={busy}>
+        {busy ? "Готовлю черновик…" : `Перевести на v${update.current}`}
+      </Button>
+      {error && <p className="text-xs whitespace-pre-line text-destructive">{error}</p>}
+    </div>
   );
 }
 

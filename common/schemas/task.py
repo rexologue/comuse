@@ -33,6 +33,10 @@ class Step(BaseModel):
     id: str = Field(pattern=STEP_ID_PATTERN)
     title: str | None = None
     tool: str | None = None
+    # External tools (ext.*) only: the approved version the step runs. The compiler sets
+    # it, so a new version of the tool changes nothing here until the user moves the
+    # task to it (docs/EXTERNAL_TOOLS.md).
+    tool_version: int | None = Field(default=None, ge=1)
     args: dict[str, Any] = Field(default_factory=dict)
     when: str | None = None
     foreach: str | None = None

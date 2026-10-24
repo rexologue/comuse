@@ -21,6 +21,9 @@ class ExecContext(BaseModel):
 
 class ExecuteRequest(BaseModel):
     tool: str
+    # External tools (ext.*): the approved version to run, as the task step pins it;
+    # None — the current one (the chat). Internal tools have no versions.
+    version: int | None = None
     args: dict[str, Any] = Field(default_factory=dict)
     context: ExecContext = Field(default_factory=ExecContext)
 

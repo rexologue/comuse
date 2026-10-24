@@ -98,6 +98,12 @@ class Orchestrator:
         return self._with_version_approval(result, None)
 
 
+    async def move_tool_version(self, task_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        result = await self.registry.client("compiler").post(f"/tasks/{task_id}/tool-versions", json=body)
+
+        return self._with_version_approval(result, None)
+
+
     async def approve_version(self, task_id: str, version_id: str) -> dict[str, Any]:
         result = await self.registry.client("compiler").post(f"/tasks/{task_id}/versions/{version_id}/approve")
 

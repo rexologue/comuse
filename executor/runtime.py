@@ -59,8 +59,11 @@ class ExecutorRuntime:
 
 
     async def _execute(self, req: ExecuteRequest) -> ExecuteResponse:
-        spec = self.registry.get(req.tool)
+        spec = self.registry.get(req.tool, req.version)
         if spec is None:
+            if req.version is not None and self.registry.get(req.tool) is not None:
+                return ExecuteResponse(status="error", error=f"У `{req.tool}` нет одобренной версии v{req.version}")
+
             return ExecuteResponse(status="error", error=f"Неизвестный инструмент `{req.tool}`")
 
         try:

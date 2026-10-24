@@ -30,10 +30,16 @@ def summarize(spec: TaskSpec) -> str:
     return f"{spec.title}: {describe_trigger(spec.trigger)}, шагов: {count}"
 
 
-def diff_specs(old: TaskSpec, new: TaskSpec, catalog: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    """What changes for the user between two versions, as before/after lines."""
+def diff_specs(
+    old: TaskSpec,
+    new: TaskSpec,
+    catalog: dict[str, dict[str, Any]],
+    new_catalog: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """What changes for the user between two versions, as before/after lines. Each side
+    reads its own catalog: they may run different versions of an external tool."""
     old_cards = {c["id"]: c for c in _flatten(build_cards(old, catalog))}
-    new_cards = {c["id"]: c for c in _flatten(build_cards(new, catalog))}
+    new_cards = {c["id"]: c for c in _flatten(build_cards(new, new_catalog or catalog))}
 
     changes: list[dict[str, Any]] = []
 
@@ -42,8 +48,12 @@ def diff_specs(old: TaskSpec, new: TaskSpec, catalog: dict[str, dict[str, Any]])
         if before is None:
             changes.append({"kind": "added", "step": step_id, "after": card["text"]})
 
-        elif before["text"] != card["text"] or before["args"] != card["args"]:
-            changes.append({"kind": "changed", "step": step_id, "before": before["text"], "after": card["text"], "args_before": before["args"], "args_after": card["args"]})
+        elif before["text"] != card["text"] or before["args"] != card["args"] or before.get("version") != card.get("version"):
+            changes.append({
+                "kind": "changed", "step": step_id, "before": before["text"], "after": card["text"],
+                "args_before": before["args"], "args_after": card["args"],
+                "version_before": before.get("version"), "version_after": card.get("version"),
+            })
 
     for step_id, card in old_cards.items():
         if step_id not in new_cards:
@@ -75,6 +85,8 @@ def _card(step: Step, catalog: dict[str, dict[str, Any]]) -> dict[str, Any]:
     return {
         "id": step.id,
         "tool": step.tool,
+        # An external tool's version the step runs; None for internal tools.
+        "version": step.tool_version,
         "confirm": manifest.get("confirm"),
         "text": step.title or _format_card(template, step.args),
         "args": step.args,
@@ -158,6 +170,12 @@ def _line(change: dict[str, Any]) -> str:
         return f"− убран шаг: {change['before']}"
 
     if kind == "changed":
+        if change.get("version_before") != change.get("version_after"):
+            moved = f"версия команды v{change.get('version_before')} → v{change.get('version_after')}"
+            if change["before"] == change["after"] and change.get("args_before") == change.get("args_after"):
+                return f"~ {change['after']}: {moved}"
+            return f"~ было: {change['before']} → стало: {change['after']} ({moved})"
+
         return f"~ было: {change['before']} → стало: {change['after']}"
 
     if kind == "trigger":
