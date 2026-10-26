@@ -248,14 +248,15 @@ def load_dotenv(path: Path) -> dict[str, str]:
         if not line or line.startswith("#") or "=" not in line:
             continue
 
-        key, value = line.split("=", 1)
-        value = value.strip()
+        key, raw = line.split("=", 1)
+        value = raw.strip()
 
         # A quoted value is taken whole (a password may hold " #"); a comment may follow it.
+        # Otherwise a comment starts at " #" in the line as written: `KEY= # note` is empty.
         if value[:1] in ("'", '"') and value[0] in value[1:]:
             value = value[1 : value.index(value[0], 1)]
         else:
-            value = value.split(" #", 1)[0].strip()
+            value = raw.split(" #", 1)[0].strip()
 
         values[key.strip()] = value
 
