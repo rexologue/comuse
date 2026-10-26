@@ -13,16 +13,17 @@ import json
 import shutil
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, Collection
 
 from pydantic import ValidationError
 
-from common.external_tools import NAME_RE, PREFIX, deps, full_name
+from common.external_tools import NAME_RE, deps
 from common.external_tools.manifest import Manifest
 from common.settings import StorageSettings
 from common.storage.db import session
 from common.storage.models import ExternalTool, ExternalToolVersion
 from common.tools import ToolError
+from common.tools.settings import tool_group
 from common.utils import new_id, utcnow
 
 
@@ -40,7 +41,9 @@ _LOCKS_GUARD = threading.Lock()
 
 
 def version_dir(storage: StorageSettings, name: str, version: int) -> Path:
-    return storage.external_tools_dir / name / str(version)
+    """`telegram.send` v3 → external_tools/telegram/send/3."""
+    group, action = name.split(".", 1)
+    return storage.external_tools_dir / group / action / str(version)
 
 
 def files_hash(folder: Path) -> str:
@@ -65,11 +68,13 @@ def save_draft(
     created_by: str = "user",
     session_id: str | None = None,
     only_own: bool = False,
+    builtin_groups: Collection[str] = (),
 ) -> dict[str, Any]:
     """Write the command's draft (a new version number, or the draft there already is).
     Everything wrong is named at once, before anything is written. `only_own`: a draft
-    someone else wrote (a person, another chat) is not replaced."""
-    checked = _check(name, manifest, files, requirements)
+    someone else wrote (a person, another chat) is not replaced. `builtin_groups`: the
+    groups of the built-in commands, which an own command cannot join."""
+    checked = _check(name, manifest, files, requirements, builtin_groups)
 
     with _lock(name):
         with session() as db:
@@ -79,7 +84,7 @@ def save_draft(
         if only_own and draft and (draft.created_by, draft.session_id) != (created_by, session_id):
             who = "другой чат" if draft.created_by == "chat" else "пользователь на странице «Команды»"
             raise ToolError(
-                f"У `{full_name(name)}` уже есть черновик v{draft.version}: его написал {who}. "
+                f"У `{name}` уже есть черновик v{draft.version}: его написал {who}. "
                 "Он не заменён: пусть пользователь одобрит или выбросит его, или выбери другое имя"
             )
 
@@ -134,7 +139,7 @@ def drop_draft(storage: StorageSettings, name: str) -> None:
     with _lock(name), session() as db:
         draft = _draft(db, name)
         if draft is None:
-            raise ToolError(f"У `{full_name(name)}` нет черновика")
+            raise ToolError(f"У `{name}` нет черновика")
 
         shutil.rmtree(version_dir(storage, name, draft.version), ignore_errors=True)
         db.delete(draft)
@@ -154,7 +159,7 @@ def approve(storage: StorageSettings, name: str, version: int, seen_hash: str) -
             row = _row(db, name, version)
 
         if row.status != "draft":
-            raise ToolError(f"`{full_name(name)}` v{version} уже одобрена")
+            raise ToolError(f"`{name}` v{version} уже одобрена")
 
         if row.hash != seen_hash:
             raise ToolError("Черновик изменился, пока вы его читали: посмотрите его ещё раз")
@@ -179,7 +184,7 @@ def approve(storage: StorageSettings, name: str, version: int, seen_hash: str) -
 
 def sweep_unused(storage: StorageSettings, needed: set[tuple[str, int]]) -> int:
     """Delete approved versions nothing runs any more: not current, and not in `needed`
-    ({(ext.<name>, version)} that tasks and unfinished runs pin: their owners say which)."""
+    ({(name, version)} that tasks and unfinished runs pin: their owners say which)."""
     with session() as db:
         current = {(t.name, t.current_version) for t in db.query(ExternalTool)}
         old = [
@@ -187,7 +192,7 @@ def sweep_unused(storage: StorageSettings, needed: set[tuple[str, int]]) -> int:
             if (row.name, row.version) not in current
         ]
 
-    used = {(tool.removeprefix(PREFIX), version) for tool, version in needed}
+    used = set(needed)
     removed = 0
 
     for row in old:
@@ -231,7 +236,6 @@ def tool_list() -> list[dict[str, Any]]:
     return [
         {
             "name": tool.name,
-            "tool": full_name(tool.name),
             "title": (_current(by_name.get(tool.name, []), tool.current_version) or {}).get("title"),
             "current_version": tool.current_version,
             "draft_version": next((r.version for r in by_name.get(tool.name, []) if r.status == "draft"), None),
@@ -249,7 +253,6 @@ def version_view(storage: StorageSettings, name: str, version: int, *, files: bo
     view = {
         **_summary(row),
         "name": name,
-        "tool": full_name(name),
         "current": tool is not None and tool.current_version == version,
         "manifest": row.manifest,
         "packages": row.packages,
@@ -276,11 +279,13 @@ def version_view(storage: StorageSettings, name: str, version: int, *, files: bo
 # CHECKS
 # -----------------------------
 
-def _check(name: str, manifest: dict[str, Any], files: dict[str, str], requirements: list[str]) -> Manifest:
+def _check(name: str, manifest: dict[str, Any], files: dict[str, str], requirements: list[str], builtin_groups: Collection[str]) -> Manifest:
     problems: list[str] = []
 
     if not NAME_RE.match(name):
-        problems.append(f"Имя «{name}»: латиницей в нижнем регистре, цифры и _, от 2 до 41 знака, например parse_invoice")
+        problems.append(f"Имя «{name}»: группа.действие латиницей в нижнем регистре, цифры и _, например telegram.send")
+    elif tool_group(name) in builtin_groups:
+        problems.append(f"Имя «{name}»: группа «{tool_group(name)}» встроенная; своей команде нужна своя группа, например telegram.send")
 
     checked = None
     try:
@@ -364,7 +369,7 @@ def _next_version(db, name: str) -> int:
 def _row(db, name: str, version: int) -> ExternalToolVersion:
     row = db.query(ExternalToolVersion).filter_by(name=name, version=version).one_or_none()
     if row is None:
-        raise ToolError(f"Нет версии v{version} у `{full_name(name)}`")
+        raise ToolError(f"Нет версии v{version} у `{name}`")
 
     return row
 

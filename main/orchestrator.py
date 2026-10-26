@@ -1,88 +1,28 @@
-"""Multi-service flows live here, not in the services: compile then ask the user to
-approve, approve a version then reload triggers. The only approval is the user's, of
-a task version: runs never wait for anyone."""
+"""Multi-service flows live here, not in the services: a new draft is announced to the
+user, an approved version reloads the triggers. The only approval is the user's, of a
+task version, and it is the version's own status (compiler): a draft waits for it, an
+approved one is active, a newer draft supersedes an older one. Runs never wait."""
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
 from common.errors import ApiError
 from common.storage.db import session
-from common.storage.models import Approval, Task
-from common.utils import new_id, utcnow
+from common.storage.models import Task
 from main.events import EventBus
 from main.registry import ServiceRegistry
 
 
 log = logging.getLogger("orchestrator")
 
+
 class Orchestrator:
     def __init__(self, registry: ServiceRegistry, bus: EventBus):
 
         self.registry = registry
         self.bus      = bus
-        # One change of a task at a time: an approval answered while a new draft is being
-        # made must not end up "cancelled" with its version active.
-        self._locks: dict[str, asyncio.Lock] = {}
-
-
-    # -----------------------------
-    # APPROVALS
-    # -----------------------------
-
-    def create_approval(
-        self,
-        *,
-        kind: str,
-        payload: dict[str, Any],
-        task_id: str | None = None,
-        task_version_id: str | None = None,
-        session_id: str | None = None,
-    ) -> dict[str, Any]:
-        with session() as db:
-            approval = Approval(
-                id=new_id("apr_"),
-                kind=kind,
-                task_id=task_id,
-                task_version_id=task_version_id,
-                session_id=session_id,
-                payload=payload,
-            )
-            db.add(approval)
-            db.commit()
-
-        record = approval_dict(approval)
-        self.bus.publish("approval.created", record)
-
-        return record
-
-
-    async def answer(self, approval_id: str, *, approve: bool) -> dict[str, Any]:
-        with session() as db:
-            approval = db.get(Approval, approval_id)
-
-        if approval is None:
-            raise ApiError(status_code=404, message=f"Approval `{approval_id}` not found")
-
-        async with self._lock(approval.task_id):
-            # Read again under the lock: a change of the task may have voided it meanwhile.
-            with session() as db:
-                approval = db.get(Approval, approval_id)
-
-            if approval.status != "pending":
-                raise ApiError(status_code=409, message=f"Approval `{approval_id}` is already {approval.status}")
-
-            if approval.kind != "version_approve":
-                raise ApiError(status_code=409, message=f"Approval `{approval_id}` of kind `{approval.kind}` cannot be answered")
-
-            if approve:
-                await self._approve_version(approval.task_id, approval.task_version_id)
-            else:
-                await self._reject_version(approval.task_id, approval.task_version_id)
-
-        return self._get(approval_id)
 
 
     # -----------------------------
@@ -92,66 +32,47 @@ class Orchestrator:
     async def compile(self, body: dict[str, Any]) -> dict[str, Any]:
         result = await self.registry.client("compiler").post("/compile", json=body)
 
-        return self._with_version_approval(result, body.get("session_id"))
+        return self._announce_draft(result, body.get("session_id"))
 
 
     async def patch(self, body: dict[str, Any]) -> dict[str, Any]:
-        async with self._lock(str(body.get("task_id"))):
-            result = await self.registry.client("compiler").post("/patch", json=body)
+        result = await self.registry.client("compiler").post("/patch", json=body)
 
-            return self._with_version_approval(result, body.get("session_id"))
+        return self._announce_draft(result, body.get("session_id"))
 
 
     async def edit(self, task_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        async with self._lock(task_id):
-            result = await self.registry.client("compiler").post(f"/tasks/{task_id}/versions", json=body)
+        result = await self.registry.client("compiler").post(f"/tasks/{task_id}/versions", json=body)
 
-            return self._with_version_approval(result, None)
+        return self._announce_draft(result, None)
 
 
     async def move_tool_version(self, task_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        async with self._lock(task_id):
-            result = await self.registry.client("compiler").post(f"/tasks/{task_id}/tool-versions", json=body)
+        result = await self.registry.client("compiler").post(f"/tasks/{task_id}/tool-versions", json=body)
 
-            return self._with_version_approval(result, None)
+        return self._announce_draft(result, None)
 
 
     async def approve_version(self, task_id: str, version_id: str) -> dict[str, Any]:
-        async with self._lock(task_id):
-            return await self._approve_version(task_id, version_id)
-
-
-    async def reject_version(self, task_id: str, version_id: str) -> dict[str, Any]:
-        async with self._lock(task_id):
-            return await self._reject_version(task_id, version_id)
-
-
-    async def _approve_version(self, task_id: str, version_id: str) -> dict[str, Any]:
+        # The compiler approves only a draft: one superseded meanwhile is refused (409).
         result = await self.registry.client("compiler").post(f"/tasks/{task_id}/versions/{version_id}/approve")
 
-        self._resolve_version_approvals(version_id, "approved")
         await self._reload_triggers(task_id)
         self.bus.publish("task.approved", {"task_id": task_id, "version_id": version_id})
 
         return result
 
 
-    async def _reject_version(self, task_id: str, version_id: str) -> dict[str, Any]:
+    async def reject_version(self, task_id: str, version_id: str) -> dict[str, Any]:
         result = await self.registry.client("compiler").post(f"/tasks/{task_id}/versions/{version_id}/reject")
 
-        self._resolve_version_approvals(version_id, "rejected")
         self.bus.publish("task.rejected", {"task_id": task_id, "version_id": version_id})
 
         return result
 
 
     async def set_task_status(self, task_id: str, action: str) -> dict[str, Any]:
-        async with self._lock(task_id):
-            result = await self.registry.client("compiler").post(f"/tasks/{task_id}/{action}")
-
-            # An archived task's drafts wait for nobody.
-            if action == "archive":
-                self._cancel_task_approvals(task_id)
+        result = await self.registry.client("compiler").post(f"/tasks/{task_id}/{action}")
 
         await self._reload_triggers(task_id)
         self.bus.publish(f"task.{action}", {"task_id": task_id})
@@ -159,23 +80,15 @@ class Orchestrator:
         return result
 
 
-    def _lock(self, task_id: str) -> asyncio.Lock:
-        return self._locks.setdefault(task_id, asyncio.Lock())
-
-
-    def _with_version_approval(self, result: dict[str, Any], session_id: str | None) -> dict[str, Any]:
-        # The new draft replaces the task's older drafts, so their approvals are void.
-        self._cancel_task_approvals(result["task_id"])
-
-        approval = self.create_approval(
-            kind="version_approve",
-            task_id=result["task_id"],
-            task_version_id=result["version_id"],
-            session_id=session_id,
-            payload={"title": result.get("title"), "summary": result.get("summary"), "cards": result.get("cards")},
+    def _announce_draft(self, result: dict[str, Any], session_id: str | None) -> dict[str, Any]:
+        """A new draft waits for the user: whoever shows what waits (the chat it was made
+        in, the event feed) hears of it."""
+        self.bus.publish(
+            "task.draft",
+            {"task_id": result["task_id"], "version_id": result["version_id"], "session_id": session_id, "title": result.get("title")},
         )
 
-        return {**result, "approval_id": approval["id"]}
+        return result
 
 
     # -----------------------------
@@ -214,52 +127,3 @@ class Orchestrator:
 
         except ApiError as e:
             log.warning("scheduler reload for %s failed: %s", task_id, e.message)
-
-
-    def _resolve(self, approval_id: str, status: str) -> None:
-        with session() as db:
-            approval = db.get(Approval, approval_id)
-            approval.status = status
-            approval.resolved_at = utcnow()
-            db.commit()
-
-        self.bus.publish("approval.resolved", approval_dict(approval))
-
-
-    def _resolve_version_approvals(self, version_id: str, status: str) -> None:
-        with session() as db:
-            pending = (
-                db.query(Approval)
-                .filter(Approval.task_version_id == version_id, Approval.status == "pending")
-                .all()
-            )
-
-        for approval in pending:
-            self._resolve(approval.id, status)
-
-
-    def _cancel_task_approvals(self, task_id: str) -> None:
-        with session() as db:
-            pending = db.query(Approval).filter(Approval.task_id == task_id, Approval.status == "pending").all()
-
-        for approval in pending:
-            self._resolve(approval.id, "cancelled")
-
-
-    def _get(self, approval_id: str) -> dict[str, Any]:
-        with session() as db:
-            return approval_dict(db.get(Approval, approval_id))
-
-
-def approval_dict(approval: Approval) -> dict[str, Any]:
-    return {
-        "id": approval.id,
-        "kind": approval.kind,
-        "status": approval.status,
-        "task_id": approval.task_id,
-        "task_version_id": approval.task_version_id,
-        "session_id": approval.session_id,
-        "payload": approval.payload,
-        "created_at": approval.created_at.isoformat() if approval.created_at else None,
-        "resolved_at": approval.resolved_at.isoformat() if approval.resolved_at else None,
-    }

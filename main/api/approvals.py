@@ -4,14 +4,10 @@ import asyncio
 import json
 
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
-from common.storage.db import session
-from common.storage.models import Approval
-from main import events
+from main import events, views
 from main.auth import require_client
-from main.orchestrator import approval_dict
 
 
 router = APIRouter(dependencies=[Depends(require_client)])
@@ -20,31 +16,14 @@ router = APIRouter(dependencies=[Depends(require_client)])
 _PING_SEC = 15
 
 
-class AnswerBody(BaseModel):
-    approve: bool = True
-
-
 # -----------------------------
 # APPROVALS
 # -----------------------------
 
-@router.get("/approvals", summary="Task versions waiting for the user's approval")
-async def list_approvals(status: str | None = "pending", session_id: str | None = None):
-    with session() as db:
-        query = db.query(Approval)
-        if status:
-            query = query.filter(Approval.status == status)
-        if session_id:
-            query = query.filter(Approval.session_id == session_id)
-
-        rows = query.order_by(Approval.created_at.desc()).limit(100).all()
-
-    return {"approvals": [approval_dict(a) for a in rows]}
-
-
-@router.post("/approvals/{approval_id}/answer", summary="Approve or reject a task version")
-async def answer(approval_id: str, body: AnswerBody, request: Request):
-    return await request.app.state.orchestrator.answer(approval_id, approve=body.approve)
+@router.get("/approvals", summary="Draft task versions waiting for the user's approval (the draft is the approval)")
+async def list_approvals(session_id: str | None = None):
+    # Approving or rejecting one: POST /tasks/{id}/versions/{version_id}/approve | reject.
+    return {"approvals": views.pending_drafts(session_id)}
 
 
 # -----------------------------

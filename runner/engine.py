@@ -23,6 +23,7 @@ from common.schemas.task import Step, TaskSpec
 from common.storage.db import session
 from common.storage.models import RUN_FINISHED, Run, RunLog, Task, TaskVersion
 from common.storage.queries import run_detail
+from common.tools.settings import resolve
 from common.utils import truncate, utcnow
 
 
@@ -371,7 +372,8 @@ class _Walk:
             "mode": "run",
             "run_id": self.run.id,
             "step_key": key,
-            "task_settings": self.task_settings,
+            # The step's own values, else the task's; the executor fills in the defaults.
+            "tool_settings": resolve(self.task_settings, step.tool, step.id),
             "dry_run": self.run.dry_run,
         }
 

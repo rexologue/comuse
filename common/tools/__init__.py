@@ -12,7 +12,7 @@ from typing import Any, Awaitable, Callable, Literal
 from pydantic import BaseModel, ConfigDict
 
 from common.tools.context import Credential, PermissionDenied, ToolContext, ToolError
-from common.tools.domain import DomainSettings, domain_settings, settings_schema
+from common.tools.settings import ToolSettings, check_settings
 from common.tools.fields import PATH_ARG
 from common.tools.guides import guide_of
 from common.tools.refs import file_refs
@@ -21,15 +21,14 @@ from common.utils import strings_in
 
 __all__ = [
     "Credential",
-    "DomainSettings",
     "PermissionDenied",
     "ToolContext",
     "ToolError",
     "ToolInput",
     "ToolOutput",
+    "ToolSettings",
     "ToolSpec",
     "discover",
-    "domain_settings",
     "function_name",
     "path_refs",
     "tool",
@@ -71,10 +70,9 @@ class ToolSpec:
     core: bool
     # Only a chat calls it (it talks with the person); a task never has it as a step.
     chat_only: bool
-    # It only tells the user something: a task of nothing else repeats nothing of the chat.
-    notice_only: bool
-    # It asks the model (ctx.llm); every other tool gets no model at all.
-    uses_llm: bool
+    # What the user tunes per task for this tool (common/tools/settings.py); it reads
+    # the values as ctx.tool_settings.
+    settings_model: type[ToolSettings] | None
     input_model: type[ToolInput]
     output_model: type[BaseModel]
     fn: Callable[[Any, ToolContext], Awaitable[Any]]
@@ -112,14 +110,12 @@ class ToolSpec:
             "input_schema": self.input_model.model_json_schema(),
             # Outputs are dumped by field name (not alias), so describe them the same way.
             "output_schema": self.output_model.model_json_schema(by_alias=False),
-            # Settings of the tool's domain a task using it gets (None: the domain has none).
-            "settings_schema": settings_schema(self.name),
+            # The tool's own settings a task using it gets (None: it has none).
+            "settings_schema": self.settings_model.model_json_schema() if self.settings_model else None,
             # How to use the tool's group, for the agent and the compiler (None: no guide).
             "guide": guide_of(self.name),
             "core": self.core,
             "chat_only": self.chat_only,
-            "notice_only": self.notice_only,
-            "uses_llm": self.uses_llm,
             "source": "internal",
         }
 
@@ -138,8 +134,7 @@ def tool(
     timeout: int | None = None,
     core: bool = False,
     chat_only: bool = False,
-    notice_only: bool = False,
-    uses_llm: bool = False,
+    settings: type[ToolSettings] | None = None,
 ):
     """Register a tool. The function's first parameter annotation is its input model,
     its return annotation the output model; both become JSON schemas for the LLM."""
@@ -150,6 +145,9 @@ def tool(
 
         if len(params) != 2:
             raise TypeError(f"tool {name}: expected signature (inp, ctx), got {params}")
+
+        if settings is not None:
+            check_settings(name, settings)
 
         spec = ToolSpec(
             name=name,
@@ -162,8 +160,7 @@ def tool(
             timeout=timeout,
             core=core,
             chat_only=chat_only,
-            notice_only=notice_only,
-            uses_llm=uses_llm,
+            settings_model=settings,
             input_model=hints[params[0]],
             output_model=hints["return"],
             fn=fn,

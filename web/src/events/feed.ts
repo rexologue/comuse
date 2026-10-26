@@ -7,8 +7,7 @@ export const FEED_TYPES = new Set([
   "notify",
   "run.started",
   "run.finished",
-  "approval.created",
-  "approval.resolved",
+  "task.draft",
   "task.approved",
   "task.rejected",
   "task.pause",
@@ -25,7 +24,7 @@ export function titlesFrom(events: AgentEvent[]): Map<string, string> {
 
   for (const event of events) {
     const p = event.payload as Record<string, unknown>;
-    const title = (p.title as string | undefined) ?? ((p.payload as Record<string, unknown> | undefined)?.title as string | undefined);
+    const title = p.title as string | undefined;
     if (typeof p.task_id === "string" && title) titles.set(p.task_id, title);
   }
 
@@ -56,16 +55,8 @@ export function feedLine(event: AgentEvent, tasks: Map<string, TaskSummary>, tit
       };
     }
 
-    case "approval.created": {
-      const payload = (p.payload ?? {}) as Record<string, unknown>;
-      return { text: `Черновик «${payload.title ?? title}» ждёт решения`, tone: "info", taskId, sessionId: (p.session_id as string | null) ?? undefined };
-    }
-
-    case "approval.resolved": {
-      const payload = (p.payload ?? {}) as Record<string, unknown>;
-      const verdict = { approved: "одобрен", rejected: "отклонён", cancelled: "заменён новым" }[String(p.status)] ?? String(p.status);
-      return { text: `Черновик «${payload.title ?? title}» ${verdict}`, tone: p.status === "approved" ? "good" : "plain", taskId };
-    }
+    case "task.draft":
+      return { text: `Черновик «${title}» ждёт решения`, tone: "info", taskId, sessionId: (p.session_id as string | null) ?? undefined };
 
     case "task.approved":
       return { text: `Задача «${title}» включена`, tone: "good", taskId };

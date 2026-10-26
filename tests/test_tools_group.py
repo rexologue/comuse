@@ -18,12 +18,12 @@ from tests.test_external_tools import COUNT_LINES, HAVE_UV, MANIFEST
 
 def _ctx(settings, mode="chat", dry_run=False) -> ToolContext:
     paths = WorkspacePaths(tunables.get("workspace_dir"), settings.storage.data_dir)
-    return ToolContext(mode=mode, settings=settings, paths=paths, llm=None, session_id="ses_tools", dry_run=dry_run)
+    return ToolContext(mode=mode, settings=settings, paths=paths, session_id="ses_tools", dry_run=dry_run)
 
 
 def _draft_input(**changes) -> draft_tool.Input:
     fields = {
-        "name": "ext.count_lines",
+        "name": "demo.count_lines",
         "title": MANIFEST["title"],
         "description": MANIFEST["description"],
         "input_schema": MANIFEST["input_schema"],
@@ -40,7 +40,7 @@ async def test_only_a_chat_writes_and_tries_commands(settings, mode, dry_run):
         await draft_tool.draft(_draft_input(), _ctx(settings, mode, dry_run))
 
     with pytest.raises(ToolError, match="только в чате"):
-        await trial_tool.trial(trial_tool.Input(name="count_lines"), _ctx(settings, mode, dry_run))
+        await trial_tool.trial(trial_tool.Input(name="demo.count_lines"), _ctx(settings, mode, dry_run))
 
 
 async def test_a_bad_draft_names_its_problems(settings):
@@ -56,12 +56,12 @@ async def test_the_chat_drafts_tries_and_shows_a_command(settings, env):
     ctx = _ctx(settings)
 
     written = await draft_tool.draft(_draft_input(), ctx)
-    assert (written.tool, written.version, written.status) == ("ext.count_lines", 1, "draft")
+    assert (written.tool, written.version, written.status) == ("demo.count_lines", 1, "draft")
 
-    tried = await trial_tool.trial(trial_tool.Input(name="count_lines", args={"file": "a.txt"}), ctx)
+    tried = await trial_tool.trial(trial_tool.Input(name="demo.count_lines", args={"file": "a.txt"}), ctx)
     assert tried.output["lines"] == 2 and tried.output["out"] == "data:outputs/ses_tools/count.txt"
 
-    shown = await show_tool.show(show_tool.Input(name="ext.count_lines"), ctx)
+    shown = await show_tool.show(show_tool.Input(name="demo.count_lines"), ctx)
     assert shown.status == "draft" and shown.files["main.py"] == COUNT_LINES
 
     listed = await list_tool.list_tools(list_tool.Input(), ctx)
@@ -76,17 +76,17 @@ async def test_a_draft_changed_behind_its_back_does_not_run(settings):
     ctx = _ctx(settings)
     await draft_tool.draft(_draft_input(), ctx)
 
-    (store.version_dir(settings.storage, "count_lines", 1) / "main.py").write_text("import os\n")
+    (store.version_dir(settings.storage, "demo.count_lines", 1) / "main.py").write_text("import os\n")
 
     with pytest.raises(ToolError, match="изменились после сохранения"):
-        await trial_tool.trial(trial_tool.Input(name="count_lines", args={"file": "a.txt"}), ctx)
+        await trial_tool.trial(trial_tool.Input(name="demo.count_lines", args={"file": "a.txt"}), ctx)
 
 
 async def test_the_chat_does_not_replace_someone_elses_draft(settings):
-    store.save_draft(settings.storage, "count_lines", manifest=MANIFEST, files={"main.py": COUNT_LINES}, requirements=[])
+    store.save_draft(settings.storage, "demo.count_lines", manifest=MANIFEST, files={"main.py": COUNT_LINES}, requirements=[])
 
     with pytest.raises(ToolError, match="написал пользователь"):
         await draft_tool.draft(_draft_input(), _ctx(settings))
 
-    assert store.version_view(settings.storage, "count_lines", 1)["created_by"] == "user"
+    assert store.version_view(settings.storage, "demo.count_lines", 1)["created_by"] == "user"
 

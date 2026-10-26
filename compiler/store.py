@@ -119,6 +119,20 @@ def get_version(task_id: str, version_id: str) -> TaskVersion:
     return version
 
 
+def shown_version(task: Task) -> TaskVersion | None:
+    """The version a task's panel shows: the active one, else its newest draft."""
+    with session() as db:
+        if task.current_version_id:
+            return db.get(TaskVersion, task.current_version_id)
+
+        return (
+            db.query(TaskVersion)
+            .filter(TaskVersion.task_id == task.id, TaskVersion.status == "draft")
+            .order_by(TaskVersion.version_no.desc())
+            .first()
+        )
+
+
 def base_version(task_id: str) -> TaskVersion:
     """What a change builds on: the newest draft after the active version (the user is
     still shaping it: a second change must keep the first), else the active version."""

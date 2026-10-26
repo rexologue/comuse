@@ -7,6 +7,7 @@ from pydantic import Field
 
 from common.tools import ToolContext, ToolError, ToolInput, ToolOutput, tool
 from internal_tools.llm.inputs import gather_text
+from internal_tools.llm.model import instruct
 
 
 class ExtractInput(ToolInput):
@@ -30,7 +31,6 @@ class ExtractOutput(ToolOutput):
         "result follows output_schema (JSON Schema)."
     ),
     confirm=False,
-    uses_llm=True,
 )
 async def extract(inp: ExtractInput, ctx: ToolContext) -> ExtractOutput:
     text = gather_text(inp.inputs, ctx)
@@ -52,7 +52,7 @@ async def extract(inp: ExtractInput, ctx: ToolContext) -> ExtractOutput:
 
         return data
 
-    data = await ctx.llm.structured(
+    data = await instruct(ctx).structured(
         [
             {
                 "role": "system",

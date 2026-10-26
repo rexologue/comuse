@@ -61,9 +61,9 @@ export function EventFeed({ onOpen }: { onOpen: () => void }) {
       {(approvals.data?.length ?? 0) > 0 && (
         <Pinned title="Ждут решения">
           {approvals.data!.map((approval) => (
-            <button key={approval.id} className="flex w-full items-center gap-2 rounded-md px-1 py-1.5 text-left text-sm hover:bg-accent" onClick={() => open({ taskId: approval.task_id, sessionId: approval.session_id ?? undefined })}>
+            <button key={approval.version_id} className="flex w-full items-center gap-2 rounded-md px-1 py-1.5 text-left text-sm hover:bg-accent" onClick={() => open({ taskId: approval.task_id, sessionId: approval.session_id ?? undefined })}>
               <FileClock className="size-4 shrink-0 text-sky-500" />
-              <span className="truncate">{approval.payload.title ?? byId.get(approval.task_id)?.title ?? "Черновик"}</span>
+              <span className="truncate">{approval.title || byId.get(approval.task_id)?.title || "Черновик"}</span>
               <span className="ml-auto shrink-0 text-xs text-muted-foreground">черновик</span>
             </button>
           ))}

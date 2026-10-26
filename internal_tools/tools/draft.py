@@ -7,11 +7,11 @@ from pydantic import Field
 
 from common.external_tools import store
 from common.tools import ToolContext, ToolInput, ToolOutput, tool
-from internal_tools.tools.common import chat_only, slug
+from internal_tools.tools.common import builtin_groups, chat_only
 
 
 class Input(ToolInput):
-    name: str = Field(description="Имя латиницей snake_case, например parse_invoice; команда станет ext.<name>")
+    name: str = Field(description="Имя группа.действие латиницей snake_case, например telegram.send; группа своя, не встроенная (mail, fs…)")
     title: str = Field(description="Короткое название для людей")
     description: str = Field(description="Что делает команда: по этому тексту её будут выбирать")
     card: str = Field(default="", description="Что видит пользователь перед вызовом, с {аргументами}")
@@ -43,7 +43,7 @@ class Output(ToolOutput):
     title="Черновик своей команды",
     card="Записать черновик команды «{name}»",
     description=(
-        "Write or rewrite the draft of an own command (ext.<name>): manifest, Python files, packages. "
+        "Write or rewrite the draft of an own command (group.action, e.g. telegram.send): manifest, Python files, packages. "
         "Nothing runs: the draft is checked (schemas, syntax, packages) and waits for the user to approve it. "
         "Every problem comes back at once; fix them and call again — the draft keeps its version number. "
         "A draft written by the user or another chat is never replaced."
@@ -67,17 +67,18 @@ async def draft(inp: Input, ctx: ToolContext) -> Output:
     view = await asyncio.to_thread(
         store.save_draft,
         ctx.settings.storage,
-        slug(inp.name),
+        inp.name.strip(),
         manifest=manifest,
         files=inp.files,
         requirements=inp.requirements,
         created_by="chat",
         session_id=ctx.session_id,
         only_own=True,
+        builtin_groups=builtin_groups(),
     )
 
     return Output(
-        tool=view["tool"],
+        tool=view["name"],
         version=view["version"],
         status=view["status"],
         packages=view["packages"],

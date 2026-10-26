@@ -80,7 +80,7 @@ class Compiler:
             "title": spec.title,
             "summary": summarize(spec),
             "trigger": describe_trigger(spec.trigger),
-            "settings": task_settings.describe(settings, catalog),
+            "settings": task_settings.lines(task_settings.view(settings, spec, catalog, cards)),
             "cards": cards,
         }
 
@@ -98,7 +98,7 @@ class Compiler:
                 versions.pin(data, catalog, keep={}, explicit=False)
 
             spec = validate_spec(data, catalog)
-            check_reflects_chat(spec, chat_tools, catalog)
+            check_reflects_chat(spec, chat_tools)
             check_verbatim(spec, texts)
             return spec
 
@@ -294,17 +294,15 @@ class Compiler:
         return self._versions[(tool, version)]
 
 
-def check_reflects_chat(spec: TaskSpec, chat_tools: set[str], catalog: dict[str, dict[str, Any]]) -> None:
-    """A compiled task must redo at least one thing the chat actually did; a spec of
-    only notifications means the model lost the conversation. What only tells the user
-    something (the tool says so: `notice_only`) is not a thing done."""
+def check_reflects_chat(spec: TaskSpec, chat_tools: set[str]) -> None:
+    """A compiled task must redo at least one thing the chat actually did: a spec that
+    shares no tool with the chat means the model lost the conversation."""
     used = {step.tool for step in spec.all_steps() if step.tool}
-    substantive = {tool for tool in chat_tools if not (catalog.get(tool) or {}).get("notice_only")}
 
-    if substantive and not used & substantive:
+    if chat_tools and not used & chat_tools:
         raise SpecError([
             "задача не повторяет ни одного действия из разговора; "
-            f"в разговоре успешно выполнялись: {sorted(substantive)}"
+            f"в разговоре успешно выполнялись: {sorted(chat_tools)}"
         ])
 
 

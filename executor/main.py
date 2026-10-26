@@ -8,7 +8,6 @@ from fastapi import FastAPI
 
 from common import tunables
 from common.errors import ApiError
-from common.llm import LLM
 from common.external_tools import store as external_tools
 from common.retention import sweep_forever
 from common.secrets import SecretStore
@@ -50,8 +49,6 @@ async def lifespan(app: FastAPI):
     registry.load()
 
     secrets = SecretStore.accounts(settings)
-    # Only llm.* tools need the LLM; without one the rest still work.
-    llm = LLM(settings)
 
     tunables.get("workspace_dir").mkdir(parents=True, exist_ok=True)
     # Every area the tool groups declared (registry.load found them all).
@@ -60,7 +57,7 @@ async def lifespan(app: FastAPI):
 
     app.state.registry = registry
     app.state.secrets = secrets
-    app.state.runtime = ExecutorRuntime(settings, registry, secrets, llm)
+    app.state.runtime = ExecutorRuntime(settings, registry, secrets)
 
     sweepers = [
         asyncio.create_task(sweep_forever("output folders", lambda: sweep_outputs(settings.storage))),
@@ -74,7 +71,6 @@ async def lifespan(app: FastAPI):
         for sweeper in sweepers:
             sweeper.cancel()
         await asyncio.gather(*sweepers, return_exceptions=True)
-        await llm.close()
 
 
 app = create_service_app(

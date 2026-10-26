@@ -11,6 +11,35 @@ from common.storage.models import Run, Task, TaskVersion
 from common.storage.queries import run_dict
 
 
+def pending_drafts(session_id: str | None = None) -> list[dict[str, Any]]:
+    """What waits for the user's decision: each draft version of a task not archived (a
+    task has at most one: a newer draft supersedes the older). With `session_id`, the ones
+    made in that chat."""
+    with session() as db:
+        query = (
+            db.query(TaskVersion, Task)
+            .join(Task, Task.id == TaskVersion.task_id)
+            .filter(TaskVersion.status == "draft", Task.status != "archived")
+        )
+        if session_id:
+            query = query.filter(TaskVersion.session_id == session_id)
+
+        rows = query.order_by(TaskVersion.created_at.desc()).limit(100).all()
+
+    return [
+        {
+            "task_id": task.id,
+            "version_id": version.id,
+            "session_id": version.session_id,
+            "title": (version.spec or {}).get("title") or task.title,
+            "summary": version.summary,
+            "cards": version.cards or [],
+            "created_at": version.created_at.isoformat(),
+        }
+        for version, task in rows
+    ]
+
+
 def task_list(*, tool: str | None = None) -> list[dict[str, Any]]:
     """Tasks not archived; with `tool` (ext.*), only those whose active version, or newest
     draft before the first approval, runs it — with `tool_version`."""

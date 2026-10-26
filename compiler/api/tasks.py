@@ -6,6 +6,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from common.errors import ApiError
+from common.schemas.task import TaskSpec
 from compiler import store, task_settings
 from compiler.validate import SpecError, validate_spec
 
@@ -95,20 +96,41 @@ async def reject(task_id: str, version_id: str):
     return {"task_id": task_id, "version_id": version.id, "status": version.status}
 
 
-@router.get("/tasks/{task_id}/settings", summary="The task's domain settings with titles and descriptions")
+class SettingsChanges(BaseModel):
+    # Each {tool, field, value, step?}: no step — for the whole task; value null — back.
+    changes: list[dict[str, Any]]
+
+
+@router.get("/tasks/{task_id}/settings", summary="The settings of the task's tools: default, for the whole task, per step")
 async def get_settings(task_id: str, request: Request):
+    return await _settings_view(store.get_task(task_id), request)
+
+
+@router.patch("/tasks/{task_id}/settings", summary="Change settings: [{tool, field, value, step?}], value null takes it back")
+async def patch_settings(task_id: str, body: SettingsChanges, request: Request):
     task = store.get_task(task_id)
-
-    return {"task_id": task.id, "settings": task_settings.describe(task.settings or {}, await request.app.state.compiler.catalog())}
-
-
-@router.put("/tasks/{task_id}/settings", summary="Change values (not keys): {domain: {field: value}}")
-async def put_settings(task_id: str, changes: dict[str, Any], request: Request):
+    version = _version_or_404(task)
     catalog = await request.app.state.compiler.catalog()
-    task = store.get_task(task_id)
-    task = store.set_settings(task_id, task_settings.update(task.settings or {}, changes, catalog))
 
-    return {"task_id": task.id, "settings": task_settings.describe(task.settings, catalog)}
+    settings = task_settings.apply(task.settings or {}, body.changes, TaskSpec.model_validate(version.spec), catalog)
+
+    return await _settings_view(store.set_settings(task_id, settings), request)
+
+
+async def _settings_view(task, request: Request) -> dict[str, Any]:
+    version = _version_or_404(task)
+    catalog = await request.app.state.compiler.catalog()
+    spec = TaskSpec.model_validate(version.spec)
+
+    return {"task_id": task.id, "settings": task_settings.view(task.settings or {}, spec, catalog, version.cards or [])}
+
+
+def _version_or_404(task):
+    version = store.shown_version(task)
+    if version is None:
+        raise ApiError(status_code=404, message=f"Task `{task.id}` has no version")
+
+    return version
 
 
 @router.post("/tasks/{task_id}/{action}", summary="pause | resume | archive")

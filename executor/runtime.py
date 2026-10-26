@@ -20,7 +20,6 @@ from typing import Any
 from pydantic import ValidationError
 
 from common import tunables
-from common.llm import LLM, Role
 from common.schemas.execution import ExecContext, ExecuteRequest, ExecuteResponse
 from common.secrets import SecretStore
 from common.settings import Settings
@@ -41,13 +40,11 @@ class ExecutorRuntime:
         settings: Settings,
         registry: ToolRegistry,
         secrets: SecretStore,
-        llm: LLM,
     ):
 
         self.settings = settings
         self.registry = registry
         self.secrets  = secrets
-        self.llm      = llm
 
 
     async def execute(self, req: ExecuteRequest) -> ExecuteResponse:
@@ -94,9 +91,13 @@ class ExecutorRuntime:
         except ToolError as e:
             return ExecuteResponse(status="error", error=str(e))
 
-        # The model only for a tool that says it asks it (llm.*), never hidden in another domain.
-        llm = self.llm.instruct if getattr(spec, "uses_llm", False) else None
-        ctx = self._tool_context(req.context, paths=paths, credentials=credentials, llm=llm)
+        try:
+            tool_settings = _tool_settings(spec, req.context.tool_settings)
+
+        except ValidationError as e:
+            return ExecuteResponse(status="error", error=f"Настройки задачи для `{spec.name}` не подходят: {_short_errors(e)}")
+
+        ctx = self._tool_context(req.context, paths=paths, credentials=credentials, tool_settings=tool_settings)
 
         # Whatever the tool managed to log or tell the user before it failed belongs in
         # the caller's log too.
@@ -133,17 +134,16 @@ class ExecutorRuntime:
         )
 
 
-    def _tool_context(self, ctx: ExecContext, *, paths: WorkspacePaths, credentials: dict[str, Credential], llm: Role | None) -> ToolContext:
+    def _tool_context(self, ctx: ExecContext, *, paths: WorkspacePaths, credentials: dict[str, Credential], tool_settings: Any) -> ToolContext:
         return ToolContext(
             mode=ctx.mode,
             settings=self.settings,
             paths=paths,
-            llm=llm,
             session_id=ctx.session_id,
             run_id=ctx.run_id,
             step_key=ctx.step_key,
             dry_run=ctx.dry_run,
-            task_settings=ctx.task_settings,
+            tool_settings=tool_settings,
             credentials=credentials,
         )
 
@@ -164,3 +164,13 @@ class ExecutorRuntime:
 
 def _short_errors(e: ValidationError) -> str:
     return "; ".join(f"{'.'.join(str(p) for p in err['loc'])}: {err['msg']}" for err in e.errors())
+
+
+def _tool_settings(spec, values: dict[str, Any]) -> Any:
+    """The tool's settings model with the values set for this step; defaults for the
+    rest (and in chat, where nothing is set)."""
+    model = getattr(spec, "settings_model", None)
+    if model is None:
+        return None
+
+    return model.model_validate({key: value for key, value in values.items() if key in model.model_fields})

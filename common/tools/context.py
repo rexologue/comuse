@@ -1,19 +1,15 @@
-"""What a tool receives besides its input: paths, accounts, LLM and the call mode."""
+"""What a tool receives besides its input: paths, accounts, its settings and the call
+mode. Not the model: asking it is a step of its own (llm.*), not part of another tool."""
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 if TYPE_CHECKING:
-    from common.llm import Role
     from common.settings import Settings
-    from common.tools.domain import DomainSettings
-
-
-SettingsT = TypeVar("SettingsT", bound="DomainSettings")
 
 
 class ToolError(Exception):
@@ -45,17 +41,15 @@ class ToolContext:
     mode: Literal["chat", "run"]
     settings: Settings
     paths: PathResolver
-    # The instruct role (common/llm.py), only for a tool that declares `uses_llm`: the
-    # model is a step of its own (llm.*), never hidden inside another domain's tool.
-    llm: Role | None
     session_id: str | None = None
     run_id: str | None = None
     step_key: str | None = None
     # A dry run: a tool that changes anything checks it itself and only reports (in its
     # log and output) what it would have done; mail.send leaves a draft instead.
     dry_run: bool = False
-    # The task's domain settings sections ({"mail": {...}}); empty in chat.
-    task_settings: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # The tool's own settings model with the task's values (defaults in chat and for
+    # anything unset); None for a tool that declares none.
+    tool_settings: Any = None
     # Accounts the executor loaded for the tool's `secrets` arguments, by argument name.
     credentials: dict[str, Credential] = field(default_factory=dict)
     artifacts: list[str] = field(default_factory=list)
@@ -70,11 +64,6 @@ class ToolContext:
     def notify(self, message: str) -> None:
         """A message for the user: the run log keeps it and it goes to the task's chat."""
         self.notifications.append(message)
-
-
-    def domain_settings(self, model: type[SettingsT]) -> SettingsT:
-        """The task's values for this domain; defaults in chat and for anything unset."""
-        return model.model_validate(self.task_settings.get(model.domain, {}))
 
 
     def read_path(self, ref: str) -> Path:

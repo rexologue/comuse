@@ -6,6 +6,7 @@ from pydantic import Field
 
 from common.tools import ToolContext, ToolError, ToolInput, ToolOutput, tool
 from internal_tools.llm.inputs import gather_text
+from internal_tools.llm.model import instruct
 
 
 class WriteInput(ToolInput):
@@ -23,12 +24,11 @@ class WriteOutput(ToolOutput):
     card="Написать текст: {instruction}",
     description="Write free text (an email body, a summary) from an instruction and optional context data.",
     confirm=False,
-    uses_llm=True,
 )
 async def write(inp: WriteInput, ctx: ToolContext) -> WriteOutput:
     context = gather_text(inp.context, ctx, limit=30000)
 
-    message = await ctx.llm.complete(
+    message = await instruct(ctx).complete(
         [
             {"role": "system", "content": "Пиши по-русски, деловым и простым языком. Верни только сам текст."},
             {"role": "user", "content": f"{inp.instruction}\n\n{('Данные:\n' + context) if context else ''}"},

@@ -107,52 +107,43 @@ async def test_a_second_change_keeps_the_first_one(settings):
     assert store.get_version(task_id, cc["version_id"]).status == "superseded"
 
 
-async def test_a_new_draft_voids_the_older_drafts_approval(settings):
+async def test_what_waits_for_the_user_is_the_draft_itself(settings):
+    """No approval records of their own: the draft version is the approval, so a newer
+    draft or archiving the task leaves nothing stale behind."""
+    from main import views
+
+    task_id = _task()
+    compiler = _compiler(settings)
+
+    first = await compiler.edit(task_id, spec=None, summary=None, ops=[{"op": "replace", "path": "/title", "value": "Первая"}])
+    second = await compiler.edit(task_id, spec=None, summary=None, ops=[{"op": "replace", "path": "/title", "value": "Вторая"}])
+
+    assert [(d["version_id"], d["title"]) for d in views.pending_drafts()] == [(second["version_id"], "Вторая")]
+    assert store.get_version(task_id, first["version_id"]).status == "superseded"
+
+    store.set_status(task_id, "archive")
+    assert views.pending_drafts() == []
+
+
+async def test_a_new_draft_is_announced_to_the_chat_it_came_from(settings):
     from main.events import EventBus
     from main.orchestrator import Orchestrator
 
     class Compiler:
-        def __init__(self):
-            self.no = 0
-
         async def post(self, path, json=None, **_):
-            self.no += 1
-            return {"task_id": "task_1", "version_id": f"ver_{self.no}"}
-
-    class Registry:
-        def __init__(self):
-            self.compiler = Compiler()
-
-        def client(self, name):
-            return self.compiler
-
-    orchestrator = Orchestrator(Registry(), EventBus())
-
-    first = await orchestrator.edit("task_1", {"ops": []})
-    second = await orchestrator.edit("task_1", {"ops": []})
-
-    assert orchestrator._get(first["approval_id"])["status"] == "cancelled"
-    assert orchestrator._get(second["approval_id"])["status"] == "pending"
-
-
-async def test_archiving_a_task_voids_its_drafts_approval(settings):
-    from main.events import EventBus
-    from main.orchestrator import Orchestrator
-
-    class Client:
-        async def post(self, path, json=None, **_):
-            return {"task_id": "task_1", "version_id": "ver_1", "status": "archived"}
+            return {"task_id": "task_1", "version_id": "ver_1", "title": "Сводка"}
 
     class Registry:
         def client(self, name):
-            return Client()
+            return Compiler()
 
-    orchestrator = Orchestrator(Registry(), EventBus())
-    draft = await orchestrator.edit("task_1", {"ops": []})
+    bus = EventBus()
+    seen = []
+    bus.publish = lambda type_, payload: seen.append((type_, payload))
 
-    await orchestrator.set_task_status("task_1", "archive")
+    await Orchestrator(Registry(), bus).patch({"task_id": "task_1", "instruction": "x", "session_id": "ses_1"})
 
-    assert orchestrator._get(draft["approval_id"])["status"] == "cancelled"
+    assert seen == [("task.draft", {"task_id": "task_1", "version_id": "ver_1", "session_id": "ses_1", "title": "Сводка"})]
 
 
 async def test_every_change_of_a_step_shows_in_the_diff(settings):
@@ -187,14 +178,14 @@ def test_a_broken_card_or_schema_of_an_own_command_breaks_nothing():
     from compiler.validate import validate_spec
 
     manifest = {
-        **CATALOG["fs.list"], "name": "ext.odd", "title": "Странная", "card": "Сумма {amount:.2f} {0} {",
-        "input_schema": {"type": "object", "properties": {"amount": True}}, "version": 1,
+        **CATALOG["fs.list"], "name": "demo.odd", "title": "Странная", "card": "Сумма {amount:.2f} {0} {",
+        "input_schema": {"type": "object", "properties": {"amount": True}}, "version": 1, "source": "external",
     }
-    catalog = {**CATALOG, "ext.odd": manifest}
-    spec = validate_spec({"title": "x", "steps": [{"id": "a", "tool": "ext.odd", "tool_version": 1, "args": {"amount": 5}}]}, catalog)
+    catalog = {**CATALOG, "demo.odd": manifest}
+    spec = validate_spec({"title": "x", "steps": [{"id": "a", "tool": "demo.odd", "tool_version": 1, "args": {"amount": 5}}]}, catalog)
 
     assert build_cards(spec, catalog)[0]["text"] == "Странная"
-    assert "ext.odd" in format_catalog(catalog)
+    assert "demo.odd" in format_catalog(catalog)
 
 
 async def test_chat_only_tools_are_not_offered_to_tasks(settings):

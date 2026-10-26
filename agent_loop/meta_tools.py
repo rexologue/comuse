@@ -117,11 +117,8 @@ async def _compile(main: MainClient, session_id: str, args: dict[str, Any]) -> A
         "summary": result.get("summary"),
         "steps": result.get("cards"),
         "trigger": result.get("trigger"),
-        "settings": [
-            _setting_line(item)
-            for items in (result.get("settings") or {}).values()
-            for item in items.values()
-        ],
+        # Lines the compiler wrote: «Отправлять письма сразу: выключено (по умолчанию). …».
+        "settings": result.get("settings") or [],
         "next": (
             "Покажи пользователю шаги задачи простыми словами. Если есть настройки (settings), перескажи их "
             "как есть: каждая строка — текущее значение и что оно значит. Меняет их только сам пользователь в "
@@ -130,15 +127,6 @@ async def _compile(main: MainClient, session_id: str, args: dict[str, Any]) -> A
             "включает задачу только он сам, в списке задач. Сам ты её не включаешь и не запускаешь без просьбы."
         ),
     }
-
-
-def _setting_line(item: dict[str, Any]) -> str:
-    """«Отправлять письма сразу: выключено. <what it means>» — a bare false next to the
-    title reads as the opposite to a model."""
-    value = item["value"]
-    state = ("включено" if value else "выключено") if isinstance(value, bool) else str(value)
-
-    return f"{item['title']}: {state}. {item['description']}".strip()
 
 
 async def _dry_run(main: MainClient, session_id: str, args: dict[str, Any]) -> Any:

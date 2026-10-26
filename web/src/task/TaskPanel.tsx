@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils";
 import { Cards } from "@/task/Cards";
 import { DraftActions } from "@/task/DraftActions";
 import { RUN_STATUS, RUN_TRIGGER, TASK_STATUS, VERSION_STATUS } from "@/task/labels";
-import { TaskSettingsForm } from "@/task/TaskSettingsForm";
+import { StepSettings, TaskSettings } from "@/task/TaskSettings";
 
 export function TaskPanel({ taskId }: { taskId: string }) {
   const task = useTask(taskId);
@@ -36,11 +36,11 @@ export function TaskPanel({ taskId }: { taskId: string }) {
   return (
     <div className="flex flex-col divide-y">
       <Header task={task.data} version={version} />
+      <Block title="Настройки задачи">
+        <TaskSettings taskId={taskId} />
+      </Block>
       <Scenario task={task.data} version={version} />
       <Versions task={task.data} />
-      <Block title="Настройки задачи">
-        <TaskSettingsForm taskId={taskId} />
-      </Block>
       <Runs taskId={taskId} />
     </div>
   );
@@ -152,8 +152,12 @@ function Header({ task, version }: { task: TaskDetail; version: Version | null }
 
 function Scenario({ task, version }: { task: TaskDetail; version: Version | null }) {
   return (
-    <Block title={task.current_version ? "Сценарий" : "Сценарий черновика"}>
-      {version ? <Cards cards={version.cards} /> : <p className="text-sm text-muted-foreground">Загрузка…</p>}
+    <Block title={task.current_version ? "Шаги" : "Шаги черновика"}>
+      {version ? (
+        <Cards cards={version.cards} detail={(card) => <StepSettings taskId={task.id} step={card.id} />} />
+      ) : (
+        <p className="text-sm text-muted-foreground">Загрузка…</p>
+      )}
       {task.tool_updates.map((update) => (
         <ToolUpdateNote key={update.tool} taskId={task.id} update={update} />
       ))}

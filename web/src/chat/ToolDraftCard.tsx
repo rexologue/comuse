@@ -34,9 +34,9 @@ function ToolDraftCard({ tool, version }: { tool: ExternalTool; version: number 
       <div className="flex items-start gap-2">
         <Wrench className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
         <div className="min-w-0">
-          <div className="font-medium">{manifest?.title ?? tool.tool}</div>
+          <div className="font-medium">{manifest?.title ?? tool.name}</div>
           <div className="text-sm text-muted-foreground">
-            {tool.tool} v{version} · черновик команды ждёт вашего решения
+            {tool.name} v{version} · черновик команды ждёт вашего решения
             {tool.current_version ? ` · сейчас работает v${tool.current_version}` : ""}
           </div>
         </div>

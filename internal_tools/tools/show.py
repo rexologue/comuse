@@ -5,13 +5,13 @@ from typing import Any
 
 from pydantic import Field
 
-from common.external_tools import full_name, store
+from common.external_tools import store
 from common.tools import ToolContext, ToolError, ToolInput, ToolOutput, tool
-from internal_tools.tools.common import chat_only, slug
+from internal_tools.tools.common import chat_only
 
 
 class Input(ToolInput):
-    name: str = Field(description="Команда: parse_date или ext.parse_date")
+    name: str = Field(description="Команда: группа.действие, например telegram.send")
     version: int | None = Field(default=None, description="Версия; по умолчанию черновик, если он есть, иначе текущая")
 
 
@@ -35,7 +35,7 @@ class Output(ToolOutput):
 )
 async def show(inp: Input, ctx: ToolContext) -> Output:
     chat_only(ctx)
-    name = slug(inp.name)
+    name = inp.name.strip()
 
     version = inp.version
     if version is None:
@@ -43,12 +43,12 @@ async def show(inp: Input, ctx: ToolContext) -> Output:
         version = found and (found["draft_version"] or found["current_version"])
 
     if not version:
-        raise ToolError(f"Команды `{full_name(name)}` нет")
+        raise ToolError(f"Команды `{name}` нет")
 
     view = await asyncio.to_thread(store.version_view, ctx.settings.storage, name, version, files=True)
 
     return Output(
-        tool=view["tool"],
+        tool=view["name"],
         version=view["version"],
         status=view["status"],
         manifest=view["manifest"],

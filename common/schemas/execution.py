@@ -14,15 +14,16 @@ class ExecContext(BaseModel):
     session_id: str | None = None
     run_id: str | None = None
     step_key: str | None = None
-    # The task's domain settings sections; each tool reads its own domain's.
-    task_settings: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    # The values the user set for this step's tool (its own, else the task's: see
+    # common/tools/settings.py); what is not here takes the tool's default.
+    tool_settings: dict[str, Any] = Field(default_factory=dict)
     dry_run: bool = False
 
 
 class ExecuteRequest(BaseModel):
     tool: str
-    # External tools (ext.*): the approved version to run, as the task step pins it;
-    # None — the current one (the chat). Internal tools have no versions.
+    # An own command: the approved version to run, as the task step pins it; None — the
+    # current one (the chat). Built-in tools have no versions.
     version: int | None = None
     args: dict[str, Any] = Field(default_factory=dict)
     context: ExecContext = Field(default_factory=ExecContext)

@@ -1,4 +1,4 @@
-// Commands the agent and tasks use: the user's own (ext.*, docs/EXTERNAL_TOOLS.md) with
+// Commands the agent and tasks use: the user's own (group.action, docs/EXTERNAL_TOOLS.md) with
 // their versions, code, packages and the tasks on each version, and the built-in ones.
 // A draft — written here or by the chat — is approved here too; only a person approves.
 
@@ -27,7 +27,7 @@ export function Commands() {
     <div className="flex flex-col gap-8">
       <Section
         title="Свои команды"
-        description="Команды ext.*: ваши скрипты и те, что написал чат. Каждая версия — свой код и свои пакеты; задачи работают на той версии, с которой их одобрили."
+        description="Ваши скрипты и те, что написал чат, в своих группах: telegram.send, reports.parse. Каждая версия — свой код и свои пакеты; задачи работают на той версии, с которой их одобрили."
       >
         <div className="flex flex-col gap-2">
           {tools.data?.map((tool) => <OwnCommand key={tool.name} tool={tool} />)}
@@ -59,8 +59,8 @@ function OwnCommand({ tool }: { tool: ExternalTool }) {
     <div className="flex flex-col gap-3 rounded-lg border p-3">
       <button className="flex items-center gap-2 text-left" onClick={() => setOpen(!open)}>
         {open ? <ChevronDown className="size-4 shrink-0" /> : <ChevronRight className="size-4 shrink-0" />}
-        <span className="font-medium">{tool.title ?? tool.tool}</span>
-        <span className="text-sm text-muted-foreground">{tool.tool}</span>
+        <span className="font-medium">{tool.title ?? tool.name}</span>
+        <span className="text-sm text-muted-foreground">{tool.name}</span>
         <span className="ml-auto flex gap-1">
           {tool.current_version && <Badge variant="secondary">v{tool.current_version}</Badge>}
           {tool.draft_version && <Badge variant="outline">черновик v{tool.draft_version}</Badge>}
@@ -138,8 +138,8 @@ function VersionDetail({ tool, version, onEdit }: { tool: ExternalTool; version:
 
 function TasksOn({ tool }: { tool: ExternalTool }) {
   const tasks = useQuery({
-    queryKey: ["tasks", "tool", tool.tool],
-    queryFn: async () => (await api<{ tasks: (TaskSummary & { tool_version: number })[] }>(`/tasks?tool=${encodeURIComponent(tool.tool)}`)).tasks,
+    queryKey: ["tasks", "tool", tool.name],
+    queryFn: async () => (await api<{ tasks: (TaskSummary & { tool_version: number })[] }>(`/tasks?tool=${encodeURIComponent(tool.name)}`)).tasks,
   });
 
   if (!tasks.data?.length) return <p className="text-xs text-muted-foreground">Задач с этой командой нет.</p>;
@@ -190,7 +190,7 @@ function CommandForm({ tool, base, onDone }: { tool?: ExternalTool; base?: numbe
 
   return <CommandFields key={source.data?.hash ?? "new"} tool={tool} source={source.data} busy={busy !== null} error={error} onDone={() => onDone()} save={(name, body) => {
     if (!tool && tools.data?.some((known) => known.name === name)) {
-      setError(`Команда ext.${name} уже есть: откройте её и сделайте новую версию`);
+      setError(`Команда ${name} уже есть: откройте её и сделайте новую версию`);
       return;
     }
 
@@ -269,11 +269,11 @@ function CommandFields({
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-dashed p-3">
       <p className="text-xs text-muted-foreground">
-        {tool ? `Сохранится как черновик ${tool.tool}: задачи и чат перейдут на него только после одобрения.` : "Новая команда сохранится черновиком; работать она начнёт после одобрения."}
+        {tool ? `Сохранится как черновик ${tool.name}: задачи и чат перейдут на него только после одобрения.` : "Новая команда сохранится черновиком; работать она начнёт после одобрения."}
       </p>
       <div className="grid gap-2 sm:grid-cols-2">
-        <Labeled title="Имя (латиница, цифры, _) — команда станет ext.<имя>">
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="parse_invoice" disabled={tool !== undefined} />
+        <Labeled title="Имя: группа.действие латиницей, группа своя (не mail, fs…)">
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="telegram.send" disabled={tool !== undefined} />
         </Labeled>
         <Labeled title="Название">
           <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Разобрать счёт" />

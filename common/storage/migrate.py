@@ -63,7 +63,7 @@ def upgrade(engine: Engine, storage: StorageSettings) -> None:
         _backup(storage, current)
 
     log.info("migrating database: %s → %s", current or "empty", latest)
-    _alembic(engine, command.upgrade, "head")
+    _alembic(engine, command.upgrade, "head", storage)
 
 
 def wait_current(engine: Engine, timeout: float) -> None:
@@ -100,18 +100,20 @@ def differences(engine: Engine) -> list:
 # ALEMBIC
 # -----------------------------
 
-def _config(connection=None) -> Config:
+def _config(connection=None, storage: StorageSettings | None = None) -> Config:
     config = Config()
     config.set_main_option("script_location", str(MIGRATIONS_DIR))
     config.set_main_option("file_template", "%%(rev)s_%%(slug)s")
     config.attributes["connection"] = connection
+    # For a migration that moves files of DATA_DIR along with its rows.
+    config.attributes["storage"] = storage
 
     return config
 
 
-def _alembic(engine: Engine, action, revision: str) -> None:
+def _alembic(engine: Engine, action, revision: str, storage: StorageSettings | None = None) -> None:
     with engine.begin() as connection:
-        action(_config(connection), revision)
+        action(_config(connection, storage), revision)
 
 
 def _has_tables(engine: Engine) -> bool:

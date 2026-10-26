@@ -20,8 +20,8 @@ export function DraftCards({ sessionId }: { sessionId: string }) {
   return (
     <>
       {approvals.data?.map((approval) => (
-        // Keyed by task: a change in words replaces the approval, the card (and what it
-        // says changed) stays.
+        // Keyed by task: a change in words makes a new draft, the card (and what it says
+        // changed) stays.
         <DraftCard key={approval.task_id} approval={approval} sessionId={sessionId} />
       ))}
     </>
@@ -29,7 +29,7 @@ export function DraftCards({ sessionId }: { sessionId: string }) {
 }
 
 function DraftCard({ approval, sessionId }: { approval: Approval; sessionId: string }) {
-  const version = useVersion(approval.task_id, approval.task_version_id);
+  const version = useVersion(approval.task_id, approval.version_id);
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [instruction, setInstruction] = useState("");
@@ -61,15 +61,15 @@ function DraftCard({ approval, sessionId }: { approval: Approval; sessionId: str
       <div className="flex items-start gap-2">
         <FileClock className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
         <div className="min-w-0">
-          <div className="font-medium">{approval.payload.title ?? version.data?.summary ?? "Черновик задачи"}</div>
+          <div className="font-medium">{approval.title || version.data?.summary || "Черновик задачи"}</div>
           <div className="text-sm text-muted-foreground">Черновик ждёт вашего решения · {version.data?.schedule ?? "…"}</div>
         </div>
       </div>
 
       {changed && changed.length > 0 && <DiffLines lines={changed} />}
-      <Cards cards={version.data?.cards ?? approval.payload.cards ?? []} />
+      <Cards cards={version.data?.cards ?? approval.cards} />
 
-      <DraftActions taskId={approval.task_id} versionId={approval.task_version_id} />
+      <DraftActions taskId={approval.task_id} versionId={approval.version_id} />
 
       {editing ? (
         <div className="flex flex-col gap-2">

@@ -51,6 +51,7 @@ async def put_draft(name: str, body: Draft, request: Request):
         manifest=body.manifest,
         files=body.files,
         requirements=body.requirements,
+        builtin_groups=request.app.state.registry.builtin_groups(),
     )
 
 

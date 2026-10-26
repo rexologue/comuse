@@ -179,9 +179,9 @@ def test_compiled_task_must_reflect_the_chat():
     notify_only = TaskSpec.model_validate({"title": "x", "steps": [{"id": "n", "tool": "user.notify", "args": {"message": "ok"}}]})
 
     with pytest.raises(SpecError):
-        check_reflects_chat(notify_only, {"fs.list", "xlsx.aggregate", "user.notify"}, CATALOG)
+        check_reflects_chat(notify_only, {"fs.list", "xlsx.aggregate"})
 
-    check_reflects_chat(validate_spec(GOOD, CATALOG), {"fs.list", "docs.make_template"}, CATALOG)
+    check_reflects_chat(validate_spec(GOOD, CATALOG), {"fs.list", "docs.make_template"})
 
 
 def test_mapping_cards_name_their_fields():

@@ -4,12 +4,11 @@ import asyncio
 
 from pydantic import Field
 
-from common.tools import ToolContext, ToolInput, ToolOutput, tool
+from common.tools import ToolContext, ToolInput, ToolOutput, ToolSettings, tool
 from common.tools.fields import WorkspacePath
 from internal_tools.mail.accounts import mailbox
 from internal_tools.mail.addresses import EmailAddress
 from internal_tools.mail.adapters import imap_smtp
-from internal_tools.mail.settings import MailSettings
 
 
 class Input(ToolInput):
@@ -19,6 +18,14 @@ class Input(ToolInput):
     subject: str
     body: str
     attachments: list[WorkspacePath] = Field(default_factory=list, description="Пути файлов для вложения")
+
+
+class Settings(ToolSettings):
+    send_directly: bool = Field(
+        default=False,
+        title="Отправлять письма сразу",
+        description="Выключено — письма из задачи сохраняются в черновики, отправляет их человек. Включено — задача отправляет письма сама.",
+    )
 
 
 class Output(ToolOutput):
@@ -39,12 +46,13 @@ class Output(ToolOutput):
     card="Отправить письмо {to} с темой «{subject}»",
     description=(
         "Send an email with attachments from a configured account. In a task it saves a draft "
-        "for the user to send instead, unless the task's mail settings say to send directly; a "
+        "for the user to send instead, unless the task's setting send_directly says to send; a "
         "dry run always saves a draft."
     ),
     confirm="always",
     secrets=("account",),
     timeout=120,
+    settings=Settings,
 )
 async def send(inp: Input, ctx: ToolContext) -> Output:
     account = mailbox(ctx)
@@ -61,7 +69,7 @@ async def send(inp: Input, ctx: ToolContext) -> Output:
 
     # A dry run, or a task the user has not let send by itself: the letter waits in the
     # account's Drafts, where the user reviews and sends it from their own mail client.
-    if ctx.dry_run or (ctx.mode == "run" and not ctx.domain_settings(MailSettings).send_directly):
+    if ctx.dry_run or (ctx.mode == "run" and not ctx.tool_settings.send_directly):
         folder = await asyncio.to_thread(imap_smtp.append_draft, account.config, account.secret, message)
         return Output(message_id=message["Message-ID"], mode="draft", folder=folder)
 

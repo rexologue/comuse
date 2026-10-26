@@ -75,7 +75,7 @@ async def reject(task_id: str, version_id: str, request: Request):
     return await request.app.state.orchestrator.reject_version(task_id, version_id)
 
 
-@router.api_route("/tasks/{task_id}/settings", methods=["GET", "PUT"], summary="Task settings: GET with descriptions, PUT {domain: {field: value}}")
+@router.api_route("/tasks/{task_id}/settings", methods=["GET", "PATCH"], summary="Task settings: GET default / whole task / per step, PATCH {changes: [{tool, field, value, step?}]}")
 async def task_settings(task_id: str, request: Request):
     return await reverse_proxy(request, "compiler", f"tasks/{task_id}/settings")
 

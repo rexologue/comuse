@@ -10,7 +10,7 @@ executor при старте сам обходит `internal_tools/`. Внутр
 `POST /executor/tools/reload` подхватывает новые файлы команд, но не правки
 существующих: для них executor нужно перезапустить. Посмотреть каталог: `GET /tools`.
 
-Свои команды пользователя и чата (`ext.<имя>`, каждая версия в своей папке и своём
+Свои команды пользователя и чата (`группа.действие` в своей группе, например `telegram.send`; каждая версия в своей папке и своём
 окружении) — в [EXTERNAL_TOOLS.md](EXTERNAL_TOOLS.md).
 
 Группа команд приносит своё сама: настройки для задач, вид аккаунта, инструкции для
@@ -30,6 +30,10 @@ class Input(ToolInput):
     attachments: list[WorkspacePath] = Field(default_factory=list, description="Пути файлов для вложения")
 
 
+class Settings(ToolSettings):     # что пользователь настраивает в задаче
+    send_directly: bool = Field(default=False, title="Отправлять письма сразу", description="…")
+
+
 class Output(ToolOutput):
     message_id: str
     mode: str                      # "sent" или "draft"
@@ -44,12 +48,13 @@ class Output(ToolOutput):
     confirm="always",              # в чате спрашивать перед каждым письмом
     secrets=("account",),          # executor загрузит аккаунт по имени
     timeout=120,
+    settings=Settings,             # настройки команды: по умолчанию, для задачи, для шага
 )
 async def send(inp: Input, ctx: ToolContext) -> Output:
     account = mailbox(ctx)         # настройки и пароль, уже загруженные executor
     message = imap_smtp.build_message(...)
 
-    if ctx.dry_run or (ctx.mode == "run" and not ctx.domain_settings(MailSettings).send_directly):
+    if ctx.dry_run or (ctx.mode == "run" and not ctx.tool_settings.send_directly):
         folder = await asyncio.to_thread(imap_smtp.append_draft, account.config, account.secret, message)
         return Output(message_id=message["Message-ID"], mode="draft", folder=folder)
 
@@ -79,7 +84,7 @@ async def send(inp: Input, ctx: ToolContext) -> Output:
 | `uses_llm` | Команда просит модель (`ctx.llm`). Остальным executor модель не даёт: модель — отдельный шаг (`llm.*`), а не часть другой группы |
 
 `GET /tools` отдаёт по каждой команде манифест: эти поля, `function_name`,
-`input_schema`, `output_schema`, а также `settings_schema` и `guide` её группы.
+`input_schema`, `output_schema`, `settings_schema` (её настройки) и `guide` её группы.
 
 **Типы аргументов**, которые понимает executor (`common/tools/fields.py`, `refs.py`):
 
@@ -99,7 +104,7 @@ async def send(inp: Input, ctx: ToolContext) -> Output:
 | `ctx.mode` | `chat` — вызов из чата, `run` — шаг запуска задачи |
 | `ctx.dry_run` | Пробный запуск (см. ниже) |
 | `ctx.credential("account")` | Аккаунт из `secrets`: `name`, `kind`, `config`, `secret` |
-| `ctx.domain_settings(Модель)` | Настройки группы у задачи; в чате — значения по умолчанию |
+| `ctx.tool_settings` | Настройки команды для этого шага (модель из `settings=`): значение шага, иначе задачи, иначе по умолчанию; в чате — по умолчанию |
 | `ctx.read_path(ref)`, `ctx.write_path(ref)`, `ctx.to_ref(path)` | Путь задачи → файл через песочницу и обратно |
 | `ctx.output_path(имя)`, `ctx.output_dir()` | Новый файл в `data:outputs/<запуск или чат>/`; путь попадает в список созданных файлов |
 | `ctx.log(текст)` | Строка в журнал запуска (или трейс чата) рядом с результатом вызова |
@@ -181,27 +186,17 @@ Executor выполняет каждый вызов и только переда
 (`tests/test_executor_policy.py`): команда с `confirm` не `False`, в коде которой нет
 `dry_run`, его не пройдёт.
 
-## Настройки группы
+## Настройки команды
 
-Группа может объявить одну плоскую модель настроек для задач:
+Команда может объявить свои настройки — то, что в задаче выбирает только пользователь,
+а не модель: плоская модель `ToolSettings`, переданная в `@tool(settings=…)` (пример —
+`mail.send` выше). Поля — простые значения (булево, число, строка, выбор), у каждого
+значение по умолчанию; `title` и `description` необязательны, их показывает панель
+задачи. Схема попадает в манифест команды (`settings_schema`); модель её не видит.
 
-```python
-@domain_settings
-class MailSettings(DomainSettings):
-    domain: ClassVar[str] = "mail"
-
-    send_directly: bool = Field(
-        default=False,
-        title="Отправлять письма сразу",
-        description="Выключено — письма из задачи сохраняются в черновики, отправляет их человек. ...",
-    )
-```
-
-Поля — простые значения (булево, число, строка, выбор) с умолчанием, подписью и
-описанием. Схема попадает в манифесты команд группы (`settings_schema`); модель её не
-видит. Как настройки живут у задачи и кто их меняет — в
-[TASKS.md](TASKS.md#настройки-групп-команд). Команда читает их через
-`ctx.domain_settings(MailSettings)`.
+Значение у задачи бывает трёх уровней: по умолчанию (из объявления), для всей задачи и
+для отдельного шага (см. [TASKS.md](TASKS.md#настройки)). Команда получает уже готовое
+значение для своего шага: `ctx.tool_settings`. Что значит поле, знает только она.
 
 ## Виды аккаунтов
 
@@ -276,7 +271,7 @@ domain_guide(
 | `tools.list`, `tools.show` | Свои команды и их версии; код и пакеты версии (только в чате) | — |
 | `tools.draft` | Записать черновик своей команды (только в чате; ничего не запускает) | — |
 | `tools.try` | Запустить черновик на настоящих данных (только в чате) | каждый раз |
-| `ext.<имя>` | Свои команды пользователя и чата, см. [EXTERNAL_TOOLS.md](EXTERNAL_TOOLS.md) | как в их манифесте |
+| `<своя группа>.<действие>` | Свои команды пользователя и чата, см. [EXTERNAL_TOOLS.md](EXTERNAL_TOOLS.md) | как в их манифесте |
 
 Полные схемы аргументов и результатов — `GET /tools`.
 
@@ -350,7 +345,7 @@ domain_guide(
   результаты запуска.
 - **`mail.send`** — в чате отправляет после ответа пользователя; в задаче по умолчанию
   кладёт письмо в черновики, а отправляет сразу, только если пользователь включил
-  настройку задачи `mail.send_directly`; в пробном запуске — всегда в черновики. Адресаты,
+  настройку `send_directly` (для задачи или для шага); в пробном запуске — всегда в черновики. Адресаты,
   которых сервер не принял, — в `refused` (остальным письмо ушло). Перевод строки в теме
   становится пробелом.
 - **копия отправленного** — SMTP только доставляет письмо, копию у себя хранит почтовая

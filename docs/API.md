@@ -73,24 +73,25 @@
 | `POST /compiler/compile` | Собрать задачу из чата → черновик и одобрение |
 | `POST /compiler/patch` | Правка словами (LLM) → черновик новой версии, diff и одобрение |
 | `POST /tasks/{id}/versions` | Правка вручную без LLM → черновик новой версии, diff и одобрение |
-| `GET /tasks?tool=ext.x` | Задачи, активная версия которых (или черновик до первого одобрения) использует эту команду, с `tool_version` |
-| `POST /tasks/{id}/tool-versions` | `{"tool": "ext.x", "version": 3}` (без `version` — текущая) → черновик, где шаги этой команды на новой версии, diff и одобрение; шаги не подходят к её схемам — `422` со списком |
+| `GET /tasks?tool=telegram.send` | Задачи, активная версия которых (или черновик до первого одобрения) использует эту команду, с `tool_version` |
+| `POST /tasks/{id}/tool-versions` | `{"tool": "telegram.send", "version": 3}` (без `version` — текущая) → черновик, где шаги этой команды на новой версии, diff и одобрение; шаги не подходят к её схемам — `422` со списком |
 | `POST /tasks/{id}/versions/{v}/approve` | Сделать версию активной |
 | `POST /tasks/{id}/versions/{v}/reject` | Отклонить черновик |
 | `POST /tasks/{id}/pause`, `/resume`, `/archive` | Приостановить, возобновить, убрать в архив |
-| `GET /tasks/{id}/settings` | Настройки групп команд у задачи с подписями |
+| `GET /tasks/{id}/settings` | Настройки команд задачи: по умолчанию, для всей задачи, для каждого шага |
+| `PATCH /tasks/{id}/settings` | `{changes: [{tool, field, value, step?}]}` — без `step` для всей задачи, со `step` для шага; `value: null` — снять изменение |
 | `PUT /tasks/{id}/settings` | Изменить значения настроек |
 
 **Сборка.** `POST /compiler/compile {session_id, title?, hint?}` →
 
 ```json
 {"task_id": "task_…", "version_id": "ver_…", "title": "…", "summary": "…",
- "trigger": "по понедельникам в 10:00", "settings": {"mail": {"send_directly": {"value": false, "title": "…", "description": "…", "schema": {}}}},
- "cards": [ … ], "approval_id": "apr_…"}
+ "trigger": "по понедельникам в 10:00", "settings": ["Отправлять письма сразу: выключено (по умолчанию). …"],
+ "cards": [ … ]}
 ```
 
 **Правка словами.** `POST /compiler/patch {task_id, instruction, session_id?}` →
-`{task_id, version_id, title, summary, diff, changes, cards, approval_id}`, где `diff` —
+`{task_id, version_id, title, summary, diff, changes, cards}`, где `diff` —
 строки «было → стало» для человека, `changes` — то же структурой.
 
 **Правка вручную.** `POST /tasks/{id}/versions` с одним из двух:
@@ -110,28 +111,35 @@
 `{task_id, version_id, status}`. Одобрить или отклонить можно только черновик (иначе
 409). `pause`, `resume`, `archive` → `{task_id, status}`; недопустимый переход — 409.
 
-**Настройки.** `GET` → `{task_id, settings}`, где для каждой группы и поля есть
-`value`, `title`, `description` и JSON-схема поля. `PUT` принимает только значения:
+**Настройки.** `GET` → `{task_id, settings}`: по команде с настройками
+`{group, tool, tool_title, fields}`, у поля — `name`, `title`, `description`, схема,
+`default`, `all` (значение для всей задачи, `null` — не меняли) и `steps`: каждый шаг с
+этой командой — `{step, card, value, effective}`, где `effective` — с чем шаг работает.
+`PATCH` принимает список изменений и отвечает тем же видом:
 
 ```json
-{"mail": {"send_directly": true}}
+{"changes": [
+  {"tool": "mail.send", "field": "send_directly", "value": true},
+  {"tool": "mail.send", "field": "send_directly", "step": "to_client", "value": false}
+]}
 ```
 
-Новые группы или поля добавить нельзя, значение проверяется по схеме; ошибки — 422 со
-списком в `details.errors`. Что такое настройки групп — в
-[TASKS.md](TASKS.md#настройки-групп-команд).
+`value: null` снимает изменение: шаг снова берёт значение задачи, задача — значение по
+умолчанию. Поля и шаги — только существующие, значение проверяется по схеме; всё или
+ничего, ошибки — 422 со списком в `details.errors`. Подробно — в
+[TASKS.md](TASKS.md#настройки).
 
 ## Одобрения
 
 | Маршрут | Что делает |
 | --- | --- |
-| `GET /approvals?status=pending&session_id=` | Одобрения версий задач; по умолчанию ожидающие |
-| `POST /approvals/{id}/answer {approve}` | Одобрить (`true`, по умолчанию) или отклонить версию |
+| `GET /approvals?session_id=` | Что ждёт решения: черновики версий неархивных задач; с `session_id` — сделанные в этом чате |
 
-Одобрение одно — версии задачи (`kind: version_approve`). Запись:
-`{id, kind, status, task_id, task_version_id, session_id, payload, created_at, resolved_at}`,
-где `payload` — название, итог и карточки версии. Новый черновик задачи отменяет
-(`cancelled`) ожидающие одобрения её прежних черновиков.
+Одобрение одно — версии задачи, и отдельной записи у него нет: ждёт решения сам
+черновик версии. У задачи черновик один (новый заменяет прежний: `superseded`), так что
+ничего устаревшего не остаётся. Запись: `{task_id, version_id, session_id, title,
+summary, cards, created_at}`. Одобрить или отклонить —
+`POST /tasks/{id}/versions/{version_id}/approve | reject`.
 
 ## Запуски
 
@@ -233,7 +241,7 @@
 | Тип | Когда |
 | --- | --- |
 | `agent.tool` | агент вызвал команду в чате: `{session_id, tool, status}` |
-| `approval.created`, `approval.resolved` | появилось или закрыто одобрение версии |
+| `task.draft` | появился черновик версии, он ждёт решения (`task_id`, `version_id`, `session_id`, `title`) |
 | `task.approved`, `task.rejected` | версия одобрена или отклонена |
 | `task.pause`, `task.resume`, `task.archive` | задача приостановлена, возобновлена, в архиве |
 | `run.started`, `run.finished` | запуск начался или закончился (`status`, `error`, `dry_run`) |

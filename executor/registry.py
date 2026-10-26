@@ -6,10 +6,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from common.external_tools import PREFIX, is_external, store
+from common.external_tools import store
 from common.external_tools.spec import ExternalToolSpec
 from common.settings import StorageSettings
 from common.tools import ToolSpec, discover
+from common.tools.settings import tool_group
 
 
 log = logging.getLogger("registry")
@@ -49,11 +50,12 @@ class ToolRegistry:
         """The tool; for an external one with `version`, that approved version."""
         spec = self._specs.get(name)
 
-        if version is None or not is_external(name) or (spec is not None and spec.version == version):
+        # A built-in tool has no versions; an own command's current one is already here.
+        if version is None or isinstance(spec, ToolSpec) or (spec is not None and spec.version == version):
             return spec
 
         if (name, version) not in self._older:
-            row = store.approved_version(name.removeprefix(PREFIX), version)
+            row = store.approved_version(name, version)
             if row is None:
                 return None
 
@@ -64,3 +66,8 @@ class ToolRegistry:
 
     def catalog(self) -> list[dict[str, Any]]:
         return [self._specs[name].manifest() for name in sorted(self._specs)]
+
+
+    def builtin_groups(self) -> set[str]:
+        """Groups of the built-in tools: an own command takes a group of its own."""
+        return {tool_group(name) for name, spec in self._specs.items() if isinstance(spec, ToolSpec)}

@@ -182,7 +182,7 @@ async def test_move_in_a_dry_run_only_says_what_it_would_do(settings):
     (workspace / "Входящие" / "a.pdf").write_bytes(b"%PDF")
 
     ctx = ToolContext(
-        mode="run", settings=settings, paths=WorkspacePaths(workspace, settings.storage.data_dir), llm=None, dry_run=True,
+        mode="run", settings=settings, paths=WorkspacePaths(workspace, settings.storage.data_dir), dry_run=True,
     )
     out = await move_file(Input(src="Входящие/a.pdf", dst="Счета/"), ctx)
 
@@ -203,7 +203,7 @@ async def test_fs_list_stays_in_its_folder(settings, tmp_path):
     (workspace / "link.txt").symlink_to(tmp_path / "outside.txt")
     (settings.storage.data_dir / "outputs").mkdir(parents=True, exist_ok=True)
 
-    ctx = ToolContext(mode="chat", settings=settings, paths=WorkspacePaths(workspace, settings.storage.data_dir), llm=None)
+    ctx = ToolContext(mode="chat", settings=settings, paths=WorkspacePaths(workspace, settings.storage.data_dir))
 
     for pattern in ("../*", "/etc/*", "x/../../*"):
         with pytest.raises(ToolError, match="без `..`"):
@@ -281,7 +281,7 @@ async def test_aggregate_checks_the_columns_of_every_file(settings):
         book.active.append([100])
         book.save(workspace / name)
 
-    ctx = ToolContext(mode="chat", settings=settings, paths=WorkspacePaths(workspace, settings.storage.data_dir), llm=None)
+    ctx = ToolContext(mode="chat", settings=settings, paths=WorkspacePaths(workspace, settings.storage.data_dir))
 
     with pytest.raises(ToolError, match="q2.xlsx.*Сумма"):
         await aggregate(Input(inputs=["q1.xlsx", "q2.xlsx"], sum_columns=["Сумма"]), ctx)
@@ -298,7 +298,7 @@ def _workspace_ctx(settings):
     from executor.paths import WorkspacePaths
 
     workspace = tunables.get("workspace_dir")
-    return workspace, ToolContext(mode="chat", settings=settings, paths=WorkspacePaths(workspace, settings.storage.data_dir), llm=None)
+    return workspace, ToolContext(mode="chat", settings=settings, paths=WorkspacePaths(workspace, settings.storage.data_dir))
 
 
 async def test_docs_read_reads_one_document_or_several(settings):

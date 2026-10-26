@@ -96,7 +96,7 @@ function refresh(queryClient: QueryClient, event: AgentEvent): void {
     events && !events.some((known) => known.id === event.id) ? [...events, event].slice(-RECENT_EVENTS) : events,
   );
 
-  if (group === "approval" || group === "task") {
+  if (group === "task") {
     queryClient.invalidateQueries({ queryKey: keys.tasks });
     queryClient.invalidateQueries({ queryKey: keys.chats });
     queryClient.invalidateQueries({ queryKey: ["task"] });

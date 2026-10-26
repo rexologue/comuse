@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from typing import Any, Awaitable, Callable
 
-from common.external_tools import is_external
 from common.schemas.task import tool_steps
 
 
@@ -24,13 +23,13 @@ def pin(data: dict[str, Any], catalog: dict[str, dict[str, Any]], *, keep: dict[
     if explicit:
         for step in tool_steps(data):
             tool, version = step["tool"], step.get("tool_version")
-            if is_external(tool) and isinstance(version, int) and (tool not in chosen or version != keep.get(tool)):
+            if _own(tool, catalog, keep) and isinstance(version, int) and (tool not in chosen or version != keep.get(tool)):
                 chosen[tool] = version
 
     for step in tool_steps(data):
         tool = step["tool"]
 
-        if not is_external(tool):
+        if not _own(tool, catalog, keep):
             if not explicit:
                 step.pop("tool_version", None)
             continue
@@ -38,6 +37,11 @@ def pin(data: dict[str, Any], catalog: dict[str, dict[str, Any]], *, keep: dict[
         version = chosen.get(tool) or keep.get(tool) or (catalog.get(tool) or {}).get("version")
         if version is not None:
             step["tool_version"] = version
+
+
+def _own(tool: str, catalog: dict[str, dict[str, Any]], keep: dict[str, int]) -> bool:
+    """An own command (it has versions): so the catalog says, or the task already pins it."""
+    return (catalog.get(tool) or {}).get("source") == "external" or tool in keep
 
 
 async def overlay(

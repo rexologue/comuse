@@ -108,11 +108,16 @@ async def test_error_with_retries_then_fail(settings, monkeypatch):
     assert [e["attempt"] for e in errors] == [1, 2, 3]
 
 
-async def test_steps_carry_the_task_settings(settings):
+async def test_each_step_carries_its_own_settings(settings):
+    """The step's value, else the task's; the executor fills in the defaults."""
     main = FakeMain(_tools())
-    await RunEngine(main).execute(_make_run(SPEC, task_settings={"mail": {"send_directly": True}}))
+    task_settings = {"fs": {"fs.move": {"overwrite": {"all": False, "steps": {"move": True}}, "keep": {"all": 1}}}}
 
-    assert all(c["context"]["task_settings"] == {"mail": {"send_directly": True}} for c in main.calls)
+    await RunEngine(main).execute(_make_run(SPEC, task_settings=task_settings))
+
+    by_tool = {c["tool"]: c["context"]["tool_settings"] for c in main.calls}
+    assert by_tool["fs.move"] == {"overwrite": True, "keep": 1}
+    assert by_tool["fs.list"] == {}
 
 
 CHECK = {

@@ -201,13 +201,15 @@ def test_moving_a_letter_that_is_gone_is_an_error(monkeypatch):
 
 
 def _send_context(mode, task_settings, *, dry_run=False):
-    from common.tools import ToolContext
+    from common.tools import ToolContext, discover
     from common.tools.context import Credential
+    from executor.runtime import _tool_settings
 
     return ToolContext(
-        mode=mode, settings=None, paths=None, llm=None,
+        mode=mode, settings=None, paths=None,
         credentials={"account": Credential(name="work", kind="imap_smtp", config={"email": "agent@company.local"}, secret="")},
-        dry_run=dry_run, task_settings=task_settings,
+        # As the executor gives it: the step's values over mail.send's defaults.
+        dry_run=dry_run, tool_settings=_tool_settings(discover()["mail.send"], task_settings),
     )
 
 
@@ -215,9 +217,9 @@ def _send_context(mode, task_settings, *, dry_run=False):
     ("mode", "task_settings", "dry_run", "expected"),
     [
         ("run", {}, False, "draft"),                                     # a task drafts by default
-        ("run", {"mail": {"send_directly": False}}, False, "draft"),
-        ("run", {"mail": {"send_directly": True}}, False, "sent"),       # the user let it send
-        ("run", {"mail": {"send_directly": True}}, True, "draft"),       # a dry run never sends
+        ("run", {"send_directly": False}, False, "draft"),
+        ("run", {"send_directly": True}, False, "sent"),                 # the user let it send
+        ("run", {"send_directly": True}, True, "draft"),                 # a dry run never sends
         ("chat", {}, False, "sent"),                                     # chat: the user just confirmed
     ],
 )
@@ -239,7 +241,7 @@ def _sent_context(config):
     from common.tools.context import Credential
 
     return ToolContext(
-        mode="chat", settings=None, paths=None, llm=None,
+        mode="chat", settings=None, paths=None,
         credentials={"account": Credential(name="work", kind="imap_smtp", config={"email": "agent@company.local", **config}, secret="")},
     )
 

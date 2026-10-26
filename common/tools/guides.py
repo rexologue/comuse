@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from common.tools.domain import tool_domain
+from common.tools.settings import tool_group
 
 
 @dataclass(slots=True, frozen=True)
@@ -36,7 +36,7 @@ def domain_guide(domain: str, *, agent: str = "", compiler: str = "") -> Guide:
 
 
 def guide_of(tool: str) -> dict[str, Any] | None:
-    guide = _GUIDES.get(tool_domain(tool))
+    guide = _GUIDES.get(tool_group(tool))
     return {"agent": guide.agent, "compiler": guide.compiler} if guide else None
 
 
@@ -47,6 +47,6 @@ def collect(manifests: list[dict[str, Any]], role: str) -> list[str]:
     for manifest in sorted(manifests, key=lambda m: m["name"]):
         text = (manifest.get("guide") or {}).get(role)
         if text:
-            texts.setdefault(tool_domain(manifest["name"]), text)
+            texts.setdefault(tool_group(manifest["name"]), text)
 
     return list(texts.values())

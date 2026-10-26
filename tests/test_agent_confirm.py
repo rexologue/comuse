@@ -214,7 +214,7 @@ async def test_a_task_runs_or_changes_only_after_the_users_yes(settings):
 async def test_an_unknown_command_does_not_run(settings):
     loop = _loop()
 
-    result = await loop._dispatch("ses_1", None, _call("ext.just_approved", {}), {})
+    result = await loop._dispatch("ses_1", None, _call("demo.just_approved", {}), {})
 
     assert result["status"] == "error" and loop.main.executed == []
     # The cache is reloaded first: a command approved a moment ago is found and asked about.

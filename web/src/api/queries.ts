@@ -159,7 +159,7 @@ export function useRunLog(id: string, live: boolean) {
 export function useApprovals(sessionId?: string) {
   return useQuery({
     queryKey: keys.approvals(sessionId),
-    queryFn: async () => (await api<{ approvals: Approval[] }>(`/approvals?status=pending${sessionId ? `&session_id=${sessionId}` : ""}`)).approvals,
+    queryFn: async () => (await api<{ approvals: Approval[] }>(`/approvals${sessionId ? `?session_id=${sessionId}` : ""}`)).approvals,
   });
 }
 

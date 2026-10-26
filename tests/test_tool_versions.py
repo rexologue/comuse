@@ -27,7 +27,7 @@ INTERNAL = {name: spec.manifest() for name, spec in discover().items()}
 
 def _manifest(version: int, properties: dict, required: list[str]) -> dict:
     return {
-        "name": "ext.count", "function_name": "ext__count", "title": "Посчитать", "card": "Посчитать «{file}»",
+        "name": "demo.count", "function_name": "ext__count", "title": "Посчитать", "card": "Посчитать «{file}»",
         "description": "…", "confirm": False, "secrets": [], "timeout": None, "settings_schema": None, "guide": None,
         "core": False, "source": "external", "version": version,
         "input_schema": {"type": "object", "properties": properties, "required": required},
@@ -49,14 +49,14 @@ class _Main:
             return {"tools": [*INTERNAL.values(), self.current]}
 
         found = {1: V1, 2: V2, 3: V3}.get((params or {}).get("version"))
-        if path != "/tools/ext.count" or found is None:
+        if path != "/tools/demo.count" or found is None:
             raise ApiError(status_code=404, message="not found")
 
         return found
 
 
 def _spec(version: int | None = 1, **args) -> dict:
-    step = {"id": "count", "tool": "ext.count", "args": {"file": "a.txt", **args}}
+    step = {"id": "count", "tool": "demo.count", "args": {"file": "a.txt", **args}}
     if version is not None:
         step["tool_version"] = version
 
@@ -68,12 +68,12 @@ def _task(spec: dict) -> str:
 
 
 def test_the_model_never_picks_a_version():
-    catalog = {**INTERNAL, "ext.count": V2}
+    catalog = {**INTERNAL, "demo.count": V2}
 
     new = _spec(version=7)
     versions.pin(new, catalog, keep={}, explicit=False)
     kept = _spec(version=7)
-    versions.pin(kept, catalog, keep={"ext.count": 1}, explicit=False)
+    versions.pin(kept, catalog, keep={"demo.count": 1}, explicit=False)
 
     assert new["steps"][0]["tool_version"] == 2      # a new task: the current version
     assert kept["steps"][0]["tool_version"] == 1     # a patched task: what it had
@@ -81,7 +81,7 @@ def test_the_model_never_picks_a_version():
 
 def test_a_version_is_checked_against_its_own_schema():
     with pytest.raises(SpecError, match="нет версии v1"):
-        validate_spec(_spec(1), {**INTERNAL, "ext.count": V2})
+        validate_spec(_spec(1), {**INTERNAL, "demo.count": V2})
 
     with pytest.raises(SpecError, match="только у своих команд"):
         validate_spec({"title": "x", "steps": [{"id": "a", "tool": "fs.list", "tool_version": 1, "args": {}}]}, INTERNAL)
@@ -103,7 +103,7 @@ async def test_an_edit_keeps_the_tasks_version(settings):
 async def test_moving_a_task_to_the_current_version(settings):
     task_id = _task(_spec(1))
 
-    result = await Compiler(settings, llm=None, main=_Main(V2)).move_to_tool_version(task_id, "ext.count", None)
+    result = await Compiler(settings, llm=None, main=_Main(V2)).move_to_tool_version(task_id, "demo.count", None)
 
     assert store.get_version(task_id, result["version_id"]).spec["steps"][0]["tool_version"] == 2
     assert result["diff"] == ["~ Посчитать «a.txt»: версия команды v1 → v2"]
@@ -114,7 +114,7 @@ async def test_a_version_the_steps_do_not_fit_is_refused(settings):
     task_id = _task(_spec(1))
 
     with pytest.raises(ApiError) as e:
-        await Compiler(settings, llm=None, main=_Main(V3)).move_to_tool_version(task_id, "ext.count", None)
+        await Compiler(settings, llm=None, main=_Main(V3)).move_to_tool_version(task_id, "demo.count", None)
 
     assert "поправьте задачу словами" in e.value.message
     assert any("path" in error for error in e.value.details["errors"])
@@ -126,23 +126,22 @@ needs_uv = pytest.mark.skipif(not HAVE_UV, reason="uv is not installed")
 def _two_versions(settings):
     for marker in ("первая", "вторая"):
         code = f"def run(args, ctx):\n    return {{'lines': 0, 'out': '{marker}'}}\n"
-        draft = tools.save_draft(settings.storage, "count_lines", manifest=MANIFEST, files={"main.py": code}, requirements=[])
-        tools.approve(settings.storage, "count_lines", draft["version"], draft["hash"])
+        draft = tools.save_draft(settings.storage, "demo.count_lines", manifest=MANIFEST, files={"main.py": code}, requirements=[])
+        tools.approve(settings.storage, "demo.count_lines", draft["version"], draft["hash"])
 
 
 @needs_uv
 async def test_a_step_runs_the_version_it_pins(settings):
-    from common.llm import LLM
     from executor.registry import ToolRegistry
     from executor.runtime import ExecutorRuntime
 
     _two_versions(settings)
     registry = ToolRegistry(settings.storage)
     registry.load()
-    runtime = ExecutorRuntime(settings, registry, secrets=None, llm=LLM(settings))
+    runtime = ExecutorRuntime(settings, registry, secrets=None)
 
     async def call(version):
-        request = ExecuteRequest(tool="ext.count_lines", version=version, args={"file": "a.txt"}, context=ExecContext(mode="run", run_id="run_t"))
+        request = ExecuteRequest(tool="demo.count_lines", version=version, args={"file": "a.txt"}, context=ExecContext(mode="run", run_id="run_t"))
         return await runtime.execute(request)
 
     current, older = await call(None), await call(1)
@@ -156,11 +155,11 @@ async def test_a_step_runs_the_version_it_pins(settings):
 def test_an_old_version_goes_once_no_task_needs_it(settings):
     _two_versions(settings)
 
-    assert tools.sweep_unused(settings.storage, {("ext.count_lines", 1)}) == 0
+    assert tools.sweep_unused(settings.storage, {("demo.count_lines", 1)}) == 0
     assert tools.sweep_unused(settings.storage, set()) == 1
-    assert not tools.version_dir(settings.storage, "count_lines", 1).exists()
+    assert not tools.version_dir(settings.storage, "demo.count_lines", 1).exists()
     # The current version stays whoever uses it.
-    assert tools.version_dir(settings.storage, "count_lines", 2).exists()
+    assert tools.version_dir(settings.storage, "demo.count_lines", 2).exists()
     assert tools.sweep_unused(settings.storage, set()) == 0
 
 
@@ -176,9 +175,9 @@ def test_the_task_view_tells_of_a_newer_version(settings):
         db.commit()
 
     # The current versions are the executor's word; main only compares.
-    assert views.current_pins(task_id) == {"ext.count": 1}
-    assert views.task_detail(task_id, {"ext.count": 2})["tool_updates"] == [{"tool": "ext.count", "version": 1, "current": 2}]
-    assert views.task_detail(task_id, {"ext.count": 1})["tool_updates"] == []
+    assert views.current_pins(task_id) == {"demo.count": 1}
+    assert views.task_detail(task_id, {"demo.count": 2})["tool_updates"] == [{"tool": "demo.count", "version": 1, "current": 2}]
+    assert views.task_detail(task_id, {"demo.count": 1})["tool_updates"] == []
 
 
 def test_an_old_version_goes_once_its_owners_no_longer_pin_it(settings):
@@ -187,7 +186,7 @@ def test_an_old_version_goes_once_its_owners_no_longer_pin_it(settings):
     from runner.api import runs
 
     task_id = _task(_spec(1))
-    assert tasks.tool_pins() == [{"tool": "ext.count", "version": 1}]
+    assert tasks.tool_pins() == [{"tool": "demo.count", "version": 1}]
 
     with session() as db:
         db.get(Task, task_id).status = "archived"
@@ -203,25 +202,25 @@ def test_tasks_can_be_listed_by_the_tool_they_use(settings):
     on_tool = _task(_spec(1))
     _task({"title": "Другое", "steps": [{"id": "files", "tool": "fs.list", "args": {"folder": "."}}]})
 
-    found = views.task_list(tool="ext.count")
+    found = views.task_list(tool="demo.count")
 
     assert [(task["id"], task["tool_version"]) for task in found] == [(on_tool, 1)]
 
 
 def test_pinning_survives_odd_steps_and_follows_the_users_edit():
-    catalog = {**INTERNAL, "ext.count": V2}
+    catalog = {**INTERNAL, "demo.count": V2}
 
     # A tool that is not a string is left to validate_spec to name.
-    odd = {"title": "x", "steps": [{"id": "a", "tool": 5}, {"id": "b", "tool": {"name": "ext.count"}}]}
+    odd = {"title": "x", "steps": [{"id": "a", "tool": 5}, {"id": "b", "tool": {"name": "demo.count"}}]}
     versions.pin(odd, catalog, keep={}, explicit=False)
     assert pinned(odd) == {}
 
     # The user moved the second step: that one wins, wherever it stands.
-    two = {"title": "x", "steps": [{"id": "a", "tool": "ext.count", "tool_version": 1}, {"id": "b", "tool": "ext.count", "tool_version": 2}]}
-    versions.pin(two, catalog, keep={"ext.count": 1}, explicit=True)
+    two = {"title": "x", "steps": [{"id": "a", "tool": "demo.count", "tool_version": 1}, {"id": "b", "tool": "demo.count", "tool_version": 2}]}
+    versions.pin(two, catalog, keep={"demo.count": 1}, explicit=True)
     assert [step["tool_version"] for step in two["steps"]] == [2, 2]
 
     # The model swapped the command for a built-in one: the version goes with it.
     swapped = {"title": "x", "steps": [{"id": "a", "tool": "fs.list", "tool_version": 1, "args": {}}]}
-    versions.pin(swapped, catalog, keep={"ext.count": 1}, explicit=False)
+    versions.pin(swapped, catalog, keep={"demo.count": 1}, explicit=False)
     assert "tool_version" not in swapped["steps"][0]

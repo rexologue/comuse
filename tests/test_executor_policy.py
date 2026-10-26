@@ -6,7 +6,6 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from common.llm import LLM
 from common.schemas.execution import ExecContext, ExecuteRequest
 from common.schemas.task import TaskSpec
 from common.tools import discover
@@ -29,16 +28,16 @@ def test_every_changing_tool_handles_dry_runs_itself():
     assert forgot == []
 
 
-def test_only_a_tool_that_declares_it_gets_the_model():
-    """The model is a step of its own (llm.*): another domain's tool cannot ask it
-    inside (docs.make_template once did)."""
+def test_only_the_llm_group_talks_to_the_model():
+    """A tool that needs the model gets it as an llm.* step before it: asking the model is
+    an explicit step through the executor, never hidden inside another group's tool
+    (docs.make_template once did)."""
     import inspect
 
-    declared = {name for name, spec in SPECS.items() if spec.uses_llm}
-    asks = {name for name, spec in SPECS.items() if "ctx.llm" in inspect.getsource(inspect.getmodule(spec.fn))}
+    asks = {name for name, spec in SPECS.items() if "common.llm" in inspect.getsource(inspect.getmodule(spec.fn)) or "instruct(ctx)" in inspect.getsource(spec.fn)}
 
-    assert asks <= declared
-    assert all(name.startswith("llm.") for name in declared)
+    assert asks and all(name.startswith("llm.") for name in asks)
+    assert not hasattr(__import__("common.tools", fromlist=["ToolContext"]).ToolContext, "llm")
 
 
 def test_spec_has_no_approval_section():
@@ -56,7 +55,6 @@ def _runtime(settings):
     runtime.settings = settings
     runtime.registry = _Registry()
     runtime.secrets = None
-    runtime.llm = LLM(settings)
 
     return runtime
 

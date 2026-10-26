@@ -1,8 +1,9 @@
 """External tools: commands the user adds or the chat writes, outside internal_tools/.
 
-A command is `ext.<name>`; each version is a folder
+A command is named like a built-in one, `group.action` (telegram.send), in a group of
+the user's own; each version is a folder
 
-    DATA_DIR/external_tools/<name>/<version>/
+    DATA_DIR/external_tools/<group>/<action>/<version>/
         tool.json           manifest (manifest.py): title, description, schemas, …
         main.py             `def run(args, ctx)`, plus any other .py files
         requirements.txt    the packages it declares
@@ -27,25 +28,18 @@ from typing import Any
 from common.schemas.task import tool_steps
 
 
-PREFIX = "ext."
-
-NAME_RE = re.compile(r"^[a-z][a-z0-9_]{1,40}$")
-
-
-def full_name(name: str) -> str:
-    return PREFIX + name
-
-
-def is_external(tool: str) -> bool:
-    return tool.startswith(PREFIX)
+# `group.action`, like a built-in command: telegram.send. The group is the user's own:
+# a built-in one (mail, fs…) belongs to the code.
+NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,40}\.[a-z][a-z0-9_]{0,40}$")
 
 
 def pinned(spec: dict[str, Any]) -> dict[str, int]:
-    """{tool: version} the external steps of a task spec run (nested steps too)."""
+    """{tool: version} the steps of a task spec run with a pinned version — only own
+    commands have one (nested steps too)."""
     found: dict[str, int] = {}
 
     for step in tool_steps(spec):
-        if is_external(step["tool"]) and isinstance(step.get("tool_version"), int):
+        if isinstance(step.get("tool_version"), int):
             found.setdefault(step["tool"], step["tool_version"])
 
     return found

@@ -16,22 +16,6 @@ from common.utils import utcnow
 # MAIN
 # -----------------------------
 
-class Approval(Base):
-    __tablename__ = "approvals"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    # version_approve: the user's approval of a task version, the only one there is
-    kind: Mapped[str] = mapped_column(String, index=True)
-    # pending | approved | rejected | cancelled (a newer draft replaced the version)
-    status: Mapped[str] = mapped_column(String, default="pending", index=True)
-    task_id: Mapped[str | None] = mapped_column(String, index=True)
-    task_version_id: Mapped[str | None] = mapped_column(String)
-    session_id: Mapped[str | None] = mapped_column(String)
-    payload: Mapped[Any] = mapped_column(JSON, default=dict)
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
-    resolved_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
-
-
 class Event(Base):
     __tablename__ = "events"
 

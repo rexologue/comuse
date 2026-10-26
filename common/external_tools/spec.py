@@ -11,7 +11,7 @@ from typing import Any
 import jsonschema
 
 from common import tunables
-from common.external_tools import deps, full_name, process, store
+from common.external_tools import deps, process, store
 from common.external_tools.manifest import Manifest
 from common.settings import StorageSettings
 from common.storage.models import ExternalToolVersion
@@ -43,7 +43,7 @@ class ExternalToolSpec:
         manifest = Manifest.model_validate(row.manifest)
 
         return cls(
-            name=full_name(row.name),
+            name=row.name,
             title=manifest.title,
             card=manifest.card or manifest.title,
             description=manifest.description,

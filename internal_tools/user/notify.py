@@ -19,7 +19,6 @@ class NotifyOutput(ToolOutput):
     card="Уведомить: «{message}»",
     description="Tell the user something from a task run: it goes to the run log and to the task's chat (no email).",
     confirm=False,
-    notice_only=True,
 )
 async def notify(inp: NotifyInput, ctx: ToolContext) -> NotifyOutput:
     ctx.notify(inp.message)

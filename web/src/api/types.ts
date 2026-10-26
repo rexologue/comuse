@@ -59,7 +59,7 @@ export type ChatDetail = { id: string; title: string; created_at: string; messag
 
 export type ToolManifest = {
   name: string;
-  // internal: comes with the agent; external: an own command (ext.*).
+  // internal: comes with the agent; external: an own command (group.action, versioned).
   source: "internal" | "external";
   function_name: string;
   title: string;
@@ -79,7 +79,7 @@ export type ChatReply = {
 export type Card = {
   id: string;
   tool: string | null;
-  // The version of an external tool (ext.*) the step runs.
+  // The version of an own command the step runs.
   version?: number | null;
   text: string;
   args: Record<string, unknown>;
@@ -134,22 +134,36 @@ export type LogEntry = {
   [field: string]: unknown;
 };
 
-export type SettingField = { value: unknown; title: string; description?: string; schema: Record<string, unknown> };
+// GET /tasks/{id}/settings (docs/TASKS.md#настройки): per tool its fields, each with the
+// default, the task's value (null — not changed) and every step that runs the tool.
+export type StepSetting = { step: string; card: string; value: unknown; effective: unknown };
+export type SettingField = {
+  name: string;
+  title: string;
+  description: string;
+  schema: Record<string, unknown>;
+  default: unknown;
+  all: unknown;
+  steps: StepSetting[];
+};
+export type ToolSettings = { group: string; tool: string; tool_title: string; fields: SettingField[] };
+export type TaskSettings = { task_id: string; settings: ToolSettings[] };
+// PATCH /tasks/{id}/settings: no step — for the whole task; value null takes it back.
+export type SettingChange = { tool: string; field: string; step?: string; value: unknown };
 
-export type TaskSettings = { task_id: string; settings: Record<string, Record<string, SettingField>> };
-
+// GET /approvals: a draft version waiting for the user (the draft is the approval).
 export type Approval = {
-  id: string;
-  status: "pending" | "approved" | "rejected" | "cancelled";
   task_id: string;
-  task_version_id: string;
+  version_id: string;
   session_id: string | null;
-  payload: { title?: string; summary?: string; cards?: Card[] };
+  title: string;
+  summary: string;
+  cards: Card[];
   created_at: string;
 };
 
 // POST /compiler/patch: the new draft with what changed.
-export type PatchResult = { task_id: string; version_id: string; title: string; summary: string; diff: string[]; cards: Card[]; approval_id: string };
+export type PatchResult = { task_id: string; version_id: string; title: string; summary: string; diff: string[]; cards: Card[] };
 
 // GET /llm (docs/LLM.md).
 export type RoleName = "chat" | "instruct" | "embed";
@@ -193,8 +207,8 @@ export type ExternalToolVersionItem = {
 };
 
 export type ExternalTool = {
+  // group.action, like a built-in command (telegram.send)
   name: string;
-  tool: string;
   title: string | null;
   current_version: number | null;
   draft_version: number | null;
@@ -203,7 +217,6 @@ export type ExternalTool = {
 
 export type ExternalToolVersion = ExternalToolVersionItem & {
   name: string;
-  tool: string;
   current: boolean;
   manifest: { title: string; description: string; confirm: boolean | "always"; input_schema: unknown; output_schema: unknown };
   packages: string[];

@@ -6,6 +6,7 @@ from pydantic import Field
 
 from common.tools import ToolContext, ToolInput, ToolOutput, tool
 from internal_tools.llm.inputs import gather_text
+from internal_tools.llm.model import instruct
 
 
 class ClassifyInput(ToolInput):
@@ -25,7 +26,6 @@ class ClassifyOutput(ToolOutput):
     card="Определить категорию: {labels}",
     description="Classify a text (a document's text read by an earlier step) into exactly one of the given labels.",
     confirm=False,
-    uses_llm=True,
 )
 async def classify(inp: ClassifyInput, ctx: ToolContext) -> ClassifyOutput:
     text = gather_text(inp.input, ctx, limit=20000)
@@ -42,7 +42,7 @@ async def classify(inp: ClassifyInput, ctx: ToolContext) -> ClassifyOutput:
 
         return data
 
-    data = await ctx.llm.structured(
+    data = await instruct(ctx).structured(
         [
             {
                 "role": "user",
