@@ -176,8 +176,7 @@ summary, cards, created_at}`. Одобрить или отклонить —
 
 | Маршрут | Что делает |
 | --- | --- |
-| `GET /tools` | Каталог команд: манифесты со схемами и хешем определения (`hash`) |
-| `GET /tools/{name}` | Манифест одной команды |
+| `GET /tools` | Каталог команд: `tools/list` executor манифестами — со схемами и хешем определения (`hash`) |
 | `GET /external-tools`, `PUT /external-tools/{name}/draft`, … | Свои команды: одобренный код, черновик, одобрение — см. [EXTERNAL_TOOLS.md](EXTERNAL_TOOLS.md#api) |
 | `GET /accounts` | Аккаунты без паролей: `id`, `name`, `kind`, `config` |
 | `GET /accounts/kinds` | Виды аккаунтов, которые объявили группы команд: поля для формы, название секрета, пресеты |
@@ -260,7 +259,6 @@ summary, cards, created_at}`. Одобрить или отклонить —
 | `POST /internal/events {type, payload}` | runner, agent-loop | Опубликовать событие |
 | `POST /internal/notify {task_id, run_id, title, message}` | runner | Доставить сообщение запуска в чат задачи |
 | `POST /internal/tools-changed {task_id, run_id, title, tools, dry_run}` | runner | Запуск не начат или остановлен: команды задачи изменились. main ставит задачу на паузу и пишет в её чат (пробный — только событие) |
-| `POST /executor/execute` | agent-loop, runner | Выполнить команду (формат — в [TOOLS.md](TOOLS.md#вызов-команды)) |
-| `POST /executor/mcp` | — | Те же команды по MCP: `tools/list`, `tools/call` (см. [TOOLS.md](TOOLS.md#по-mcp)) |
+| `POST /executor/mcp` | agent-loop, runner, compiler, main | Команды по MCP: `tools/list`, `tools/call` (см. [TOOLS.md](TOOLS.md#вызов-команды)) |
 | `/runner/*` | scheduler | Запустить задачу по cron |
 | `/scheduler/*` | — | Прокси к scheduler: `POST /reload {task_id?}` — перечитать задачи, `GET /jobs` (main сам зовёт scheduler напрямую после одобрения и смены статуса) |

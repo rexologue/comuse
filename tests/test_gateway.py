@@ -71,6 +71,6 @@ async def test_internal_routes_are_not_open_without_an_internal_token(env):
     seen: list[httpx.Request] = []
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(_proxy_app(settings, seen)), base_url="http://main.test") as client:
-        assert (await client.post("/executor/execute")).status_code == 401
-        assert (await client.post("/executor/execute", headers=[(b"authorization", "Bearer é".encode())])).status_code == 401
-        assert (await client.post("/executor/execute", headers={"Authorization": f"Bearer {api_token(settings)}"})).status_code == 200
+        assert (await client.post("/executor/mcp")).status_code == 401
+        assert (await client.post("/executor/mcp", headers=[(b"authorization", "Bearer é".encode())])).status_code == 401
+        assert (await client.post("/executor/mcp", headers={"Authorization": f"Bearer {api_token(settings)}"})).status_code == 200

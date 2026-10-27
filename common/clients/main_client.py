@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator
 
 import httpx
+from mcp import ClientSession
+from mcp.client.streamable_http import streamable_http_client
+from mcp.shared.exceptions import McpError
 
 from common.errors import ApiError
 from common.settings import ServiceSettings
+from common.tools.mcp_codec import call_meta, manifest_of, response_of
 from common.utils import error_body
 
 
@@ -107,6 +112,53 @@ class MainClient:
         return await self.request("PUT", path, **kwargs)
 
 
+    # -----------------------------
+    # TOOLS (the executor's MCP server, through main)
+    # -----------------------------
+
+    async def tools(self) -> dict[str, dict[str, Any]]:
+        """The commands by name: their manifests, each with its definition's hash."""
+        async with self._mcp() as session:
+            result = await session.list_tools()
+
+        return {manifest["name"]: manifest for manifest in map(manifest_of, result.tools)}
+
+
+    async def call_tool(
+        self,
+        tool: str,
+        args: dict[str, Any],
+        *,
+        hash: str | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """One call, as ExecuteResponse's fields: status, output or error, logs…
+        `hash`: the definition the task was approved with (the call is refused if the
+        tool is another now)."""
+        async with self._mcp() as session:
+            result = await session.call_tool(tool, args, meta=call_meta(hash=hash, context=context))
+
+        return response_of(result).model_dump()
+
+
+    @asynccontextmanager
+    async def _mcp(self) -> AsyncIterator[ClientSession]:
+        """A session per use: the server keeps none (stateless), so there is nothing to
+        hold open between calls."""
+        try:
+            async with streamable_http_client(f"{self.base_url.rstrip('/')}/executor/mcp", http_client=self._client) as (read, write, _):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    yield session
+
+        except BaseException as e:
+            converted = _api_error(e)
+            if converted is e:
+                raise
+
+            raise converted from e
+
+
     async def register(self, name: str, url: str) -> None:
         await self.post("/internal/register", json={"name": name, "url": url})
 
@@ -118,3 +170,23 @@ class MainClient:
 
         except ApiError as e:
             log.warning("cannot publish event %s: %s", event_type, e.message)
+
+
+def _api_error(error: BaseException) -> BaseException:
+    """What went wrong with an MCP call, as the ApiError any call to main raises. The
+    transport runs in a task group, so the cause may come inside an ExceptionGroup."""
+    while isinstance(error, BaseExceptionGroup) and len(error.exceptions) == 1:
+        error = error.exceptions[0]
+
+    if isinstance(error, httpx.HTTPStatusError):
+        # The transport streams the answer and has not read it: the status is what there is.
+        return ApiError(status_code=error.response.status_code, message=f"Tools (MCP) at main: HTTP {error.response.status_code}")
+
+    if isinstance(error, httpx.RequestError):
+        return ApiError(status_code=503, message="Cannot reach main for the tools (MCP)", details={"error": repr(error)})
+
+    if isinstance(error, McpError):
+        return ApiError(status_code=502, message=f"MCP: {error.error.message}")
+
+    # Cancellation and anything else go on as they are.
+    return error

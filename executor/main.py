@@ -12,7 +12,6 @@ from common.secrets import SecretStore
 from common.tools.areas import data_areas
 from common.service import create_service_app
 from executor.api import accounts as accounts_api
-from executor.api import execute as execute_api
 from executor.api import external as external_api
 from executor.api import mcp_http as mcp_api
 from executor.outputs import sweep as sweep_outputs
@@ -59,6 +58,6 @@ async def lifespan(app: FastAPI):
 app = create_service_app(
     name="executor",
     title="Executor",
-    routers=[(execute_api.router, "tools"), (mcp_api.router, "mcp"), (external_api.router, "external tools"), (accounts_api.router, "accounts")],
+    routers=[(mcp_api.router, "tools"), (external_api.router, "external tools"), (accounts_api.router, "accounts")],
     lifespan_hook=lifespan,
 )

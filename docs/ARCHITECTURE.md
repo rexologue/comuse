@@ -99,7 +99,7 @@ executor и команды — [TOOLS.md](TOOLS.md), модели — [LLM.md](L
 
 1. **Чат.** Клиент шлёт сообщение в `POST /agent/v1/chat/completions`. agent-loop
    вызывает LLM, та вызывает команды; каждый вызов идёт в executor через
-   `POST main/executor/execute` с `mode: chat`. Команды, которые что-то меняют, ждут
+   MCP executor (`tools/call` на `main/executor/mcp`) с `mode: chat`. Команды, которые что-то меняют, ждут
    ответа пользователя.
 2. **Сборка.** «Формируй задачу» → мета-инструмент `task_compile` → main →
    compiler: собирает задачу из разговора, проверяет, сохраняет черновик версии — он и
@@ -148,8 +148,8 @@ executor/
   paths.py           песочница путей
   outputs.py         удаление старых файлов результатов
   registry.py        каталог команд: internal_tools/ и свои команды
-  mcp_server.py      команды как MCP-сервер: tools/list — каталог, tools/call — тот же конвейер
-  api/               execute и каталог, mcp, external-tools, accounts
+  mcp_server.py      команды как MCP-сервер: tools/list — каталог, tools/call — конвейер вызова
+  api/               mcp (и перечитать каталог), external-tools, accounts
 scheduler/
   jobs.py            задания cron
 common/

@@ -29,6 +29,7 @@ class ToolCatalog:
         self.embed = embed
 
         self._catalog = CatalogCache(main)
+        # By the hash of the tool's definition: a changed description is embedded anew.
         self._vectors: dict[str, list[float]] = {}
         # Which embeddings endpoint made the vectors: another model's are not comparable.
         self._vectors_by: tuple | None = None
@@ -40,8 +41,9 @@ class ToolCatalog:
 
 
     async def select(self, query: str, always: set[str] | None = None) -> list[dict[str, Any]]:
-        """Top-k tools for the query plus `always` (tools already used in the session)."""
-        manifests = await self.manifests()
+        """Top-k tools for the query plus `always` (tools already used in the session).
+        Every turn asks for the tools anew: a command approved a moment ago is offered."""
+        manifests = await self.manifests(fresh=True)
         # Tools marked core (looking around is how every request starts) are never ranked out.
         core = {name for name, manifest in manifests.items() if manifest.get("core")}
         always = {name for name in (always or set()) | core if name in manifests}
@@ -80,15 +82,14 @@ class ToolCatalog:
 
 
     async def _rank(self, query: str, manifests: dict[str, dict[str, Any]]) -> list[str]:
-        missing = [name for name in manifests if name not in self._vectors]
+        missing = [manifest for manifest in manifests.values() if manifest["hash"] not in self._vectors]
         if missing:
-            texts = [_tool_text(manifests[name]) for name in missing]
-            vectors = await self.embed.embed(texts)
-            self._vectors.update(zip(missing, vectors))
+            vectors = await self.embed.embed([_tool_text(manifest) for manifest in missing])
+            self._vectors.update(zip((manifest["hash"] for manifest in missing), vectors))
 
         [query_vector] = await self.embed.embed([query])
 
-        scores = {name: _cosine(query_vector, self._vectors[name]) for name in manifests}
+        scores = {name: _cosine(query_vector, self._vectors[manifest["hash"]]) for name, manifest in manifests.items()}
 
         return sorted(scores, key=scores.get, reverse=True)
 

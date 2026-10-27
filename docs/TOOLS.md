@@ -8,7 +8,7 @@
 описание для модели и шаблон карточки — в том же файле, отдельной регистрации нет:
 executor при старте сам обходит `internal_tools/`. Внутренний
 `POST /executor/tools/reload` подхватывает новые файлы команд, но не правки
-существующих: для них executor нужно перезапустить. Посмотреть каталог: `GET /tools`.
+существующих: для них executor нужно перезапустить. Посмотреть каталог: `GET /tools` (main отдаёт `tools/list` executor манифестами).
 
 Свои команды пользователя и чата (`группа.действие` в своей группе, например `telegram.send`; одобренный код и черновик — каждый в своей
 папке и своём окружении) — в [EXTERNAL_TOOLS.md](EXTERNAL_TOOLS.md).
@@ -116,17 +116,24 @@ async def send(inp: Input, ctx: ToolContext) -> Output:
 
 ## Вызов команды
 
-И чат, и runner вызывают команду одинаково: `POST main/executor/execute`.
+Команды executor отдаёт как MCP-сервер, и другого входа к ним нет: `POST main/executor/mcp`,
+Streamable HTTP без сессий, ответы JSON (`executor/mcp_server.py`,
+`executor/api/mcp_http.py`), под внутренним токеном, как остальные маршруты executor.
+`tools/list` — каталог, `tools/call` — вызов. Чат, runner и compiler ходят туда через
+`MainClient.tools()` и `MainClient.call_tool()`; как наши манифесты, вызовы и ответы
+выглядят в MCP — `common/tools/mcp_codec.py`. Чего в MCP нет, лежит в `_meta`:
 
-```json
-{"tool": "fs.move", "hash": "3f9c…", "args": {"src": "Входящие/a.pdf", "dst": "Счета/"},
- "context": {"mode": "run", "run_id": "run_…", "step_key": "sort[0].move", "tool_settings": {}, "dry_run": false}}
-```
+| Где | Что в `_meta` |
+| --- | --- |
+| Инструмент в `tools/list` | Остальной манифест: `hash`, `confirm`, `card`, `settings_schema`, `source`, `code_hash`… — из инструмента собирается ровно тот манифест, что сделал реестр |
+| Вызов `tools/call` | `hash` — хеш определения, с которым одобрили задачу (runner берёт его из версии задачи, чат не передаёт); `context` — `mode`, `run_id`, `step_key`, `tool_settings` (значения настроек для этого шага), `dry_run`, `session_id` |
+| Результат | `logs`, `notifications`, `artifacts`, `duration_ms`, `traceback`, `timed_out`, `tool_changed` |
 
-`hash` — хеш определения команды, с которым одобрили задачу (runner берёт его из версии
-задачи, чат не передаёт). `tool_settings` — значения настроек команды для этого шага.
+Ответ: `structuredContent` — вывод команды, `content` — он же текстом; ошибка — `isError`
+с текстом ошибки. `readOnlyHint` — у команд с `confirm: false`. Клиент, который о `_meta`
+не знает, видит обычные MCP-инструменты.
 
-Конвейер:
+Конвейер вызова:
 
 1. найти команду; с `hash` — проверить, что она та же (иначе отказ с `tool_changed`,
    см. [TASKS.md](TASKS.md#команды-задачи));
@@ -136,35 +143,10 @@ async def send(inp: Input, ctx: ToolContext) -> Output:
 5. вызвать с таймаутом;
 6. проверить результат по схеме результата.
 
-Ответ:
-
-```json
-{"status": "ok", "output": {"path": "Счета/a.pdf"}, "error": null, "artifacts": [],
- "duration_ms": 12, "traceback": null, "logs": [], "notifications": []}
-```
-
-`status` — `ok` или `error`. Своего журнала у executor нет: длительность, traceback
-(при сбое команды), строки `ctx.log` и сообщения `ctx.notify` уходят в ответе — даже
-при ошибке — в журнал вызывающего. Executor ничего не спрашивает и прав задачи не
-знает: кто вызывает, тот уже решил, что вызов нужен.
-
-### По MCP
-
-Те же команды executor отдаёт как MCP-сервер: `POST main/executor/mcp`, Streamable HTTP
-без сессий, ответы JSON (`executor/mcp_server.py`, `executor/api/mcp_http.py`).
-`tools/list` — каталог, `tools/call` — тот же конвейер, что у `/execute`. Чего в MCP
-нет, лежит в `_meta`:
-
-| Где | Что в `_meta` |
-| --- | --- |
-| Инструмент в `tools/list` | Остальной манифест: `hash`, `confirm`, `card`, `settings_schema`, `source`, `code_hash`… — из инструмента собирается ровно то, что даёт `GET /tools` |
-| Вызов `tools/call` | `hash` и `context` — как в `/execute` |
-| Результат | `logs`, `notifications`, `artifacts`, `duration_ms`, `traceback`, `timed_out`, `tool_changed` |
-
-Результат: `structuredContent` — вывод команды, `content` — он же текстом, ошибка —
-`isError` с текстом ошибки. `readOnlyHint` — у команд с `confirm: false`. Клиент, который
-о `_meta` не знает, видит обычные MCP-инструменты. Маршрут защищён внутренним токеном,
-как остальные маршруты executor.
+Своего журнала у executor нет: длительность, traceback (при сбое команды), строки
+`ctx.log` и сообщения `ctx.notify` уходят в ответе — даже при ошибке — в журнал
+вызывающего. Executor ничего не спрашивает и прав задачи не знает: кто вызывает, тот
+уже решил, что вызов нужен.
 
 ## Пути
 

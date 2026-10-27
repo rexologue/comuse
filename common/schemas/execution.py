@@ -1,4 +1,5 @@
-"""Wire format between callers (agent-loop, runner) and the executor."""
+"""A call and its answer as the executor's pipeline takes them (executor/runtime.py); over
+MCP they travel as tools/call with _meta (common/tools/mcp_codec.py)."""
 
 from __future__ import annotations
 

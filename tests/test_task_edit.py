@@ -22,9 +22,8 @@ SPEC = {
 
 
 class _Main:
-    async def get(self, path, **_):
-        assert path == "/tools"
-        return {"tools": list(CATALOG.values())}
+    async def tools(self):
+        return CATALOG
 
 
 def _compiler(settings) -> Compiler:

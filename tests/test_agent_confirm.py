@@ -21,10 +21,11 @@ class FakeMain:
 
     async def post(self, path, json=None, **_):
         self.posted.append(path)
-        if path != "/executor/execute":
-            return {"id": "run_1", "status": "queued"}
+        return {"id": "run_1", "status": "queued"}
 
-        self.executed.append(json)
+
+    async def call_tool(self, tool, args, *, hash=None, context=None):
+        self.executed.append({"tool": tool, "args": args, "context": context})
         return {"status": "ok", "output": {"mode": "sent"}}
 
 

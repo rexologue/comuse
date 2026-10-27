@@ -317,11 +317,9 @@ async def test_a_run_its_caller_stopped_waiting_for_is_closed(settings):
     import asyncio
 
     class SlowMain(FakeMain):
-        async def post(self, path, json=None, **kwargs):
-            if path == "/executor/execute":
-                await asyncio.sleep(10)
-
-            return await super().post(path, json=json, **kwargs)
+        async def call_tool(self, tool, args, **kwargs):
+            await asyncio.sleep(10)
+            return await super().call_tool(tool, args, **kwargs)
 
     with pytest.raises(TimeoutError):
         await asyncio.wait_for(RunEngine(SlowMain(_tools())).execute(_make_run(SPEC, dry_run=True)), timeout=0.05)

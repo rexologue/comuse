@@ -39,8 +39,8 @@ async def test_every_service_answers_on_one_port(env, monkeypatch):
         async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:28077") as client:
             health = {name: (await client.get(f"/svc/{name}/health")).json()["service"] for name in single_app.SERVICES}
             main_health = (await client.get("/health")).json()["service"]
-            no_token = await client.get("/svc/executor/tools")
-            internal = await client.get("/svc/executor/tools", headers={"X-Internal-Token": "internal"})
+            no_token = await client.post("/svc/executor/tools/reload")
+            internal = await client.post("/svc/executor/tools/reload", headers={"X-Internal-Token": "internal"})
             settings = await client.get("/settings", headers={"Authorization": "Bearer api"})
 
     assert health == {name: name for name in single_app.SERVICES}

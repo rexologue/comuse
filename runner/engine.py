@@ -204,7 +204,7 @@ class RunEngine:
 
     async def _catalog(self) -> dict[str, dict[str, Any]]:
         """The tools as they are now: asked anew for every run."""
-        return {tool["name"]: tool for tool in (await self.main.get("/tools"))["tools"]}
+        return await self.main.tools()
 
 
     async def _report_changed(self, run: Run, task: Task, tools: list[str]) -> None:
@@ -443,10 +443,7 @@ class _Walk:
         }
 
         try:
-            response = await self.engine.main.post(
-                "/executor/execute",
-                json={"tool": step.tool, "hash": self.hashes.get(step.tool), "args": args, "context": context},
-            )
+            response = await self.engine.main.call_tool(step.tool, args, hash=self.hashes.get(step.tool), context=context)
 
         except ApiError as e:
             response = {"status": "error", "error": e.message}

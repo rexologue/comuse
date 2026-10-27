@@ -1,4 +1,4 @@
-"""The tool catalog as a service sees it: main's /tools (the executor's manifests),
+"""The tool catalog as a service sees it: the executor's MCP tools/list (through main),
 fetched again after a minute or when asked to."""
 
 from __future__ import annotations
@@ -25,8 +25,7 @@ class CatalogCache:
 
     async def get(self, *, fresh: bool = False) -> dict[str, dict[str, Any]]:
         if fresh or not self._manifests or time.monotonic() - self._loaded_at > _TTL_SEC:
-            data = await self.main.get("/tools")
-            self._manifests = {tool["name"]: tool for tool in data["tools"] if self.keep(tool)}
+            self._manifests = {name: manifest for name, manifest in (await self.main.tools()).items() if self.keep(manifest)}
             self._loaded_at = time.monotonic()
 
         return self._manifests

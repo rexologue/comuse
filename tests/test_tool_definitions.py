@@ -48,9 +48,8 @@ class _Main:
     def __init__(self, current: dict):
         self.current = current
 
-    async def get(self, path, **_):
-        assert path == "/tools"
-        return {"tools": [*INTERNAL.values(), self.current]}
+    async def tools(self):
+        return {**INTERNAL, self.current["name"]: self.current}
 
 
 def _task(manifest: dict = V1, spec: dict = SPEC) -> str:
@@ -170,15 +169,14 @@ async def test_every_call_carries_the_kept_hash_and_a_change_midway_stops_the_ru
     main = FakeMain({"fs.list": lambda args, ctx: {"output": {"files": ["a"]}}})
     calls = []
 
-    async def post(path, json=None, **kwargs):
-        if path == "/executor/execute":
-            calls.append(json["hash"])
-            if len(calls) == 2:
-                return {"status": "error", "error": "изменился", "tool_changed": True}
+    async def call_tool(tool, args, *, hash=None, context=None):
+        calls.append(hash)
+        if len(calls) == 2:
+            return {"status": "error", "error": "изменился", "tool_changed": True}
 
-        return await FakeMain.post(main, path, json=json, **kwargs)
+        return await FakeMain.call_tool(main, tool, args, hash=hash, context=context)
 
-    main.post = post
+    main.call_tool = call_tool
     # on_error: skip does not hide it: a changed tool is never just a failed step.
     spec = copy.deepcopy(FILES)
     spec["steps"][1]["on_error"] = "skip"

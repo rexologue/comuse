@@ -304,14 +304,7 @@ class AgentLoop:
 
     async def _execute(self, session_id: str, tool: str, args: dict[str, Any]) -> dict[str, Any]:
         try:
-            response = await self.main.post(
-                "/executor/execute",
-                json={
-                    "tool": tool,
-                    "args": args,
-                    "context": {"mode": "chat", "session_id": session_id},
-                },
-            )
+            response = await self.main.call_tool(tool, args, context={"mode": "chat", "session_id": session_id})
 
         except ApiError as e:
             return {"status": "error", "error": e.message}

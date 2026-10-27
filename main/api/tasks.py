@@ -128,9 +128,7 @@ async def _catalog(request: Request) -> dict[str, dict[str, Any]] | None:
     """The tools as they are now: the executor keeps them. Without its answer the task is
     shown without what changed in its tools."""
     try:
-        catalog = (await request.app.state.registry.client("executor").get("/tools"))["tools"]
+        return await request.app.state.main.tools()
 
     except ApiError:
         return None
-
-    return {manifest["name"]: manifest for manifest in catalog}

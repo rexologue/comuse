@@ -35,14 +35,9 @@ async def agent_proxy(path: str, request: Request):
     return await reverse_proxy(request, "agent_loop", path)
 
 
-@router.get("/tools", summary="Tool catalog")
+@router.get("/tools", summary="Tool catalog: the executor's MCP tools/list as manifests")
 async def tools(request: Request):
-    return await reverse_proxy(request, "executor", "tools")
-
-
-@router.get("/tools/{name}", summary="One tool")
-async def tool(name: str, request: Request):
-    return await reverse_proxy(request, "executor", f"tools/{name}")
+    return {"tools": list((await request.app.state.main.tools()).values())}
 
 
 @router.get("/external-tools", summary="External tools with their versions")

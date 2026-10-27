@@ -16,7 +16,10 @@ from mcp.shared.memory import create_connected_server_and_client_session
 from common.errors import install_error_handlers
 from common.service import INTERNAL_TOKEN_HEADER, require_internal_token
 from executor.api import mcp_http
-from executor.mcp_server import build_server, manifest_of
+from common.clients.main_client import MainClient
+from common.errors import ApiError
+from common.tools.mcp_codec import manifest_of
+from executor.mcp_server import build_server
 from executor.registry import ToolRegistry
 from executor.runtime import ExecutorRuntime
 
@@ -38,7 +41,7 @@ async def test_the_catalog_is_the_tool_list_and_comes_back_whole(runtime):
 
     assert set(tools) == {manifest["name"] for manifest in runtime.registry.catalog()}
 
-    # What MCP has no field for rides in _meta: the manifest comes back as GET /tools gives it.
+    # What MCP has no field for rides in _meta: the manifest comes back as the registry made it.
     assert manifest_of(tools["fs.list"]) == runtime.registry.manifest("fs.list")
     assert tools["fs.list"].meta["hash"] == runtime.registry.manifest("fs.list")["hash"]
     assert tools["fs.list"].annotations.readOnlyHint is True
@@ -81,10 +84,10 @@ async def test_what_a_tool_said_comes_back_in_meta(runtime, monkeypatch):
     assert result.meta["logs"] == ["прочитал 3 файла"] and result.meta["notifications"] == ["начинаю"]
 
 
-def _app(settings, runtime) -> FastAPI:
+def _app(settings, runtime, prefix: str = "") -> FastAPI:
     app = FastAPI()
     install_error_handlers(app)
-    app.include_router(mcp_http.router, dependencies=[Depends(require_internal_token)])
+    app.include_router(mcp_http.router, prefix=prefix, dependencies=[Depends(require_internal_token)])
     app.state.settings = replace(settings, service=replace(settings.service, internal_token="test-token"))
     app.state.registry = runtime.registry
     app.state.runtime = runtime
@@ -113,3 +116,29 @@ async def test_over_http_behind_the_internal_token(settings, runtime):
 
     assert "fs.list" in {tool.name for tool in tools}
     assert not result.isError and "files" in result.structuredContent
+
+
+async def test_the_services_client_reads_and_calls_through_mcp(settings, runtime, env):
+    """MainClient.tools() / call_tool(): what the chat, the runner and the compiler use."""
+    (env / "workspace" / "a.txt").write_text("x", encoding="utf-8")
+    app = _app(settings, runtime, prefix="/executor")   # as main proxies it
+
+    async with mcp_http.serving(app):
+        def client(token: str) -> MainClient:
+            main = MainClient("http://main", internal_token=token)
+            main._client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://main", headers={INTERNAL_TOKEN_HEADER: token})
+            return main
+
+        main = client("test-token")
+        tools = await main.tools()
+        good = tools["fs.list"]["hash"]
+        ok = await main.call_tool("fs.list", {"folder": "."}, hash=good, context=RUN["context"])
+        stale = await main.call_tool("fs.list", {"folder": "."}, hash="another", context=RUN["context"])
+
+        with pytest.raises(ApiError) as e:
+            await client("forged").tools()
+
+    assert tools["fs.list"] == runtime.registry.manifest("fs.list")
+    assert ok["status"] == "ok" and any(item["path"] == "a.txt" for item in ok["output"]["files"])
+    assert stale["status"] == "error" and stale["tool_changed"] is True
+    assert e.value.status_code == 401

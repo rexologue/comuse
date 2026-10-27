@@ -1,5 +1,5 @@
 """Tool catalog: internal_tools/ plus the current code of every own command
-(common/external_tools); others read it over HTTP (GET /tools)."""
+(common/external_tools); others read it over MCP (tools/list, executor/mcp_server.py)."""
 
 from __future__ import annotations
 

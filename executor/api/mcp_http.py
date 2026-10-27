@@ -1,6 +1,7 @@
 """POST /mcp: the executor's MCP server (executor/mcp_server.py) over Streamable HTTP,
-next to /execute. Stateless and in plain JSON: every request stands alone, as every
-call to /execute does, so nothing is kept between them and nothing streams.
+the one way to the commands for the chat, the runner and the compiler. Stateless and in
+plain JSON: every request stands alone, so nothing is kept between them and nothing
+streams.
 
 It is an ordinary route of the executor, so the internal token guards it like the
 others; the request itself goes to the SDK's transport as it came."""
@@ -46,3 +47,10 @@ class _Handover(Response):
 @router.api_route("/mcp", methods=["POST", "GET", "DELETE"], summary="MCP (Streamable HTTP): tools/list, tools/call")
 async def mcp_endpoint(request: Request) -> Response:
     return _Handover(request.app.state.mcp)
+
+
+@router.post("/tools/reload", summary="Rescan internal_tools/ and the own commands' current code")
+async def reload_tools(request: Request):
+    request.app.state.registry.load()
+
+    return {"tools": len(request.app.state.registry.catalog())}
