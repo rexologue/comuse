@@ -29,8 +29,19 @@ class _Secrets:
         return self.values.get(ref)
 
 
+class _Plugins:
+    """Hears which account kinds changed (plugins of the kind start again)."""
+
+    def __init__(self):
+        self.changed: list[str] = []
+
+    async def account_changed(self, kind):
+        self.changed.append(kind)
+
+
 def _request(secrets=None, runtime=None):
-    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(secrets=secrets or _Secrets(), runtime=runtime)))
+    state = SimpleNamespace(secrets=secrets or _Secrets(), runtime=runtime, plugins=_Plugins())
+    return SimpleNamespace(app=SimpleNamespace(state=state))
 
 
 def test_mail_registers_its_kind():

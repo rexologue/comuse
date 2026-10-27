@@ -25,6 +25,9 @@ dies is started again on the next call; a server that changes its tools says so
 from __future__ import annotations
 
 import asyncio
+import copy
+import hashlib
+import json
 import logging
 import os
 import re
@@ -38,10 +41,10 @@ from mcp import ClientSession, StdioServerParameters, types
 from mcp.client.stdio import stdio_client
 from mcp.shared.exceptions import McpError
 
-from common.tools import Confirm, ToolContext, ToolError, function_name
+from common.tools import Confirm, Credential, ToolContext, ToolError, function_name
 from common.tools.context import PermissionDenied
 from common.tools.definition import definition_hash
-from executor.plugins.manifest import PluginManifest, path_args
+from executor.plugins.manifest import PluginManifest, account_env, path_args
 
 
 log = logging.getLogger("upstream")
@@ -61,6 +64,7 @@ class Upstream:
         manifest: PluginManifest,
         *,
         code_hash: str | None = None,
+        account_key: str | None = None,
         on_change: Callable[[], None] | None = None,
     ):
 
@@ -71,7 +75,11 @@ class Upstream:
         self.manifest  = manifest
         # The plugin's files: other code, other tools for the tasks that call them.
         self.code_hash = code_hash
+        # Whose account's settings this process has in its environment (account_key()).
+        self.account_key = account_key
         self.on_change = on_change
+        # A plugin with accounts: a server per account, started at its first call.
+        self._accounts: dict[str, Upstream] = {}
 
         self.tools: list[types.Tool] = []
         self._session: ClientSession | None = None
@@ -108,6 +116,30 @@ class Upstream:
     async def stop(self) -> None:
         async with self._starting:
             await self._end()
+
+        for child in self._accounts.values():
+            await child.stop()
+
+        self._accounts = {}
+
+
+    def for_account(self, credential: Credential) -> Upstream:
+        """The server of this account: this one if it has it, else one of its own — made
+        anew when the account's settings or secret changed."""
+        key = account_key(self.manifest, credential)
+        if key == self.account_key:
+            return self
+
+        child = self._accounts.get(credential.name)
+        if child is None or child.account_key != key:
+            if child is not None:
+                asyncio.create_task(child.stop())
+
+            env = {**(self.params.env or {}), **account_env(self.manifest.account, credential)}
+            child = Upstream(self.group, self.params.model_copy(update={"env": env}), self.manifest, code_hash=self.code_hash, account_key=key)
+            self._accounts[credential.name] = child
+
+        return child
 
 
     async def _end(self) -> None:
@@ -214,6 +246,16 @@ class Upstream:
         return found
 
 
+def account_key(manifest: PluginManifest, credential: Credential | None) -> str | None:
+    """Which account, with which settings, a server's environment holds (a hash: the
+    secret is in it)."""
+    if manifest.account is None or credential is None:
+        return None
+
+    env = json.dumps(account_env(manifest.account, credential), sort_keys=True)
+    return f"{credential.name}:{hashlib.sha256(env.encode()).hexdigest()}"
+
+
 async def _reap(task: asyncio.Task | None) -> None:
     """Wait for a server's task told to stop; one that does not, is cancelled."""
     if task is None or task.done():
@@ -255,6 +297,7 @@ class UpstreamToolSpec:
         manifest = upstream.manifest
         entry = manifest.entry_of(tool.name)
         title = tool.title or (tool.annotations.title if tool.annotations and tool.annotations.title else None) or tool.name
+        schema = _with_account(tool.inputSchema, manifest)
 
         return cls(
             name=name,
@@ -263,12 +306,13 @@ class UpstreamToolSpec:
             description=tool.description or title,
             confirm=entry.confirm if entry else manifest.confirm_by_tool.get(tool.name, manifest.confirm),
             timeout=(entry.timeout if entry else None) or manifest.timeout,
-            input_schema=tool.inputSchema,
+            input_schema=schema,
             output_schema=tool.outputSchema or TEXT_OUTPUT,
             upstream=upstream,
             remote_name=tool.name,
             path_args=path_args(tool.inputSchema),
-            _validator=jsonschema.Draft202012Validator(tool.inputSchema),
+            secrets=("account",) if manifest.account else (),
+            _validator=jsonschema.Draft202012Validator(schema),
         )
 
 
@@ -280,7 +324,7 @@ class UpstreamToolSpec:
             "card": self.card,
             "description": self.description,
             "confirm": self.confirm,
-            "secrets": [],
+            "secrets": list(self.secrets),
             "timeout": self.timeout,
             "input_schema": self.input_schema,
             "output_schema": self.output_schema,
@@ -325,8 +369,23 @@ class UpstreamToolSpec:
             "step_key": ctx.step_key,
         }
         args = {key: self._full_paths(key, value, ctx) for key, value in inp.items()}
+        server = self.upstream
 
-        result = await self.upstream.call(self.remote_name, args, {"context": context})
+        # The account the model named is a process of its own; the server's own argument
+        # for it gets the account's name.
+        spec = self.upstream.manifest.account
+        if spec is not None:
+            credential = ctx.credential("account")
+            if credential.kind != spec.kind:
+                raise ToolError(f"Аккаунт `{credential.name}` не подходит `{self.name}`: нужен вид {spec.kind}, а он {credential.kind}")
+
+            args.pop("account", None)
+            if spec.argument:
+                args[spec.argument] = credential.name
+
+            server = self.upstream.for_account(credential)
+
+        result = await server.call(self.remote_name, args, {"context": context})
         said = result.meta or {}
 
         for line in said.get("logs") or []:
@@ -365,6 +424,24 @@ class UpstreamToolSpec:
             return [str(ctx.read_path(item)) if isinstance(item, str) else item for item in value]
 
         return value
+
+
+def _with_account(schema: dict[str, Any], manifest: PluginManifest) -> dict[str, Any]:
+    """A tool of a plugin with accounts, as the model sees it: our `account` argument in
+    place of the server's own (which the executor fills in)."""
+    spec = manifest.account
+    if spec is None:
+        return schema
+
+    schema = copy.deepcopy(schema)
+    properties = schema.setdefault("properties", {})
+    if spec.argument:
+        properties.pop(spec.argument, None)
+
+    properties["account"] = {"type": "string", "description": f"Имя аккаунта из настроек (вид {spec.kind})"}
+    schema["required"] = ["account", *(name for name in schema.get("required", []) if name not in (spec.argument, "account"))]
+
+    return schema
 
 
 def _refs_back(value: Any, ctx: ToolContext) -> Any:

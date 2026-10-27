@@ -23,6 +23,7 @@ from common.settings import StorageSettings
 from common.storage.db import session
 from common.storage.models import Plugin
 from common.tools import ToolError
+from common.tools.accounts import get_account_kind
 from common.utils import new_id, utcnow
 from executor.plugins import deps, folder as code
 from executor.plugins.folder import Which, files_hash
@@ -313,6 +314,11 @@ def _check(
 
     except ValidationError as e:
         problems += [f"{MANIFEST}, {'.'.join(str(p) for p in err['loc']) or 'целиком'}: {err['msg']}" for err in e.errors()]
+
+    if checked is not None and checked.account is not None and checked.account.fields is not None:
+        known = get_account_kind(checked.account.kind)
+        if known is not None and known.owner != name:
+            problems.append(f"account.kind «{checked.account.kind}»: этот вид аккаунта уже есть; свой назовите иначе или уберите fields")
 
     if checked is not None and checked.tools is not None:
         for entry in checked.tools:

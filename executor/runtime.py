@@ -88,7 +88,10 @@ class ExecutorRuntime:
             return ExecuteResponse(status="error", error=f"Нет доступа: {e}")
 
         try:
-            credentials = {argument: self.load_credential(getattr(inp, argument)) for argument in spec.secrets}
+            # A built-in tool's input is its model, a plugin's a dict.
+            credentials = {
+                argument: self.load_credential(inp[argument] if isinstance(inp, dict) else getattr(inp, argument)) for argument in spec.secrets
+            }
 
         except ToolError as e:
             return ExecuteResponse(status="error", error=str(e))

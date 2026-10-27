@@ -3,7 +3,13 @@
 Either `tools` — functions `run(args, ctx)` in its files, which our shim (shim.py)
 serves as an MCP server: the plugins we and the chat write; or `command` — the plugin's
 own MCP server, a program of its .venv: a ready one from elsewhere. Everything else is
-the same for both."""
+the same for both.
+
+`account`: a plugin that works on behalf of an account (a mailbox, a bot) runs a server
+per account: the account's settings and secret go into that process's environment
+(`${account.<field>}`, `${account.secret}` in `account.env`), never into its arguments
+or anywhere else. The model names the account by our usual `account` argument; the
+server's own one (`account.argument`) is filled in by the executor."""
 
 from __future__ import annotations
 
@@ -19,6 +25,10 @@ from common.tools.fields import PATH_ARG
 NAME_PATTERN = r"^[a-z][a-z0-9_]{0,40}$"
 
 Confirm = bool | Literal["always"]
+
+# ${account.name}, ${account.secret}, ${account.<field>}, ${account.<field>|default},
+# ${account.<field>|default=value} — "true" if the field (or its default) is that value, else "false".
+_PLACEHOLDER = re.compile(r"\$\{account\.([a-z_][a-z0-9_]*)(?:\|([^}=]*))?(?:=([^}]*))?\}")
 
 
 def _object_schema(value: dict[str, Any]) -> dict[str, Any]:
@@ -60,6 +70,46 @@ class ToolEntry(BaseModel):
         return _object_schema(value)
 
 
+class KindField(BaseModel):
+    """A setting of the plugin's own account kind, as a form asks for it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(pattern=NAME_PATTERN)
+    title: str = Field(min_length=1)
+    type: Literal["text", "number", "choice"] = "text"
+    required: bool = False
+    choices: list[str] = Field(default_factory=list)
+    hint: str = ""
+    default: str = ""
+
+
+class AccountSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # The account kind: a built-in one (imap_smtp) or, with `fields`, the plugin's own.
+    kind: str = Field(pattern=NAME_PATTERN)
+    title: str | None = None
+    fields: list[KindField] | None = None
+    secret_title: str = "Пароль"
+    # The server process's variables from the account.
+    env: dict[str, str] = Field(default_factory=dict)
+    # The server's argument that names an account: filled with the account's name.
+    argument: str | None = None
+
+    @field_validator("env")
+    @classmethod
+    def _known_placeholders(cls, value: dict[str, str]) -> dict[str, str]:
+        for key, text in value.items():
+            if "${" in _PLACEHOLDER.sub("", text):
+                raise ValueError(
+                    f"{key}: подстановки только вида ${{account.<поле>}}, ${{account.secret}}, ${{account.<поле>|по умолчанию}}, "
+                    "${account.<поле>|по умолчанию=значение}"
+                )
+
+        return value
+
+
 class PluginManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -80,6 +130,7 @@ class PluginManifest(BaseModel):
     # that never ask are called.
     dry_run: bool | None = None
     timeout: int | None = Field(default=None, ge=1, le=86400)
+    account: AccountSpec | None = None
 
     @model_validator(mode="after")
     def _one_way_to_start(self) -> PluginManifest:
@@ -96,6 +147,11 @@ class PluginManifest(BaseModel):
         if self.command is not None:
             if not self.command or not re.fullmatch(r"[A-Za-z0-9_.-]+", self.command[0]):
                 raise ValueError("command: первое слово — python или программа из .venv плагина, без пути")
+
+        # A secret goes to the account's process only, by its environment: an argument
+        # shows in the process list, the plugin's own env is every process's.
+        if any("${" in text for text in [*(self.command or []), *self.env.values()]):
+            raise ValueError("подстановки аккаунта — только в account.env")
 
         return self
 
@@ -121,3 +177,25 @@ def path_args(schema: dict[str, Any]) -> dict[str, str]:
             marks[name] = mark
 
     return marks
+
+
+def account_env(spec: AccountSpec, credential) -> dict[str, str]:
+    """`spec.env` with the account's values; without an account (none of the kind yet)
+    every placeholder is its default or empty. A variable that comes out empty is not
+    set at all: for a server, an empty variable is a set one (an empty login is not
+    "the address, as by default")."""
+    values: dict[str, str] = {}
+    if credential is not None:
+        values = {key: "" if value is None else str(value) for key, value in credential.config.items()}
+        values |= {"name": credential.name, "secret": credential.secret}
+
+    def fill(match: re.Match) -> str:
+        value = values.get(match.group(1)) or (match.group(2) or "")
+        if match.group(3) is not None:
+            return "true" if value == match.group(3) else "false"
+
+        return value
+
+    env = {key: _PLACEHOLDER.sub(fill, text) for key, text in spec.env.items()}
+
+    return {key: value for key, value in env.items() if value != ""}

@@ -81,6 +81,9 @@ async def create_account(body: AccountCreate, request: Request):
         db.add(row)
         db.commit()
 
+    # Plugins that work for accounts of this kind take it into their servers.
+    await request.app.state.plugins.account_changed(kind.name)
+
     return _public(row)
 
 
@@ -114,8 +117,11 @@ async def delete_account(name: str, request: Request):
             raise ApiError(status_code=404, message=f"Account `{name}` not found")
 
         request.app.state.secrets.delete(row.secret_ref)
+        kind = row.kind
         db.delete(row)
         db.commit()
+
+    await request.app.state.plugins.account_changed(kind)
 
     return {"status": "deleted"}
 

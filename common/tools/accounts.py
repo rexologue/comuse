@@ -2,7 +2,9 @@
 
 The executor stores an account as a name, a kind, non-secret settings and a password
 in the keyring; everything that depends on the kind (its settings and how a form asks
-for them, presets, how to try a login) is declared by the group that owns the kind."""
+for them, presets, how to try a login) is declared by the group that owns the kind: a
+built-in group in its code, a plugin in its manifest (registered while it is approved,
+`owner` its name)."""
 
 from __future__ import annotations
 
@@ -48,18 +50,28 @@ class AccountKind:
     prepare: Callable[[dict[str, Any]], dict[str, Any]] = lambda config: config
     # Tries to log in (blocking); raises on failure.
     check: Callable[[dict[str, Any], str], None] | None = None
+    # The plugin that declared it; None — a built-in group.
+    owner: str | None = None
 
 
 _KINDS: dict[str, AccountKind] = {}
 
 
 def account_kind(kind: AccountKind) -> AccountKind:
-    if kind.name in _KINDS and _KINDS[kind.name] is not kind:
+    """Register a kind; a plugin's own kind replaces what it registered before."""
+    known = _KINDS.get(kind.name)
+    if known is not None and known is not kind and (known.owner is None or known.owner != kind.owner):
         raise ValueError(f"account kind {kind.name} is registered twice")
 
     _KINDS[kind.name] = kind
 
     return kind
+
+
+def drop_account_kind(name: str, owner: str) -> None:
+    """A plugin's kind, when the plugin goes; accounts of it stay, unusable till it is back."""
+    if name in _KINDS and _KINDS[name].owner == owner:
+        del _KINDS[name]
 
 
 def get_account_kind(name: str) -> AccountKind | None:

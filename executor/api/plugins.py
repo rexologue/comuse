@@ -68,7 +68,7 @@ async def delete_draft(name: str, request: Request):
 @router.post("/plugins/{name}/draft/check", summary="Run the draft's server once to see its tools (asked by the person)")
 async def check_draft(name: str, request: Request):
     try:
-        return await run_check(request.app.state.settings.storage, name)
+        return await run_check(request.app.state.settings.storage, name, request.app.state.plugins.first_account)
 
     except ToolError as e:
         raise ApiError(status_code=400, message=str(e)) from e

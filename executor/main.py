@@ -15,7 +15,7 @@ from executor.api import accounts as accounts_api
 from executor.api import mcp_http as mcp_api
 from executor.api import plugins as plugins_api
 from executor.outputs import sweep as sweep_outputs
-from executor.plugins.launch import Plugins
+from executor.plugins.launch import Plugins, first_account
 from executor.registry import ToolRegistry
 from executor.runtime import ExecutorRuntime
 
@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI):
     app.state.runtime = ExecutorRuntime(settings, registry, secrets)
 
     # Before serving: a run that came first would find a plugin's tools missing.
-    app.state.plugins = Plugins(registry, settings.storage)
+    app.state.plugins = Plugins(registry, settings.storage, first_account(app.state.runtime.load_credential))
     await app.state.plugins.start_all()
 
     sweepers = [
