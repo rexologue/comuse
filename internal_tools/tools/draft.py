@@ -5,9 +5,9 @@ from typing import Any, Literal
 
 from pydantic import Field
 
-from common.external_tools import store
 from common.tools import ToolContext, ToolInput, ToolOutput, tool
-from internal_tools.tools.common import builtin_groups, chat_only
+from executor.plugins import store
+from internal_tools.tools.common import builtin_groups, chat_only, split
 
 
 class Input(ToolInput):
@@ -31,6 +31,9 @@ class Input(ToolInput):
 
 class Output(ToolOutput):
     tool: str
+    # The plugin the command is in (its group), and the tools its draft has now.
+    plugin: str
+    tools: list[str]
     status: str
     # The exact packages the lock resolved, transitive ones too: the user sees them.
     packages: list[str]
@@ -42,7 +45,8 @@ class Output(ToolOutput):
     title="Черновик своей команды",
     card="Записать черновик команды «{name}»",
     description=(
-        "Write or rewrite the draft of an own command (group.action, e.g. telegram.send): manifest, Python files, packages. "
+        "Write or rewrite an own command (group.action, e.g. telegram.send) in the draft of its plugin, the group: "
+        "its schemas, Python files, packages; the group's other commands stay as they are. "
         "Nothing runs: the draft is checked (schemas, syntax, packages) and waits for the user to approve it. "
         "Every problem comes back at once; fix them and call again: the same draft is rewritten. "
         "A draft written by the user or another chat is never replaced."
@@ -53,7 +57,9 @@ class Output(ToolOutput):
 async def draft(inp: Input, ctx: ToolContext) -> Output:
     chat_only(ctx)
 
-    manifest = {
+    group, action = split(inp.name)
+
+    entry = {
         "title": inp.title,
         "description": inp.description,
         "card": inp.card,
@@ -64,20 +70,23 @@ async def draft(inp: Input, ctx: ToolContext) -> Output:
     }
 
     view = await asyncio.to_thread(
-        store.save_draft,
+        store.save_tool,
         ctx.settings.storage,
-        inp.name.strip(),
-        manifest=manifest,
+        group,
+        action,
+        entry=entry,
         files=inp.files,
         requirements=inp.requirements,
         created_by="chat",
         session_id=ctx.session_id,
         only_own=True,
-        builtin_groups=builtin_groups(),
+        taken_groups=builtin_groups(),
     )
 
     return Output(
-        tool=view["name"],
+        tool=f"{group}.{action}",
+        plugin=group,
+        tools=[tool["name"] for tool in view["tools"] or []],
         status=view["status"],
         packages=view["packages"],
         next=(

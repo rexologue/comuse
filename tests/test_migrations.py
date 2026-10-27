@@ -142,7 +142,7 @@ def test_versions_give_way_to_current_code_and_kept_definitions(env):
         (folder / ".venv").mkdir(parents=True)
         (folder / "main.py").write_text(f"# v{number}")
 
-    migrate.upgrade(engine, storage)
+    migrate._alembic(engine, command.upgrade, "0008", storage)
 
     with engine.connect() as connection:
         rows = connection.execute(text("SELECT status, hash FROM external_tools ORDER BY status")).all()
@@ -157,3 +157,41 @@ def test_versions_give_way_to_current_code_and_kept_definitions(env):
     assert sorted(p.name for p in folder.iterdir()) == ["current", "draft"]
     assert (folder / "current" / "main.py").read_text() == "# v2"
     assert not (folder / "current" / ".venv").exists()
+
+
+def test_own_commands_become_a_plugin_of_their_group(env):
+    """Each group of own commands becomes a plugin, a draft: a command's draft or else its
+    approved code, under <action>/; its manifest one of the plugin's tools."""
+    storage = Settings.from_env("main").storage
+    engine = init_engine(storage)
+    migrate._alembic(engine, command.upgrade, "0008")
+
+    with engine.begin() as connection:
+        for row_id, name, status in (("etv_1", "ext.parse_date", "current"), ("etv_2", "ext.parse_date", "draft"), ("etv_3", "ext.count_text", "current")):
+            manifest = {"title": name, "description": "…", "confirm": False, "input_schema": {"type": "object"}, "output_schema": {"type": "object"}}
+            connection.execute(text(
+                "INSERT INTO external_tools (id, name, status, hash, manifest, packages, created_by, created_at, updated_at) "
+                "VALUES (:id, :name, :status, 'h', :manifest, '[]', 'user', '2026-01-01', '2026-01-01')"
+            ), {"id": row_id, "name": name, "status": status, "manifest": json.dumps(manifest)})
+
+    for action, status, text_ in (("parse_date", "current", "старый"), ("parse_date", "draft", "новый"), ("count_text", "current", "счёт")):
+        folder = storage.external_tools_dir / "ext" / action / status
+        (folder / ".venv").mkdir(parents=True)
+        (folder / "main.py").write_text(f"# {text_}")
+        (folder / "requirements.txt").write_text("python-dateutil\n" if action == "parse_date" else "")
+
+    migrate.upgrade(engine, storage)
+
+    with engine.connect() as connection:
+        rows = connection.execute(text("SELECT name, status, packages, manifest FROM plugins")).all()
+
+    [(name, status, packages, manifest)] = rows
+    assert (name, status, packages) == ("ext", "draft", None)
+    assert [tool["name"] for tool in json.loads(manifest)["tools"]] == ["count_text", "parse_date"]
+
+    draft = storage.plugins_dir / "ext" / "draft"
+    assert (draft / "parse_date" / "main.py").read_text() == "# новый"
+    assert (draft / "count_text" / "main.py").read_text() == "# счёт"
+    assert (draft / "requirements.txt").read_text() == "python-dateutil\n"
+    assert not (draft / "parse_date" / ".venv").exists()
+    assert not storage.external_tools_dir.exists()

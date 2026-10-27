@@ -12,9 +12,10 @@ from common.secrets import SecretStore
 from common.tools.areas import data_areas
 from common.service import create_service_app
 from executor.api import accounts as accounts_api
-from executor.api import external as external_api
 from executor.api import mcp_http as mcp_api
+from executor.api import plugins as plugins_api
 from executor.outputs import sweep as sweep_outputs
+from executor.plugins.launch import Plugins
 from executor.registry import ToolRegistry
 from executor.runtime import ExecutorRuntime
 
@@ -41,6 +42,10 @@ async def lifespan(app: FastAPI):
     app.state.secrets = secrets
     app.state.runtime = ExecutorRuntime(settings, registry, secrets)
 
+    # Before serving: a run that came first would find a plugin's tools missing.
+    app.state.plugins = Plugins(registry, settings.storage)
+    await app.state.plugins.start_all()
+
     sweepers = [
         asyncio.create_task(sweep_forever("output folders", lambda: sweep_outputs(settings.storage))),
     ]
@@ -59,6 +64,6 @@ async def lifespan(app: FastAPI):
 app = create_service_app(
     name="executor",
     title="Executor",
-    routers=[(mcp_api.router, "tools"), (external_api.router, "external tools"), (accounts_api.router, "accounts")],
+    routers=[(mcp_api.router, "tools"), (plugins_api.router, "plugins"), (accounts_api.router, "accounts")],
     lifespan_hook=lifespan,
 )

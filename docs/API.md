@@ -177,7 +177,7 @@ summary, cards, created_at}`. Одобрить или отклонить —
 | Маршрут | Что делает |
 | --- | --- |
 | `GET /tools` | Каталог команд: `tools/list` executor манифестами — со схемами и хешем определения (`hash`) |
-| `GET /external-tools`, `PUT /external-tools/{name}/draft`, … | Свои команды: одобренный код, черновик, одобрение — см. [EXTERNAL_TOOLS.md](EXTERNAL_TOOLS.md#api) |
+| `GET /plugins`, `PUT /plugins/{name}/draft`, … | Плагины: одобренный код, черновик, проверка, одобрение — см. [PLUGINS.md](PLUGINS.md#api) |
 | `GET /accounts` | Аккаунты без паролей: `id`, `name`, `kind`, `config` |
 | `GET /accounts/kinds` | Виды аккаунтов, которые объявили группы команд: поля для формы, название секрета, пресеты |
 | `POST /accounts` | Создать или изменить аккаунт (по имени); без `secret` остаётся сохранённый пароль |

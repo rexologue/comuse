@@ -1,30 +1,30 @@
-// A command the agent wrote in this chat (tools.draft), waiting for the user: its code
-// and the exact packages to read, then approve or throw away (DraftDecision). Only a
+// A plugin the agent wrote in this chat (tools.draft), waiting for the user: its tools,
+// code and exact packages to read, then approve or throw away (DraftDecision). Only a
 // person approves.
 
 import { ChevronDown, ChevronRight, Wrench } from "lucide-react";
 import { useState } from "react";
 
-import { useExternalToolCode, useExternalTools } from "@/api/queries";
-import type { ExternalTool } from "@/api/types";
-import { DraftDecision } from "@/commands/DraftDecision";
+import { usePluginCode, usePlugins } from "@/api/queries";
+import type { Plugin } from "@/api/types";
+import { DraftDecision, ToolList } from "@/commands/DraftDecision";
 
 export function ToolDraftCards({ sessionId }: { sessionId: string }) {
-  const tools = useExternalTools();
+  const plugins = usePlugins();
 
-  const drafts = (tools.data ?? []).filter((tool) => tool.draft?.session_id === sessionId);
+  const drafts = (plugins.data ?? []).filter((plugin) => plugin.draft?.session_id === sessionId);
 
   return (
     <>
-      {drafts.map((tool) => (
-        <ToolDraftCard key={tool.name} tool={tool} />
+      {drafts.map((plugin) => (
+        <ToolDraftCard key={plugin.name} plugin={plugin} />
       ))}
     </>
   );
 }
 
-function ToolDraftCard({ tool }: { tool: ExternalTool }) {
-  const draft = useExternalToolCode(tool.name, "draft");
+function ToolDraftCard({ plugin }: { plugin: Plugin }) {
+  const draft = usePluginCode(plugin.name, "draft");
   const [open, setOpen] = useState(false);
 
   const manifest = draft.data?.manifest;
@@ -34,19 +34,19 @@ function ToolDraftCard({ tool }: { tool: ExternalTool }) {
       <div className="flex items-start gap-2">
         <Wrench className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
         <div className="min-w-0">
-          <div className="font-medium">{manifest?.title ?? tool.name}</div>
+          <div className="font-medium">{manifest?.title ?? plugin.name}</div>
           <div className="text-sm text-muted-foreground">
-            {tool.name} · черновик команды ждёт вашего решения
-            {tool.current ? " · он заменит одобренный код, и задачи с командой будут ждать вашего решения" : ""}
+            плагин {plugin.name} · черновик ждёт вашего решения
+            {plugin.current ? " · он заменит одобренный код, и задачи с его командами будут ждать вашего решения" : ""}
           </div>
         </div>
       </div>
 
-      {manifest && <p className="text-sm">{manifest.description}</p>}
+      {draft.data && <ToolList code={draft.data} />}
 
       <div className="text-sm">
         <span className="text-muted-foreground">Пакеты: </span>
-        {draft.data ? (draft.data.packages.length ? draft.data.packages.join(", ") : "нет") : "…"}
+        {draft.data ? (draft.data.packages === null ? "подбираются…" : draft.data.packages.length ? draft.data.packages.join(", ") : "нет") : "…"}
       </div>
 
       <button className="flex items-center gap-1 self-start text-sm text-muted-foreground hover:text-foreground" onClick={() => setOpen(!open)}>
@@ -62,7 +62,7 @@ function ToolDraftCard({ tool }: { tool: ExternalTool }) {
         ))}
 
       <p className="text-xs text-muted-foreground">
-        Команда работает отдельным процессом без ваших паролей и ключей, но может читать то же, что и вы. Одобряйте, если код делает только то, что
+        Плагин работает отдельным процессом без ваших паролей и ключей, но может читать то же, что и вы. Одобряйте, если код делает только то, что
         нужно.
       </p>
 

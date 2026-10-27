@@ -1,11 +1,11 @@
-"""Packages of an own command, through uv (a dependency of the project, so it is
-wherever the agent is): requirements.txt → requirements.lock → the command's .venv.
+"""A plugin's packages, through uv (a dependency of the project, so it is wherever the
+agent is): requirements.txt → requirements.lock → the plugin's .venv.
 
 Only wheels are installed (`--only-binary :all:`): installing a wheel runs no code of
 the package, building one from source would. The lock pins exact versions with hashes
 and is part of the code, so the person approving it sees every package, transitive
 ones included. Installs share uv's cache in DATA_DIR, so the same package in another
-command or draft costs next to nothing."""
+plugin or draft costs next to nothing."""
 
 from __future__ import annotations
 
@@ -65,7 +65,7 @@ def python_of(folder: Path) -> Path:
 
 
 def ensure_venv(folder: Path, cache_dir: Path, *, fresh: bool = False) -> Path:
-    """The command's .venv with its lock installed (made on first use, or anew when
+    """The plugin's .venv with its lock installed (made on first use, or anew when
     `fresh`); its python."""
     with _LOCKS_GUARD:
         guard = _LOCKS.setdefault(folder.resolve(), threading.Lock())
@@ -113,7 +113,7 @@ def uv_bin() -> str:
     except (ImportError, FileNotFoundError):
         found = shutil.which("uv")
         if found is None:
-            raise ToolError("Не найден uv: он нужен для окружений внешних команд") from None
+            raise ToolError("Не найден uv: он нужен для окружений плагинов") from None
 
         return found
 

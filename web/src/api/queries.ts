@@ -11,9 +11,9 @@ import type {
   ChatDetail,
   ChatSummary,
   Diff,
-  ExternalTool,
   CodeState,
-  ExternalToolCode,
+  Plugin,
+  PluginCode,
   Job,
   LlmOverview,
   LogEntry,
@@ -34,8 +34,8 @@ export const keys = {
   jobs: ["jobs"] as const,
   tools: ["tools"] as const,
   metaTools: ["meta-tools"] as const,
-  externalTools: ["external-tools"] as const,
-  externalToolCode: (name: string, which: CodeState) => ["external-tools", name, which] as const,
+  plugins: ["plugins"] as const,
+  pluginCode: (name: string, which: CodeState) => ["plugins", name, which] as const,
   chat: (id: string) => ["chat", id] as const,
   task: (id: string) => ["task", id] as const,
   version: (taskId: string, id: string) => ["task", taskId, "version", id] as const,
@@ -181,14 +181,14 @@ export function useSettings() {
   return useQuery({ queryKey: keys.settings, queryFn: async () => (await api<{ settings: Tunable[] }>("/settings")).settings });
 }
 
-export function useExternalTools() {
-  return useQuery({ queryKey: keys.externalTools, queryFn: async () => (await api<{ tools: ExternalTool[] }>("/external-tools")).tools });
+export function usePlugins() {
+  return useQuery({ queryKey: keys.plugins, queryFn: async () => (await api<{ plugins: Plugin[] }>("/plugins")).plugins });
 }
 
-export function useExternalToolCode(name: string, which: CodeState, enabled = true) {
+export function usePluginCode(name: string, which: CodeState, enabled = true) {
   return useQuery({
-    queryKey: keys.externalToolCode(name, which),
-    queryFn: () => api<ExternalToolCode>(`/external-tools/${name}/${which}`),
+    queryKey: keys.pluginCode(name, which),
+    queryFn: () => api<PluginCode>(`/plugins/${name}/${which}`),
     enabled,
   });
 }

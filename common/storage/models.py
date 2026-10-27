@@ -195,24 +195,29 @@ class Account(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
-class ExternalTool(Base):
-    """A command the user added or the chat wrote (common/external_tools): its current
-    code and its draft, a row each. Files in DATA_DIR/external_tools/<group>/<action>/<status>/."""
+class Plugin(Base):
+    """A plugin (executor/plugins): a group of tools served by an MCP server, its approved
+    code and its draft, a row each. Files in DATA_DIR/plugins/<group>/<status>/."""
 
-    __tablename__ = "external_tools"
+    __tablename__ = "plugins"
     __table_args__ = (UniqueConstraint("name", "status"),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    # group.action, like a built-in command.
+    # The group its tools take: <name>.<tool>.
     name: Mapped[str] = mapped_column(String, index=True)
-    # current (approved, frozen: files match `hash`) | draft (one per command, changes in place)
+    # current (approved, frozen: files match `hash`) | draft (one per plugin, changes in place)
     status: Mapped[str] = mapped_column(String, default="draft")
-    # Over every file of the command but its .venv; checked before each run.
-    hash: Mapped[str] = mapped_column(String)
+    # Over every file but the .venv; checked before the server starts.
+    hash: Mapped[str] = mapped_column(String, default="")
     manifest: Mapped[Any] = mapped_column(JSON)
-    # Exact packages from requirements.lock ("name==version"), shown at approval.
-    packages: Mapped[Any] = mapped_column(JSON, default=list)
-    # user (API, the settings page) | chat (tools.draft)
+    # Exact packages from requirements.lock ("name==version"), shown at approval; None —
+    # not resolved yet (a plugin a migration made: the executor resolves them on start).
+    packages: Mapped[Any] = mapped_column(JSON, nullable=True)
+    # The tools the code offers, as a person reads them before approving: from the
+    # manifest (functions) or from the server itself (a check run); for `tools_hash`.
+    tools: Mapped[Any] = mapped_column(JSON, nullable=True)
+    tools_hash: Mapped[str | None] = mapped_column(String)
+    # user (API, the plugins page) | chat (tools.draft)
     created_by: Mapped[str] = mapped_column(String, default="user")
     session_id: Mapped[str | None] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)

@@ -72,14 +72,20 @@ class StorageSettings:
 
 
     @property
+    def plugins_dir(self) -> Path:
+        """<group>/{current,draft}/: the plugins' files (executor/plugins)."""
+        return self.data_dir / "plugins"
+
+
+    @property
     def external_tools_dir(self) -> Path:
-        """<name>/<version>/: the files of external tools (common/external_tools)."""
+        """Where own commands lived before they were plugins: only old migrations read it."""
         return self.data_dir / "external_tools"
 
 
     @property
     def uv_cache_dir(self) -> Path:
-        """uv's package cache: next to the tools' .venv folders, so installs hardlink."""
+        """uv's package cache: next to the plugins' .venv folders, so installs hardlink."""
         return self.data_dir / "cache" / "uv"
 
 

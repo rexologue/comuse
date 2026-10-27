@@ -1,21 +1,19 @@
-"""Tool catalog: internal_tools/, the current code of every own command
-(common/external_tools) and the tools of the MCP servers the executor runs
-(executor/upstream.py); others read it over MCP (tools/list, executor/mcp_server.py)."""
+"""Tool catalog: internal_tools/ and the tools of the plugins' MCP servers the executor
+runs (executor/upstream.py, executor/plugins); others read it over MCP (tools/list,
+executor/mcp_server.py)."""
 
 from __future__ import annotations
 
 import logging
 from typing import Any
 
-from common.external_tools import store
-from common.external_tools.spec import ExternalToolSpec
 from common.settings import StorageSettings
 from common.tools import ToolSpec, discover
 from common.tools.settings import tool_group
 from executor.upstream import Upstream, UpstreamToolSpec
 
 
-Spec = ToolSpec | ExternalToolSpec | UpstreamToolSpec
+Spec = ToolSpec | UpstreamToolSpec
 
 
 log = logging.getLogger("registry")
@@ -34,18 +32,7 @@ class ToolRegistry:
     def load(self) -> None:
         specs: dict[str, Spec] = dict(discover("internal_tools"))
 
-        for row in store.current_rows():
-            try:
-                spec = ExternalToolSpec.of(row, self.storage)
-
-            except Exception as e:
-                # One broken manifest must not take the other commands down.
-                log.error("external tool %s skipped: %s", row.name, e)
-                continue
-
-            specs[spec.name] = spec
-
-        # A server's group is its own: one the code or an own command has is not taken.
+        # A server's group is its own: one the built-in tools have is not taken.
         taken = {tool_group(name) for name in specs}
         for group, upstream in self.upstreams.items():
             if group in taken:
@@ -73,14 +60,18 @@ class ToolRegistry:
 
 
     def builtin_groups(self) -> set[str]:
-        """Groups an own command cannot take: the built-in tools' and the servers'."""
-        return {tool_group(name) for name, spec in self._specs.items() if isinstance(spec, ToolSpec)} | set(self.upstreams)
+        """Groups a plugin cannot take: the built-in tools'."""
+        return {tool_group(name) for name, spec in self._specs.items() if isinstance(spec, ToolSpec)}
 
 
     async def connect(self, upstream: Upstream) -> None:
-        """Start a server and offer its tools; the catalog follows when it changes them."""
+        """Start a server and offer its tools (in place of the group's server there was);
+        the catalog follows when it changes them."""
         upstream.on_change = self.load
         await upstream.start()
+
+        if upstream.group in self.upstreams:
+            await self.upstreams.pop(upstream.group).stop()
 
         self.upstreams[upstream.group] = upstream
         self.load()

@@ -42,7 +42,7 @@ def _proxy_app(settings, seen: list[httpx.Request]) -> FastAPI:
     return app
 
 
-@pytest.mark.parametrize("path", ["/accounts/..%2Fexecute", "/external-tools/..%2F..%2F..%2Finternal%2Fregister", "/agent/a/%2E%2E/b"])
+@pytest.mark.parametrize("path", ["/accounts/..%2Fexecute", "/plugins/..%2F..%2F..%2Finternal%2Fregister", "/agent/a/%2E%2E/b"])
 async def test_a_proxied_path_cannot_climb_out_of_its_route(env, monkeypatch, path):
     monkeypatch.setenv("INTERNAL_TOKEN", "internal")
     settings = Settings.from_env("main")

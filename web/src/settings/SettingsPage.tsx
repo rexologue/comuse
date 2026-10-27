@@ -3,7 +3,7 @@ import { NavLink, useParams } from "react-router";
 import { cn } from "@/lib/utils";
 import { About } from "@/settings/About";
 import { Accounts } from "@/settings/Accounts";
-import { Commands } from "@/settings/Commands";
+import { Plugins } from "@/settings/Plugins";
 import { Models } from "@/settings/Models";
 import { Working } from "@/settings/Working";
 
@@ -11,7 +11,7 @@ const TABS = [
   { id: "models", title: "Модели", page: Models },
   { id: "working", title: "Рабочие", page: Working },
   { id: "accounts", title: "Аккаунты", page: Accounts },
-  { id: "commands", title: "Команды", page: Commands },
+  { id: "plugins", title: "Плагины", page: Plugins },
   { id: "about", title: "О программе", page: About },
 ];
 

@@ -90,7 +90,7 @@ function ChatPage() {
       queryClient.invalidateQueries({ queryKey: keys.chats });
       queryClient.invalidateQueries({ queryKey: ["approvals"] });
       // The turn may have written or rewritten a command's draft: its card shows the new code.
-      queryClient.invalidateQueries({ queryKey: keys.externalTools });
+      queryClient.invalidateQueries({ queryKey: keys.plugins });
 
       if (isNew && shown.current) navigate(`/chat/${reply.session_id}`, { replace: true });
     } catch (e) {

@@ -59,8 +59,8 @@ export type ChatDetail = { id: string; title: string; created_at: string; messag
 
 export type ToolManifest = {
   name: string;
-  // internal: comes with the agent; external: an own command (group.action, versioned).
-  source: "internal" | "external";
+  // internal: comes with the agent; plugin: a tool of a plugin (docs/PLUGINS.md).
+  source: "internal" | "plugin";
   function_name: string;
   title: string;
   description: string;
@@ -194,10 +194,10 @@ export type Tunable = {
   description: string;
 };
 
-// GET /external-tools (docs/EXTERNAL_TOOLS.md): a command's approved code and its draft.
+// GET /plugins (docs/PLUGINS.md): a plugin's approved code and its draft, and its server.
 export type CodeState = "current" | "draft";
 
-export type ExternalToolCodeItem = {
+export type PluginCodeItem = {
   status: CodeState;
   title: string | null;
   hash: string;
@@ -207,20 +207,47 @@ export type ExternalToolCodeItem = {
   approved_at: string | null;
 };
 
-export type ExternalTool = {
-  // group.action, like a built-in command (telegram.send)
+export type Plugin = {
+  // The group its tools take: <name>.<tool>.
   name: string;
   title: string | null;
-  current: ExternalToolCodeItem | null;
-  draft: ExternalToolCodeItem | null;
+  current: PluginCodeItem | null;
+  draft: PluginCodeItem | null;
+  // Its approved code's server: running, or why not; the tools it offers now.
+  running: boolean;
+  error: string | null;
+  tools: string[];
 };
 
-export type ExternalToolCode = ExternalToolCodeItem & {
+export type PluginTool = {
   name: string;
-  manifest: { title: string; description: string; confirm: boolean | "always"; input_schema: unknown; output_schema: unknown };
-  packages: string[];
-  // The code (the command's bookkeeping files aside); `entry` holds def run(args, ctx).
-  entry: string;
+  title: string;
+  description: string;
+  confirm: boolean | "always";
+  input_schema: unknown;
+  output_schema: unknown;
+};
+
+// plugin.json: functions (`tools`, run by our shim) or a server of its own (`command`).
+export type PluginManifest = {
+  title: string;
+  description?: string;
+  tools?: (Omit<PluginTool, "name"> & { name: string; card?: string; timeout?: number | null; entry: string })[];
+  command?: string[];
+  env?: Record<string, string>;
+  confirm?: boolean | "always";
+  confirm_by_tool?: Record<string, boolean | "always">;
+  dry_run?: boolean;
+  timeout?: number | null;
+};
+
+export type PluginCode = PluginCodeItem & {
+  name: string;
+  manifest: PluginManifest;
+  // null: not resolved yet (a plugin a migration made).
+  packages: string[] | null;
+  // What the person reads before approving; null: the server has not been run for this draft.
+  tools: PluginTool[] | null;
   files: Record<string, string>;
   requirements: string[];
 };

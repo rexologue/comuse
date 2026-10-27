@@ -1,5 +1,6 @@
-"""The aggregator: another MCP server, started by the executor over stdio, offers its
-tools as `<group>.<tool>` next to the built-in ones, through the same pipeline."""
+"""The aggregator: a plugin's own MCP server (one from elsewhere: here a FastMCP one),
+started by the executor over stdio, offers its tools as `<group>.<tool>` next to the
+built-in ones, through the same pipeline."""
 
 from __future__ import annotations
 
@@ -12,6 +13,7 @@ from mcp.shared.memory import create_connected_server_and_client_session
 
 from common.schemas.execution import ExecContext, ExecuteRequest
 from executor.mcp_server import build_server
+from executor.plugins.manifest import PluginManifest
 from executor.registry import ToolRegistry
 from executor.runtime import ExecutorRuntime
 from executor.upstream import Upstream
@@ -20,8 +22,9 @@ from executor.upstream import Upstream
 SERVER = str(Path(__file__).with_name("mcp_demo_server.py"))
 
 
-def _upstream(group: str = "demo", **env: str) -> Upstream:
-    return Upstream(group, StdioServerParameters(command=sys.executable, args=["-I", SERVER], env=env or None))
+def _upstream(group: str = "demo", manifest: dict | None = None, **env: str) -> Upstream:
+    plugin = PluginManifest.model_validate(manifest or {"title": "Демо", "command": ["python", SERVER]})
+    return Upstream(group, StdioServerParameters(command=sys.executable, args=["-I", SERVER], env=env or None), plugin)
 
 
 @pytest.fixture
@@ -35,8 +38,9 @@ async def runtime(settings):
     await registry.close()
 
 
-async def _call(runtime, tool, args, **request):
-    return await runtime.execute(ExecuteRequest(tool=tool, args=args, context=ExecContext(mode="run", run_id="run_up"), **request))
+async def _call(runtime, tool, args, dry_run=False, **request):
+    context = ExecContext(mode="run", run_id="run_up", dry_run=dry_run)
+    return await runtime.execute(ExecuteRequest(tool=tool, args=args, context=context, **request))
 
 
 async def test_its_tools_join_the_catalog_under_its_group(runtime):
@@ -106,9 +110,26 @@ async def test_a_server_cannot_take_a_group_that_is_taken(settings):
 
     try:
         assert registry.get("fs.add") is None and registry.get("fs.list") is not None
-        # Nor can an own command take the server's group.
-        await registry.connect(_upstream("demo"))
-        assert "demo" in registry.builtin_groups()
 
     finally:
         await registry.close()
+
+
+async def test_a_dry_run_calls_only_what_never_asks_of_a_server_that_cannot_do_one(settings):
+    """A server from elsewhere knows nothing of our dry run: its tools that would change
+    something are not called; those the plugin marked as never asking are."""
+    registry = ToolRegistry(settings.storage)
+    registry.load()
+    await registry.connect(_upstream(manifest={"title": "Демо", "command": ["python"], "confirm_by_tool": {"add": False}}))
+    runtime = ExecutorRuntime(settings, registry, secrets=None)
+
+    try:
+        added = await _call(runtime, "demo.add", {"a": 1, "b": 2}, dry_run=True)
+        hi = await _call(runtime, "demo.say_hi", {"name": "Анна"}, dry_run=True)
+
+    finally:
+        await registry.close()
+
+    assert added.output == {"sum": 3}
+    assert hi.output == {} and any("не вызван" in line for line in hi.logs)
+    assert registry.manifest("demo.add") is None   # closed: nothing left in the catalog

@@ -8,7 +8,6 @@ import copy
 import pytest
 
 from common.errors import ApiError
-from common.external_tools import store as tools
 from common.schemas.execution import ExecContext, ExecuteRequest
 from common.schemas.task import TaskSpec
 from common.storage.db import session
@@ -19,7 +18,7 @@ from compiler import store
 from compiler.compile import Compiler
 from runner.engine import RunEngine
 from tests.conftest import FakeMain, tool_hash
-from tests.test_external_tools import HAVE_UV, MANIFEST
+from tests.test_plugins import HAVE_UV, TOOL
 
 
 INTERNAL = {name: spec.manifest() for name, spec in discover().items()}
@@ -209,18 +208,25 @@ async def test_the_executor_refuses_a_call_for_another_definition(settings):
 
 
 @pytest.mark.skipif(not HAVE_UV, reason="uv is not installed")
-def test_new_code_of_an_own_command_is_another_definition(settings):
+async def test_new_code_of_a_plugin_is_another_definition(settings):
+    from executor.plugins import store as plugins
+    from executor.plugins.launch import Plugins
     from executor.registry import ToolRegistry
 
     registry = ToolRegistry(settings.storage)
+    running = Plugins(registry, settings.storage)
 
     hashes = []
-    for marker in ("первая", "вторая"):
-        code = f"def run(args, ctx):\n    return {{'lines': 0, 'out': '{marker}'}}\n"
-        draft = tools.save_draft(settings.storage, "demo.count_lines", manifest=MANIFEST, files={"main.py": code}, requirements=[])
-        tools.approve(settings.storage, "demo.count_lines", draft["hash"])
-        registry.load()
-        hashes.append(registry.manifest("demo.count_lines")["hash"])
+    try:
+        for marker in ("первая", "вторая"):
+            code = f"def run(args, ctx):\n    return {{'lines': 0, 'out': '{marker}'}}\n"
+            draft = plugins.save_draft(settings.storage, "demo", manifest={"title": "Демо", "tools": [TOOL]}, files={"main.py": code}, requirements=[])
+            plugins.approve(settings.storage, "demo", draft["hash"])
+            await running.start("demo")
+            hashes.append(registry.manifest("demo.count_lines")["hash"])
+
+    finally:
+        await registry.close()
 
     assert hashes[0] != hashes[1]
 
