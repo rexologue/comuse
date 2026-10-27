@@ -147,7 +147,8 @@ executor/
   runtime.py         конвейер вызова команды
   paths.py           песочница путей
   outputs.py         удаление старых файлов результатов
-  registry.py        каталог команд: internal_tools/ и свои команды
+  registry.py        каталог команд: internal_tools/, свои команды и инструменты серверов MCP
+  upstream.py        агрегатор: другой MCP-сервер по stdio, его инструменты как `группа.инструмент`
   mcp_server.py      команды как MCP-сервер: tools/list — каталог, tools/call — конвейер вызова
   api/               mcp (и перечитать каталог), external-tools, accounts
 scheduler/

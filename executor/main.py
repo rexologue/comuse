@@ -53,6 +53,7 @@ async def lifespan(app: FastAPI):
         for sweeper in sweepers:
             sweeper.cancel()
         await asyncio.gather(*sweepers, return_exceptions=True)
+        await registry.close()
 
 
 app = create_service_app(

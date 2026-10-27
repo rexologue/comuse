@@ -1,5 +1,6 @@
-"""Tool catalog: internal_tools/ plus the current code of every own command
-(common/external_tools); others read it over MCP (tools/list, executor/mcp_server.py)."""
+"""Tool catalog: internal_tools/, the current code of every own command
+(common/external_tools) and the tools of the MCP servers the executor runs
+(executor/upstream.py); others read it over MCP (tools/list, executor/mcp_server.py)."""
 
 from __future__ import annotations
 
@@ -11,6 +12,10 @@ from common.external_tools.spec import ExternalToolSpec
 from common.settings import StorageSettings
 from common.tools import ToolSpec, discover
 from common.tools.settings import tool_group
+from executor.upstream import Upstream, UpstreamToolSpec
+
+
+Spec = ToolSpec | ExternalToolSpec | UpstreamToolSpec
 
 
 log = logging.getLogger("registry")
@@ -19,13 +24,15 @@ log = logging.getLogger("registry")
 class ToolRegistry:
     def __init__(self, storage: StorageSettings):
         self.storage = storage
-        self._specs: dict[str, ToolSpec | ExternalToolSpec] = {}
+        self._specs: dict[str, Spec] = {}
         # Manifests with their hashes, made once per load: a call compares against them.
         self._manifests: dict[str, dict[str, Any]] = {}
+        # Servers whose tools are offered here, by their group.
+        self.upstreams: dict[str, Upstream] = {}
 
 
     def load(self) -> None:
-        specs: dict[str, ToolSpec | ExternalToolSpec] = dict(discover("internal_tools"))
+        specs: dict[str, Spec] = dict(discover("internal_tools"))
 
         for row in store.current_rows():
             try:
@@ -38,13 +45,22 @@ class ToolRegistry:
 
             specs[spec.name] = spec
 
+        # A server's group is its own: one the code or an own command has is not taken.
+        taken = {tool_group(name) for name in specs}
+        for group, upstream in self.upstreams.items():
+            if group in taken:
+                log.error("upstream %s skipped: the group is taken by other commands", group)
+                continue
+
+            specs.update(upstream.specs())
+
         self._specs = specs
         self._manifests = {name: spec.manifest() for name, spec in specs.items()}
 
         log.info("tools loaded: %d (%s)", len(self._specs), ", ".join(sorted(self._specs)))
 
 
-    def get(self, name: str) -> ToolSpec | ExternalToolSpec | None:
+    def get(self, name: str) -> Spec | None:
         return self._specs.get(name)
 
 
@@ -57,5 +73,26 @@ class ToolRegistry:
 
 
     def builtin_groups(self) -> set[str]:
-        """Groups of the built-in tools: an own command takes a group of its own."""
-        return {tool_group(name) for name, spec in self._specs.items() if isinstance(spec, ToolSpec)}
+        """Groups an own command cannot take: the built-in tools' and the servers'."""
+        return {tool_group(name) for name, spec in self._specs.items() if isinstance(spec, ToolSpec)} | set(self.upstreams)
+
+
+    async def connect(self, upstream: Upstream) -> None:
+        """Start a server and offer its tools; the catalog follows when it changes them."""
+        upstream.on_change = self.load
+        await upstream.start()
+
+        self.upstreams[upstream.group] = upstream
+        self.load()
+
+
+    async def disconnect(self, group: str) -> None:
+        upstream = self.upstreams.pop(group, None)
+        if upstream is not None:
+            await upstream.stop()
+            self.load()
+
+
+    async def close(self) -> None:
+        for group in list(self.upstreams):
+            await self.disconnect(group)

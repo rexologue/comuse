@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
 import httpx
-from mcp import ClientSession
+from mcp import ClientSession, types
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.exceptions import McpError
 
@@ -135,8 +135,13 @@ class MainClient:
         """One call, as ExecuteResponse's fields: status, output or error, logs…
         `hash`: the definition the task was approved with (the call is refused if the
         tool is another now)."""
+        params = types.CallToolRequestParams(name=tool, arguments=args, _meta=types.RequestParams.Meta(**call_meta(hash=hash, context=context)))
+
         async with self._mcp() as session:
-            result = await session.call_tool(tool, args, meta=call_meta(hash=hash, context=context))
+            # Sent as is, not through session.call_tool(): that one fetches the whole
+            # tools/list on a new session to check the output, which the executor has
+            # already checked against the tool's own schema.
+            result = await session.send_request(types.ClientRequest(types.CallToolRequest(params=params)), types.CallToolResult)
 
         return response_of(result).model_dump()
 
