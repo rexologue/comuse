@@ -125,7 +125,10 @@ class TaskVersion(Base):
     patch: Mapped[Any] = mapped_column(JSON, nullable=True)
     summary: Mapped[str] = mapped_column(Text, default="")
     cards: Mapped[Any] = mapped_column(JSON, default=list)
-    # compile | patch | manual
+    # The definition of each tool the steps call, with its hash (common/tools/definition.py):
+    # what the version is approved with; `{}` for a tool of a version from before they were kept.
+    tools: Mapped[Any] = mapped_column(JSON, default=dict)
+    # compile | patch | manual | tools (the same steps with the tools' new definitions)
     created_by: Mapped[str] = mapped_column(String, default="compile")
     # The chat the version came from (compile, a patch asked in chat); None for manual edits.
     session_id: Mapped[str | None] = mapped_column(String)
@@ -193,29 +196,18 @@ class Account(Base):
 
 
 class ExternalTool(Base):
-    """A command the user added or the chat wrote (common/external_tools). Its files are
-    in DATA_DIR/external_tools/<name>/<version>/."""
+    """A command the user added or the chat wrote (common/external_tools): its current
+    code and its draft, a row each. Files in DATA_DIR/external_tools/<group>/<action>/<status>/."""
 
     __tablename__ = "external_tools"
-
-    # The slug: the command is `ext.<name>`.
-    name: Mapped[str] = mapped_column(String, primary_key=True)
-    # The approved version the chat and new tasks call; None until one is approved.
-    current_version: Mapped[int | None] = mapped_column(Integer)
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
-
-
-class ExternalToolVersion(Base):
-    __tablename__ = "external_tool_versions"
-    __table_args__ = (UniqueConstraint("name", "version"),)
+    __table_args__ = (UniqueConstraint("name", "status"),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
+    # group.action, like a built-in command.
     name: Mapped[str] = mapped_column(String, index=True)
-    version: Mapped[int] = mapped_column(Integer)
-    # draft (one per command, changes in place) | approved (frozen: files match `hash`)
+    # current (approved, frozen: files match `hash`) | draft (one per command, changes in place)
     status: Mapped[str] = mapped_column(String, default="draft")
-    # Over every file of the version but its .venv; checked before each run.
+    # Over every file of the command but its .venv; checked before each run.
     hash: Mapped[str] = mapped_column(String)
     manifest: Mapped[Any] = mapped_column(JSON)
     # Exact packages from requirements.lock ("name==version"), shown at approval.

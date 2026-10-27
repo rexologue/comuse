@@ -12,7 +12,8 @@ import type {
   ChatSummary,
   Diff,
   ExternalTool,
-  ExternalToolVersion,
+  CodeState,
+  ExternalToolCode,
   Job,
   LlmOverview,
   LogEntry,
@@ -34,7 +35,7 @@ export const keys = {
   tools: ["tools"] as const,
   metaTools: ["meta-tools"] as const,
   externalTools: ["external-tools"] as const,
-  externalToolVersion: (name: string, version: number) => ["external-tools", name, version] as const,
+  externalToolCode: (name: string, which: CodeState) => ["external-tools", name, which] as const,
   chat: (id: string) => ["chat", id] as const,
   task: (id: string) => ["task", id] as const,
   version: (taskId: string, id: string) => ["task", taskId, "version", id] as const,
@@ -184,10 +185,10 @@ export function useExternalTools() {
   return useQuery({ queryKey: keys.externalTools, queryFn: async () => (await api<{ tools: ExternalTool[] }>("/external-tools")).tools });
 }
 
-export function useExternalToolVersion(name: string, version: number, enabled = true) {
+export function useExternalToolCode(name: string, which: CodeState, enabled = true) {
   return useQuery({
-    queryKey: keys.externalToolVersion(name, version),
-    queryFn: () => api<ExternalToolVersion>(`/external-tools/${name}/versions/${version}`),
+    queryKey: keys.externalToolCode(name, which),
+    queryFn: () => api<ExternalToolCode>(`/external-tools/${name}/${which}`),
     enabled,
   });
 }

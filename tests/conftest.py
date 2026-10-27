@@ -47,26 +47,64 @@ def settings(env) -> Settings:
     return settings
 
 
+def tool_hash(name: str) -> str:
+    """The hash FakeMain's catalog gives a tool."""
+    return f"hash-{name}"
+
+
+def kept_tools(spec: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """TaskVersion.tools for a spec run against FakeMain: its tools as the catalog has them."""
+    from pydantic import ValidationError
+
+    from common.schemas.task import TaskSpec
+
+    try:
+        return {name: {"hash": tool_hash(name)} for name in TaskSpec.model_validate(spec).tools()}
+
+    except ValidationError:
+        return {}  # a broken spec: the runner refuses it before it looks at the tools
+
+
 class FakeMain:
     """Stands in for MainClient: `/executor/execute` goes to `tools`, notifications and
-    events are collected. Any other call fails the test (a run never asks for anything)."""
+    events are collected; `/tools` is the catalog (a tool's hash: tool_hash, or `hashes`).
+    Any other call fails the test (a run never asks for anything)."""
 
-    def __init__(self, tools: dict[str, Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]]):
+    def __init__(self, tools: dict[str, Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]], *, hashes: dict[str, str] | None = None):
+        from common.tools import discover
+
         self.tools     = tools
+        # The built-in tools and the faked ones, unchanged unless `hashes` says otherwise.
+        self.hashes    = {name: tool_hash(name) for name in {*discover(), *tools}} | (hashes or {})
         self.calls: list[dict[str, Any]] = []
         self.notified: list[dict[str, Any]] = []
+        self.changed: list[dict[str, Any]] = []
         self.events: list[tuple[str, dict[str, Any]]] = []
+
+
+    async def get(self, path: str, **_) -> Any:
+        if path == "/tools":
+            return {"tools": [{"name": name, "hash": value} for name, value in self.hashes.items()]}
+
+        raise AssertionError(f"unexpected GET {path}")
 
 
     async def post(self, path: str, json: Any = None, **_) -> Any:
         if path == "/executor/execute":
             self.calls.append(json)
+            if json.get("hash") is not None and json["hash"] != self.hashes.get(json["tool"]):
+                return {"status": "error", "error": "изменился", "tool_changed": True}
+
             handler = self.tools[json["tool"]]
             return {"status": "ok", "artifacts": [], **handler(json["args"], json["context"])}
 
         if path == "/internal/notify":
             self.notified.append(json)
             return {"delivered": True}
+
+        if path == "/internal/tools-changed":
+            self.changed.append(json)
+            return {"paused": not json["dry_run"]}
 
         raise AssertionError(f"unexpected POST {path}")
 

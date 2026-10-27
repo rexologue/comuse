@@ -31,7 +31,7 @@ _KEEP_ENV = ("PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP", "TMPDIR",
              "LANG", "LC_ALL", "LC_CTYPE", "TZ")
 
 
-def run(python: Path, version_dir: Path, request: dict[str, Any], timeout: float) -> dict[str, Any]:
+def run(python: Path, folder: Path, request: dict[str, Any], timeout: float) -> dict[str, Any]:
     """The shim's answer; a crash of the process itself becomes an error answer."""
     env = {key: os.environ[key] for key in _KEEP_ENV if key in os.environ}
     group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
@@ -39,11 +39,11 @@ def run(python: Path, version_dir: Path, request: dict[str, Any], timeout: float
     # -I ignores PYTHON* variables (and the user's site), so the rest are flags: UTF-8
     # whatever the OS locale (-X utf8), no __pycache__ in the frozen folder (-B).
     process = subprocess.Popen(
-        [str(python), "-I", "-B", "-X", "utf8", str(SHIM), str(version_dir)],
+        [str(python), "-I", "-B", "-X", "utf8", str(SHIM), str(folder)],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        cwd=version_dir,
+        cwd=folder,
         env=env,
         **group,
     )

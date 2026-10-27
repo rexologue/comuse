@@ -79,8 +79,6 @@ export type ChatReply = {
 export type Card = {
   id: string;
   tool: string | null;
-  // The version of an own command the step runs.
-  version?: number | null;
   text: string;
   args: Record<string, unknown>;
   confirm?: boolean | "always";
@@ -101,12 +99,13 @@ export type Version = VersionItem & {
   approved_at: string | null;
 };
 
-// An external tool with a newer approved version than the task runs.
-export type ToolUpdate = { tool: string; version: number; current: number };
+// A tool of the active version that is not what it was approved with (its changed
+// parts, as words): the task does not run until a version with it is approved.
+export type ToolChange = { tool: string; fields: string[] };
 
-export type TaskDetail = TaskSummary & { current_version: Version | null; versions: VersionItem[]; tool_updates: ToolUpdate[] };
+export type TaskDetail = TaskSummary & { current_version: Version | null; versions: VersionItem[]; tool_changes: ToolChange[] };
 
-export type Change = { kind: "added" | "removed" | "changed" | "trigger" | "title"; step?: string; before?: string; after?: string };
+export type Change = { kind: "added" | "removed" | "changed" | "trigger" | "title" | "tool"; step?: string; before?: string; after?: string };
 
 export type Diff = { changes: Change[]; lines: string[] };
 
@@ -195,11 +194,13 @@ export type Tunable = {
   description: string;
 };
 
-// GET /external-tools (docs/EXTERNAL_TOOLS.md).
-export type ExternalToolVersionItem = {
-  version: number;
-  status: "draft" | "approved";
+// GET /external-tools (docs/EXTERNAL_TOOLS.md): a command's approved code and its draft.
+export type CodeState = "current" | "draft";
+
+export type ExternalToolCodeItem = {
+  status: CodeState;
   title: string | null;
+  hash: string;
   created_by: "user" | "chat";
   session_id: string | null;
   created_at: string;
@@ -210,18 +211,15 @@ export type ExternalTool = {
   // group.action, like a built-in command (telegram.send)
   name: string;
   title: string | null;
-  current_version: number | null;
-  draft_version: number | null;
-  versions: ExternalToolVersionItem[];
+  current: ExternalToolCodeItem | null;
+  draft: ExternalToolCodeItem | null;
 };
 
-export type ExternalToolVersion = ExternalToolVersionItem & {
+export type ExternalToolCode = ExternalToolCodeItem & {
   name: string;
-  current: boolean;
   manifest: { title: string; description: string; confirm: boolean | "always"; input_schema: unknown; output_schema: unknown };
   packages: string[];
-  hash: string;
-  // The code (the version's bookkeeping files aside); `entry` holds def run(args, ctx).
+  // The code (the command's bookkeeping files aside); `entry` holds def run(args, ctx).
   entry: string;
   files: Record<string, string>;
   requirements: string[];

@@ -6,7 +6,6 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from common.errors import ApiError
-from common.external_tools import pinned
 from common.storage.db import session
 from common.storage.models import RUN_FINISHED, Run, Task, TaskVersion
 from common.storage.queries import run_detail, run_dict
@@ -25,17 +24,6 @@ class RunBody(BaseModel):
     trigger: str = "manual"
     dry_run: bool = False
     wait: bool = False
-
-
-@router.get("/tool-pins", summary="External tool versions the unfinished runs use")
-async def tool_pins():
-    with session() as db:
-        running = {r.task_version_id for r in db.query(Run).filter(Run.status.not_in(RUN_FINISHED))}
-        specs = [v.spec for v in db.query(TaskVersion).filter(TaskVersion.id.in_(running))]
-
-    found = {(tool, version) for spec in specs for tool, version in pinned(spec).items()}
-
-    return {"pins": [{"tool": tool, "version": version} for tool, version in sorted(found)]}
 
 
 @router.post("/runs", summary="Start a run (dry runs may target a draft version)")

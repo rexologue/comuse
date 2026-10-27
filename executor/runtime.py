@@ -1,5 +1,5 @@
-"""The call pipeline: validate the arguments → check path arguments → load declared
-secrets → run with timeout. The executor keeps no log: the response
+"""The call pipeline: the tool is the one the task was approved with → validate the
+arguments → check path arguments → load declared secrets → run with timeout. The executor keeps no log: the response
 carries everything (duration, traceback, the tool's log lines and notifications) for
 the caller's own log. Whoever calls has already decided the call should happen (the
 chat asks the user first; a task was approved as a whole).
@@ -49,22 +49,24 @@ class ExecutorRuntime:
 
     async def execute(self, req: ExecuteRequest) -> ExecuteResponse:
         started = time.monotonic()
-        # Looked up once: the version that ran is the one logged, even if another was
-        # approved meanwhile.
-        spec = self.registry.get(req.tool, req.version)
-        response = await self._execute(req, spec)
+        response = await self._execute(req)
         response.duration_ms = int((time.monotonic() - started) * 1000)
-        response.version = getattr(spec, "version", None)
 
         return response
 
 
-    async def _execute(self, req: ExecuteRequest, spec) -> ExecuteResponse:
+    async def _execute(self, req: ExecuteRequest) -> ExecuteResponse:
+        # Looked up once, with its manifest: the tool that runs is the one checked.
+        spec, manifest = self.registry.get(req.tool), self.registry.manifest(req.tool)
+
         if spec is None:
-            if req.version is not None and self.registry.get(req.tool) is not None:
-                return ExecuteResponse(status="error", error=f"У `{req.tool}` нет одобренной версии v{req.version}")
+            if req.hash is not None:
+                return ExecuteResponse(status="error", error=f"Инструмента `{req.tool}` больше нет", tool_changed=True)
 
             return ExecuteResponse(status="error", error=f"Неизвестный инструмент `{req.tool}`")
+
+        if req.hash is not None and manifest["hash"] != req.hash:
+            return ExecuteResponse(status="error", error=f"`{req.tool}` изменился после одобрения задачи: шаг не запущен", tool_changed=True)
 
         try:
             inp = spec.parse(req.args)

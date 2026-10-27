@@ -1,7 +1,7 @@
 """Runs one call of an external tool inside the tool's own .venv (stdlib only: the tool's
 environment has none of our packages).
 
-    python -I shim.py <version dir>     request on stdin, answer on stdout
+    python -I shim.py <command dir>     request on stdin, answer on stdout
 
 Request: {"args": {...}, "context": {"mode", "dry_run", "output_dir", ...}}.
 Answer:  {"ok": true, "output": {...}, "logs": [...], "artifacts": [...]}
@@ -45,7 +45,7 @@ class Context:
 
 
 def main():
-    version_dir = Path(sys.argv[1]).resolve()
+    folder = Path(sys.argv[1]).resolve()
     answer_to = sys.stdout
     sys.stdout = sys.stderr
 
@@ -57,8 +57,8 @@ def main():
     module.Context = Context
     sys.modules["agent_tool"] = module
 
-    sys.path.insert(0, str(version_dir))
-    os.chdir(ctx.output_dir if ctx.output_dir.is_dir() else version_dir)
+    sys.path.insert(0, str(folder))
+    os.chdir(ctx.output_dir if ctx.output_dir.is_dir() else folder)
 
     try:
         import main as tool

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterator, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -33,10 +33,6 @@ class Step(BaseModel):
     id: str = Field(pattern=STEP_ID_PATTERN)
     title: str | None = None
     tool: str | None = None
-    # External tools (ext.*) only: the approved version the step runs. The compiler sets
-    # it, so a new version of the tool changes nothing here until the user moves the
-    # task to it (docs/EXTERNAL_TOOLS.md).
-    tool_version: int | None = Field(default=None, ge=1)
     args: dict[str, Any] = Field(default_factory=dict)
     when: str | None = None
     foreach: str | None = None
@@ -105,22 +101,11 @@ class TaskSpec(BaseModel):
         return [s for top in self.steps for s in top.walk()]
 
 
+    def tools(self) -> set[str]:
+        """The tools the steps call, nested ones too."""
+        return {step.tool for step in self.all_steps() if step.tool}
+
+
     def dump(self) -> dict[str, Any]:
         """JSON form used in storage and API responses (with the `as` alias)."""
         return self.model_dump(mode="json", by_alias=True, exclude_none=True)
-
-
-def tool_steps(data: Any) -> Iterator[dict[str, Any]]:
-    """Every step of a raw spec (a dict, maybe not valid yet) that names a tool, nested
-    ones too; a step whose `tool` is not a string is left for validation to name."""
-    def walk(steps: Any) -> Iterator[dict[str, Any]]:
-        for step in steps or []:
-            if not isinstance(step, dict):
-                continue
-
-            if step.get("tool") and isinstance(step["tool"], str):
-                yield step
-
-            yield from walk(step.get("steps"))
-
-    yield from walk(data.get("steps") if isinstance(data, dict) else None)

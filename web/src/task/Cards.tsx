@@ -41,14 +41,12 @@ function Step({ card, number, detail }: { card: Card; number: string; detail?: D
           {card.tool && !open && (
             <div className="text-xs text-muted-foreground">
               {card.tool}
-              {card.version ? ` v${card.version}` : ""}
             </div>
           )}
           {open && (
             <div className="mt-1.5 flex flex-col gap-1.5 rounded-md border p-2">
               <div className="text-xs text-muted-foreground">
                 Команда <span className="font-mono text-foreground">{card.tool}</span>
-                {card.version ? ` v${card.version}` : ""}
               </div>
               <Args args={card.args} />
               {detail?.(card)}

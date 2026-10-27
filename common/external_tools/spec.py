@@ -1,4 +1,4 @@
-"""An external tool version as the executor's registry holds it: the same face as an
+"""An own command's approved code as the executor's registry holds it: the same face as an
 internal ToolSpec (parse, call, manifest), a different way to run."""
 
 from __future__ import annotations
@@ -14,9 +14,10 @@ from common import tunables
 from common.external_tools import deps, process, store
 from common.external_tools.manifest import Manifest
 from common.settings import StorageSettings
-from common.storage.models import ExternalToolVersion
+from common.storage.models import ExternalTool
 from common.tools import ToolContext, ToolError, function_name
 from common.tools.context import PermissionDenied
+from common.tools.definition import definition_hash
 
 
 @dataclass(slots=True, frozen=True)
@@ -29,8 +30,7 @@ class ExternalToolSpec:
     timeout: int | None
     path_args: dict[str, str]
     manifest_data: dict[str, Any]
-    version: int
-    # The version's files must still match it when it runs.
+    # The command's files must still match it when it runs.
     hash: str
     folder: Path
     storage: StorageSettings
@@ -39,7 +39,7 @@ class ExternalToolSpec:
     _validator: Any = field(default=None, compare=False)
 
     @classmethod
-    def of(cls, row: ExternalToolVersion, storage: StorageSettings) -> ExternalToolSpec:
+    def of(cls, row: ExternalTool, storage: StorageSettings) -> ExternalToolSpec:
         manifest = Manifest.model_validate(row.manifest)
 
         return cls(
@@ -51,16 +51,15 @@ class ExternalToolSpec:
             timeout=manifest.timeout,
             path_args=manifest.path_args(),
             manifest_data=manifest.model_dump(),
-            version=row.version,
             hash=row.hash,
-            folder=store.version_dir(storage, row.name, row.version),
+            folder=store.tool_dir(storage, row.name, row.status),
             storage=storage,
             _validator=jsonschema.Draft202012Validator(manifest.input_schema),
         )
 
 
     def manifest(self) -> dict[str, Any]:
-        return {
+        manifest = {
             "name": self.name,
             "function_name": function_name(self.name),
             "title": self.title,
@@ -75,8 +74,11 @@ class ExternalToolSpec:
             "guide": None,
             "core": False,
             "source": "external",
-            "version": self.version,
+            # The code is part of what a task is approved with: other code, other command.
+            "code_hash": self.hash,
         }
+
+        return {**manifest, "hash": definition_hash(manifest)}
 
 
     def parse(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -138,7 +140,7 @@ class ExternalToolSpec:
 
     async def _checked_python(self) -> Path:
         if await asyncio.to_thread(store.files_hash, self.folder) != self.hash:
-            raise ToolError(f"Файлы `{self.name}` v{self.version} изменились после одобрения: команда не запущена")
+            raise ToolError(f"Файлы `{self.name}` изменились после одобрения: команда не запущена")
 
         return await asyncio.to_thread(deps.ensure_venv, self.folder, self.storage.uv_cache_dir)
 

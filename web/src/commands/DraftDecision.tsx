@@ -6,17 +6,17 @@ import { useState, type ReactNode } from "react";
 
 import { api } from "@/api/client";
 import { keys } from "@/api/queries";
-import type { ExternalToolVersion } from "@/api/types";
+import type { ExternalToolCode } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { useAction } from "@/settings/common";
 
-export function DraftDecision({ version, children }: { version: ExternalToolVersion; children?: ReactNode }) {
+export function DraftDecision({ code, children }: { code: ExternalToolCode; children?: ReactNode }) {
   const queryClient = useQueryClient();
   const { busy, error, run } = useAction();
   const [armed, setArmed] = useState(false);
 
-  // A refused approval too: the draft may have changed, and it is shown anew. An open
-  // task panel offers the move to a version approved here.
+  // A refused approval too: the draft may have changed, and it is shown anew. The tasks
+  // with the command now wait for their user: their panels say what changed.
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: keys.externalTools });
     await queryClient.invalidateQueries({ queryKey: keys.tools });
@@ -24,13 +24,13 @@ export function DraftDecision({ version, children }: { version: ExternalToolVers
   };
 
   const approve = () =>
-    run("approve", () => api(`/external-tools/${version.name}/versions/${version.version}/approve`, { method: "POST", json: { hash: version.hash } }).finally(refresh));
-  const discard = () => run("discard", () => api(`/external-tools/${version.name}/draft`, { method: "DELETE" }).finally(refresh));
+    run("approve", () => api(`/external-tools/${code.name}/draft/approve`, { method: "POST", json: { hash: code.hash } }).finally(refresh));
+  const discard = () => run("discard", () => api(`/external-tools/${code.name}/draft`, { method: "DELETE" }).finally(refresh));
 
   return (
     <>
       <div className="flex flex-wrap gap-2">
-        {version.status === "draft" && (
+        {code.status === "draft" && (
           <>
             <Button size="sm" onClick={approve} disabled={busy !== null}>
               {busy === "approve" ? "Ставлю пакеты…" : "Одобрить"}

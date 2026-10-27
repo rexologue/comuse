@@ -68,17 +68,17 @@ def runtime(settings):
     return ExecutorRuntime(settings, registry, secrets=None)
 
 
-def _seen(settings, name="demo.count_lines", version=1) -> str:
+def _seen(settings, name="demo.count_lines") -> str:
     """The hash the person's card shows."""
-    return store.version_view(settings.storage, name, version)["hash"]
+    return store.view(settings.storage, name, "draft")["hash"]
 
 
 def _save(settings, name="demo.count_lines", code=COUNT_LINES, **manifest):
     return store.save_draft(settings.storage, name, manifest={**MANIFEST, **manifest}, files={"main.py": code}, requirements=[])
 
 
-def _approve(settings, runtime, name="demo.count_lines", version=1):
-    store.approve(settings.storage, name, version, _seen(settings, name, version))
+def _approve(settings, runtime, name="demo.count_lines"):
+    store.approve(settings.storage, name, _seen(settings, name))
     runtime.registry.load()
 
 
@@ -108,16 +108,25 @@ def test_a_draft_names_every_problem(settings):
 
 @needs_uv
 def test_a_draft_changes_in_place_until_approved(settings, runtime):
-    assert _save(settings)["version"] == 1
-    assert _save(settings, title="Строки")["version"] == 1
+    _save(settings)
+    assert _save(settings, title="Строки")["status"] == "draft"
+    assert len(store.tool_list()) == 1 and store.tool_list()[0]["current"] is None
 
     _approve(settings, runtime)
-    second = _save(settings, title="Строки, v2")
+    second = _save(settings, code=COUNT_LINES + "\n# v2\n")
 
-    assert second["version"] == 2 and second["status"] == "draft"
-    assert [(t["current_version"], t["draft_version"]) for t in store.tool_list()] == [(1, 2)]
-    # The chat and new tasks still get v1 until v2 is approved.
-    assert runtime.registry.get("demo.count_lines").version == 1
+    assert second["status"] == "draft"
+    [listed] = store.tool_list()
+    assert listed["current"]["hash"] != listed["draft"]["hash"]
+    # The chat and tasks still get the approved code until the draft is approved.
+    code_hash = runtime.registry.manifest("demo.count_lines")["code_hash"]
+    assert code_hash == listed["current"]["hash"]
+
+    _approve(settings, runtime)
+    [listed] = store.tool_list()
+    assert listed["draft"] is None and listed["current"]["hash"] == second["hash"]
+    assert runtime.registry.manifest("demo.count_lines")["code_hash"] == second["hash"]
+    assert not store.tool_dir(settings.storage, "demo.count_lines", "draft").exists()
 
 
 @needs_uv
@@ -172,7 +181,7 @@ async def test_changed_files_do_not_run(settings, runtime):
     _save(settings)
     _approve(settings, runtime)
 
-    (store.version_dir(settings.storage, "demo.count_lines", 1) / "main.py").write_text("def run(args, ctx):\n    return {}\n")
+    (store.tool_dir(settings.storage, "demo.count_lines", "current") / "main.py").write_text("def run(args, ctx):\n    return {}\n")
 
     assert "изменились после одобрения" in (await _call(runtime, {"file": "a.txt"})).error
 
@@ -194,10 +203,10 @@ async def test_a_tool_and_what_it_started_are_stopped_at_its_timeout(settings, r
 @needs_uv
 def test_approval_refuses_a_draft_changed_after_saving(settings):
     _save(settings)
-    (store.version_dir(settings.storage, "demo.count_lines", 1) / "main.py").write_text("def run(args, ctx):\n    return {}\n")
+    (store.tool_dir(settings.storage, "demo.count_lines", "draft") / "main.py").write_text("def run(args, ctx):\n    return {}\n")
 
     with pytest.raises(ToolError, match="изменились после сохранения"):
-        store.approve(settings.storage, "demo.count_lines", 1, _seen(settings))
+        store.approve(settings.storage, "demo.count_lines", _seen(settings))
 
 
 @needs_uv
@@ -207,15 +216,15 @@ def test_a_person_approves_only_the_draft_they_read(settings, runtime):
     _save(settings, code=COUNT_LINES + "\n# rewritten by the chat\n")
 
     with pytest.raises(ToolError, match="изменился, пока вы его читали"):
-        store.approve(settings.storage, "demo.count_lines", 1, seen)
+        store.approve(settings.storage, "demo.count_lines", seen)
 
-    store.approve(settings.storage, "demo.count_lines", 1, _seen(settings))
+    store.approve(settings.storage, "demo.count_lines", _seen(settings))
 
 
 @needs_uv
 def test_a_draft_whose_packages_do_not_resolve_stays_as_it_was(settings, monkeypatch):
     _save(settings)
-    before = store.version_view(settings.storage, "demo.count_lines", 1, files=True)
+    before = store.view(settings.storage, "demo.count_lines", "draft", files=True)
 
     def unresolvable(folder, cache):
         raise ToolError("Не удалось подобрать пакеты")
@@ -224,8 +233,8 @@ def test_a_draft_whose_packages_do_not_resolve_stays_as_it_was(settings, monkeyp
     with pytest.raises(ToolError):
         store.save_draft(settings.storage, "demo.count_lines", manifest=MANIFEST, files={"main.py": "def run(args, ctx):\n    return {}\n"}, requirements=["nothing-like-it"])
 
-    assert store.version_view(settings.storage, "demo.count_lines", 1, files=True) == before
-    assert store.files_hash(store.version_dir(settings.storage, "demo.count_lines", 1)) == before["hash"]
+    assert store.view(settings.storage, "demo.count_lines", "draft", files=True) == before
+    assert store.files_hash(store.tool_dir(settings.storage, "demo.count_lines", "draft")) == before["hash"]
 
 
 @needs_uv
@@ -233,7 +242,7 @@ async def test_a_tool_cannot_leave_compiled_code_behind(settings, runtime):
     _save(settings)
     _approve(settings, runtime)
 
-    cache = store.version_dir(settings.storage, "demo.count_lines", 1) / "__pycache__"
+    cache = store.tool_dir(settings.storage, "demo.count_lines", "current") / "__pycache__"
     cache.mkdir()
     (cache / "main.cpython-314.pyc").write_bytes(b"not what was read")
 
@@ -249,4 +258,4 @@ def test_an_own_command_takes_a_group_of_its_own(settings):
 
     view = store.save_draft(settings.storage, "telegram.send", manifest=MANIFEST, files={"main.py": COUNT_LINES}, requirements=[], builtin_groups={"mail"})
     assert view["name"] == "telegram.send"
-    assert store.version_dir(settings.storage, "telegram.send", 1) == settings.storage.external_tools_dir / "telegram" / "send" / "1"
+    assert store.tool_dir(settings.storage, "telegram.send", "draft") == settings.storage.external_tools_dir / "telegram" / "send" / "draft"

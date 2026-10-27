@@ -9,7 +9,7 @@ import { useNavigate, useSearchParams } from "react-router";
 
 import { api, ApiError } from "@/api/client";
 import { keys, useJobs, useTask, useTaskRuns, useVersion } from "@/api/queries";
-import type { Run, TaskDetail, ToolUpdate, Version } from "@/api/types";
+import type { Run, TaskDetail, ToolChange, Version } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { dateTime } from "@/lib/format";
@@ -158,9 +158,7 @@ function Scenario({ task, version }: { task: TaskDetail; version: Version | null
       ) : (
         <p className="text-sm text-muted-foreground">Загрузка…</p>
       )}
-      {task.tool_updates.map((update) => (
-        <ToolUpdateNote key={update.tool} taskId={task.id} update={update} />
-      ))}
+      {task.tool_changes.length > 0 && <ToolChangesNote taskId={task.id} changes={task.tool_changes} />}
       {!task.current_version && version?.status === "draft" && (
         <div className="pt-2">
           <DraftActions taskId={task.id} versionId={version.id} />
@@ -170,19 +168,19 @@ function Scenario({ task, version }: { task: TaskDetail; version: Version | null
   );
 }
 
-// A new version of an external tool changes nothing in the task by itself: moving to
-// it is a new task version, approved like any other.
-function ToolUpdateNote({ taskId, update }: { taskId: string; update: ToolUpdate }) {
+// A tool the task calls is not what it was approved with: the task does not run until
+// the user reads the changes in a draft with the tools as they are and approves it.
+function ToolChangesNote({ taskId, changes }: { taskId: string; changes: ToolChange[] }) {
   const queryClient = useQueryClient();
   const [, setSearch] = useSearchParams();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const move = async () => {
+  const refresh = async () => {
     setBusy(true);
     setError(null);
     try {
-      const result = await api<{ version_id: string }>(`/tasks/${taskId}/tool-versions`, { method: "POST", json: { tool: update.tool, version: update.current } });
+      const result = await api<{ version_id: string }>(`/tasks/${taskId}/tools/refresh`, { method: "POST" });
       await queryClient.invalidateQueries({ queryKey: keys.task(taskId) });
       setSearch((search) => {
         search.set("version", result.version_id);
@@ -197,12 +195,17 @@ function ToolUpdateNote({ taskId, update }: { taskId: string; update: ToolUpdate
   };
 
   return (
-    <div className="mt-2 flex flex-col gap-1.5 rounded-md border border-dashed p-2 text-sm">
-      <span>
-        У команды {update.tool} есть версия v{update.current}, задача работает на v{update.version}.
-      </span>
-      <Button size="sm" variant="outline" className="self-start" onClick={move} disabled={busy}>
-        {busy ? "Готовлю черновик…" : `Перевести на v${update.current}`}
+    <div className="mt-2 flex flex-col gap-1.5 rounded-md border border-dashed border-destructive/50 p-2 text-sm">
+      <span>Команды задачи изменились после одобрения, и она не запускается, пока вы не посмотрите изменения:</span>
+      <ul className="flex flex-col gap-0.5 text-xs">
+        {changes.map((change) => (
+          <li key={change.tool}>
+            <span className="font-mono">{change.tool}</span> — {change.fields.join(", ")}
+          </li>
+        ))}
+      </ul>
+      <Button size="sm" variant="outline" className="self-start" onClick={refresh} disabled={busy}>
+        {busy ? "Готовлю черновик…" : "Посмотреть задачу с новыми командами"}
       </Button>
       {error && <p className="text-xs whitespace-pre-line text-destructive">{error}</p>}
     </div>

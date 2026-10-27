@@ -7,6 +7,7 @@ import pytest
 from common.errors import ApiError
 from common.schemas.task import TaskSpec
 from common.tools import discover
+from common.tools.definition import snapshot
 from compiler import store
 from compiler.compile import Compiler
 
@@ -31,7 +32,8 @@ def _compiler(settings) -> Compiler:
 
 
 def _task() -> str:
-    version = store.create_task(TaskSpec.model_validate(SPEC), session_id="ses_1", cards=[], summary="", settings={})
+    spec = TaskSpec.model_validate(SPEC)
+    version = store.create_task(spec, session_id="ses_1", cards=[], summary="", settings={}, tools=snapshot(spec.tools(), CATALOG))
     return version.task_id
 
 
@@ -168,7 +170,7 @@ async def test_an_edit_made_meanwhile_is_not_superseded(settings):
     await _compiler(settings).edit(task_id, spec=None, summary=None, ops=[{"op": "replace", "path": "/title", "value": "Другая"}])
 
     with pytest.raises(ApiError) as e:
-        store.add_version(task_id, TaskSpec.model_validate(SPEC), parent=base, patch=None, cards=[], summary="", created_by="llm", session_id=None)
+        store.add_version(task_id, TaskSpec.model_validate(SPEC), parent=base, patch=None, cards=[], summary="", created_by="llm", session_id=None, tools={})
     assert e.value.status_code == 409
 
 
@@ -179,10 +181,10 @@ def test_a_broken_card_or_schema_of_an_own_command_breaks_nothing():
 
     manifest = {
         **CATALOG["fs.list"], "name": "demo.odd", "title": "Странная", "card": "Сумма {amount:.2f} {0} {",
-        "input_schema": {"type": "object", "properties": {"amount": True}}, "version": 1, "source": "external",
+        "input_schema": {"type": "object", "properties": {"amount": True}}, "source": "external",
     }
     catalog = {**CATALOG, "demo.odd": manifest}
-    spec = validate_spec({"title": "x", "steps": [{"id": "a", "tool": "demo.odd", "tool_version": 1, "args": {"amount": 5}}]}, catalog)
+    spec = validate_spec({"title": "x", "steps": [{"id": "a", "tool": "demo.odd", "args": {"amount": 5}}]}, catalog)
 
     assert build_cards(spec, catalog)[0]["text"] == "Странная"
     assert "demo.odd" in format_catalog(catalog)

@@ -11,13 +11,13 @@ from common.storage.db import session
 from common.storage.models import Run, Task, TaskVersion
 from common.storage.queries import run_log
 from runner.engine import RunEngine
-from tests.conftest import FakeMain
+from tests.conftest import FakeMain, kept_tools
 
 
 def _make_run(spec: dict[str, Any], *, dry_run: bool = False, task_settings: dict[str, Any] | None = None) -> str:
     with session() as db:
         db.add(Task(id="task_1", title=spec["title"], status="active", current_version_id="ver_1", settings=task_settings or {}))
-        db.add(TaskVersion(id="ver_1", task_id="task_1", version_no=1, spec=spec, status="approved"))
+        db.add(TaskVersion(id="ver_1", task_id="task_1", version_no=1, spec=spec, status="approved", tools=kept_tools(spec)))
         db.add(Run(id="run_1", task_id="task_1", task_version_id="ver_1", status="queued", dry_run=dry_run))
         db.commit()
 

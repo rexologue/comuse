@@ -5,10 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from common.errors import ApiError
-from common.external_tools import pinned
 from common.schemas.task import TaskSpec
 from common.storage.db import session
 from common.storage.models import Task, TaskVersion
+from common.tools.definition import changed
 from common.utils import new_id, utcnow
 from compiler import task_settings
 
@@ -20,6 +20,7 @@ def create_task(
     cards: list[dict[str, Any]],
     summary: str,
     settings: dict[str, Any],
+    tools: dict[str, dict[str, Any]],
 ) -> TaskVersion:
     with session() as db:
         task = Task(
@@ -40,6 +41,7 @@ def create_task(
             summary=summary,
             created_by="compile",
             session_id=session_id,
+            tools=tools,
         )
         db.add_all([task, version])
         db.commit()
@@ -57,6 +59,7 @@ def add_version(
     summary: str,
     created_by: str,
     session_id: str | None,
+    tools: dict[str, dict[str, Any]],
 ) -> TaskVersion:
     # The change was made on `parent`, maybe minutes ago (the model was thinking): an edit
     # saved meanwhile must not be superseded unseen.
@@ -92,6 +95,7 @@ def add_version(
             summary=summary,
             created_by=created_by,
             session_id=session_id,
+            tools=tools,
         )
         db.add(version)
         db.commit()
@@ -163,6 +167,15 @@ def approve(task_id: str, version_id: str, catalog: dict[str, dict[str, Any]]) -
 
         if version.status != "draft":
             raise ApiError(status_code=409, message=f"Version is {version.status}, only drafts can be approved")
+
+        # The user approves the tools the draft shows: one changed since is another task.
+        stale = changed(version.tools, TaskSpec.model_validate(version.spec).tools(), catalog)
+        if stale:
+            raise ApiError(
+                status_code=409,
+                message=f"После черновика изменились команды: {', '.join(stale)}. Пересоберите задачу с ними и посмотрите ещё раз",
+                details={"tools_changed": stale},
+            )
 
         if task.current_version_id:
             previous = db.get(TaskVersion, task.current_version_id)
@@ -239,19 +252,3 @@ def set_status(task_id: str, action: str) -> Task:
         db.commit()
 
     return task
-
-
-def tool_pins() -> list[dict[str, Any]]:
-    """External tool versions the tasks may still run: their drafts and approved
-    versions, archived tasks aside."""
-    with session() as db:
-        live = {t.id for t in db.query(Task).filter(Task.status != "archived")}
-        specs = [v.spec for v in db.query(TaskVersion).filter(TaskVersion.status.in_(("draft", "approved"))) if v.task_id in live]
-
-    return _pin_list(specs)
-
-
-def _pin_list(specs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    found = {(tool, version) for spec in specs for tool, version in pinned(spec).items()}
-
-    return [{"tool": tool, "version": version} for tool, version in sorted(found)]

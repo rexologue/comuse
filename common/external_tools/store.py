@@ -1,10 +1,11 @@
-"""Versions of external tools: their folders and rows. Only the executor calls this.
+"""Own commands: their folders and rows. Only the executor calls this.
 
-A command has at most one draft, changed in place (its number stays) until a person
-approves it; an approved version never changes again: its files must keep matching the
-hash stored at approval, or it does not run. A person approves the draft they read: the
-approval names its hash, and a draft rewritten since is not approved. Writing, throwing
-away and approving one command's versions go one at a time."""
+A command has its current code (approved, it runs) and at most one draft, changed in
+place until a person approves it. The approved code never changes: its files must keep
+matching the hash stored at approval, or it does not run. A person approves the draft
+they read: the approval names its hash, and a draft rewritten since is not approved;
+the draft then takes the current code's place. Writing, throwing away and approving
+one command's draft go one at a time."""
 
 from __future__ import annotations
 
@@ -13,7 +14,7 @@ import json
 import shutil
 import threading
 from pathlib import Path
-from typing import Any, Collection
+from typing import Any, Collection, Literal
 
 from pydantic import ValidationError
 
@@ -21,16 +22,18 @@ from common.external_tools import NAME_RE, deps
 from common.external_tools.manifest import Manifest
 from common.settings import StorageSettings
 from common.storage.db import session
-from common.storage.models import ExternalTool, ExternalToolVersion
+from common.storage.models import ExternalTool
 from common.tools import ToolError
 from common.tools.settings import tool_group
 from common.utils import new_id, utcnow
 
 
+Which = Literal["current", "draft"]
+
 MANIFEST = "tool.json"
 ENTRY = "main.py"
 
-# What a version may carry besides its manifest and requirements: code and small data.
+# What a command may carry besides its manifest and requirements: code and small data.
 _FILE_SUFFIXES = (".py", ".json", ".txt", ".csv", ".md", ".yaml", ".yml")
 _RESERVED = {MANIFEST, deps.REQUIREMENTS, deps.LOCK}
 _MAX_FILE_BYTES = 1_000_000
@@ -40,14 +43,14 @@ _LOCKS: dict[str, threading.Lock] = {}
 _LOCKS_GUARD = threading.Lock()
 
 
-def version_dir(storage: StorageSettings, name: str, version: int) -> Path:
-    """`telegram.send` v3 → external_tools/telegram/send/3."""
+def tool_dir(storage: StorageSettings, name: str, which: Which) -> Path:
+    """`telegram.send`'s draft → external_tools/telegram/send/draft."""
     group, action = name.split(".", 1)
-    return storage.external_tools_dir / group / action / str(version)
+    return storage.external_tools_dir / group / action / which
 
 
 def files_hash(folder: Path) -> str:
-    """Over every file of the version (path and content), .venv aside: a __pycache__ the
+    """Over every file of the command (path and content), .venv aside: a __pycache__ the
     code left there counts too, so compiled code cannot run in place of what was read."""
     digest = hashlib.sha256()
 
@@ -70,7 +73,7 @@ def save_draft(
     only_own: bool = False,
     builtin_groups: Collection[str] = (),
 ) -> dict[str, Any]:
-    """Write the command's draft (a new version number, or the draft there already is).
+    """Write the command's draft (a new one, or over the draft there already is).
     Everything wrong is named at once, before anything is written. `only_own`: a draft
     someone else wrote (a person, another chat) is not replaced. `builtin_groups`: the
     groups of the built-in commands, which an own command cannot join."""
@@ -78,17 +81,16 @@ def save_draft(
 
     with _lock(name):
         with session() as db:
-            draft = _draft(db, name)
-            number = draft.version if draft else _next_version(db, name)
+            draft = _row(db, name, "draft")
 
         if only_own and draft and (draft.created_by, draft.session_id) != (created_by, session_id):
             who = "другой чат" if draft.created_by == "chat" else "пользователь на странице «Команды»"
             raise ToolError(
-                f"У `{name}` уже есть черновик v{draft.version}: его написал {who}. "
+                f"У `{name}` уже есть черновик: его написал {who}. "
                 "Он не заменён: пусть пользователь одобрит или выбросит его, или выбери другое имя"
             )
 
-        folder = version_dir(storage, name, number)
+        folder = tool_dir(storage, name, "draft")
         # Packages first, aside: when they do not resolve, the draft stays as it was.
         lock_text, packages = _resolve(folder, requirements, storage)
         _clear(folder)
@@ -103,11 +105,7 @@ def save_draft(
         (folder / deps.LOCK).write_text(lock_text, encoding="utf-8")
 
         with session() as db:
-            if db.get(ExternalTool, name) is None:
-                db.add(ExternalTool(name=name))
-
-            row = _draft(db, name) or ExternalToolVersion(id=new_id("etv_"), name=name, version=number)
-            row.status = "draft"
+            row = _row(db, name, "draft") or ExternalTool(id=new_id("etv_"), name=name, status="draft")
             row.hash = files_hash(folder)
             row.manifest = checked.model_dump()
             row.packages = packages
@@ -116,7 +114,7 @@ def save_draft(
             db.add(row)
             db.commit()
 
-    return version_view(storage, name, number)
+    return view(storage, name, "draft")
 
 
 def _resolve(folder: Path, requirements: list[str], storage: StorageSettings) -> tuple[str, list[str]]:
@@ -137,142 +135,106 @@ def _resolve(folder: Path, requirements: list[str], storage: StorageSettings) ->
 
 def drop_draft(storage: StorageSettings, name: str) -> None:
     with _lock(name), session() as db:
-        draft = _draft(db, name)
+        draft = _row(db, name, "draft")
         if draft is None:
             raise ToolError(f"У `{name}` нет черновика")
 
-        shutil.rmtree(version_dir(storage, name, draft.version), ignore_errors=True)
+        shutil.rmtree(tool_dir(storage, name, "draft"), ignore_errors=True)
         db.delete(draft)
-
-        tool = db.get(ExternalTool, name)
-        if tool is not None and tool.current_version is None:
-            db.delete(tool)
-
         db.commit()
 
 
-def approve(storage: StorageSettings, name: str, version: int, seen_hash: str) -> dict[str, Any]:
-    """Freeze the draft the person read (`seen_hash`) and make it current. Its .venv is
-    built anew: nothing a try of the draft left there runs in the approved version."""
+def approve(storage: StorageSettings, name: str, seen_hash: str) -> dict[str, Any]:
+    """The draft the person read (`seen_hash`) becomes the current code. Its .venv is
+    built anew: nothing a try of the draft left there runs in the approved code. Tasks
+    that call the command stop until their user approves the new code for them."""
     with _lock(name):
         with session() as db:
-            row = _row(db, name, version)
+            row = _row(db, name, "draft")
 
-        if row.status != "draft":
-            raise ToolError(f"`{name}` v{version} уже одобрена")
+        if row is None:
+            raise ToolError(f"У `{name}` нет черновика")
 
         if row.hash != seen_hash:
             raise ToolError("Черновик изменился, пока вы его читали: посмотрите его ещё раз")
 
-        folder = version_dir(storage, name, version)
-        if files_hash(folder) != row.hash:
+        draft, current = tool_dir(storage, name, "draft"), tool_dir(storage, name, "current")
+        if files_hash(draft) != row.hash:
             raise ToolError("Файлы черновика изменились после сохранения: сохраните его заново и проверьте ещё раз")
 
-        deps.ensure_venv(folder, storage.uv_cache_dir, fresh=True)
+        shutil.rmtree(current, ignore_errors=True)
+        draft.rename(current)
+        deps.ensure_venv(current, storage.uv_cache_dir, fresh=True)
 
         with session() as db:
-            row = _row(db, name, version)
-            row.status = "approved"
+            db.query(ExternalTool).filter_by(name=name, status="current").delete()
+
+            row = _row(db, name, "draft")
+            row.status = "current"
             row.approved_at = utcnow()
-
-            tool = db.get(ExternalTool, name)
-            tool.current_version = version
             db.commit()
 
-    return version_view(storage, name, version)
+    return view(storage, name, "current")
 
 
-def sweep_unused(storage: StorageSettings, needed: set[tuple[str, int]]) -> int:
-    """Delete approved versions nothing runs any more: not current, and not in `needed`
-    ({(name, version)} that tasks and unfinished runs pin: their owners say which)."""
+def current_rows() -> list[ExternalTool]:
+    """The approved code of every command (for the executor's registry)."""
     with session() as db:
-        current = {(t.name, t.current_version) for t in db.query(ExternalTool)}
-        old = [
-            row for row in db.query(ExternalToolVersion).filter_by(status="approved")
-            if (row.name, row.version) not in current
-        ]
-
-    used = set(needed)
-    removed = 0
-
-    for row in old:
-        if (row.name, row.version) in used:
-            continue
-
-        shutil.rmtree(version_dir(storage, row.name, row.version), ignore_errors=True)
-
-        with session() as db:
-            db.query(ExternalToolVersion).filter_by(id=row.id).delete()
-            db.commit()
-
-        removed += 1
-
-    return removed
+        return db.query(ExternalTool).filter_by(status="current").all()
 
 
-def current_versions() -> list[ExternalToolVersion]:
-    """The approved version each command runs now (for the executor's registry)."""
+def draft_row(name: str) -> ExternalTool | None:
     with session() as db:
-        tools = {t.name: t.current_version for t in db.query(ExternalTool) if t.current_version is not None}
-        rows = db.query(ExternalToolVersion).filter(ExternalToolVersion.name.in_(list(tools))).all()
-
-    return [row for row in rows if tools[row.name] == row.version]
-
-
-def approved_version(name: str, version: int) -> ExternalToolVersion | None:
-    with session() as db:
-        return db.query(ExternalToolVersion).filter_by(name=name, version=version, status="approved").one_or_none()
+        return _row(db, name, "draft")
 
 
 def tool_list() -> list[dict[str, Any]]:
     with session() as db:
-        tools = db.query(ExternalTool).order_by(ExternalTool.name).all()
-        rows = db.query(ExternalToolVersion).order_by(ExternalToolVersion.version).all()
+        rows = db.query(ExternalTool).order_by(ExternalTool.name).all()
 
-    by_name: dict[str, list[ExternalToolVersion]] = {}
+    by_name: dict[str, dict[str, ExternalTool]] = {}
     for row in rows:
-        by_name.setdefault(row.name, []).append(row)
+        by_name.setdefault(row.name, {})[row.status] = row
 
     return [
         {
-            "name": tool.name,
-            "title": (_current(by_name.get(tool.name, []), tool.current_version) or {}).get("title"),
-            "current_version": tool.current_version,
-            "draft_version": next((r.version for r in by_name.get(tool.name, []) if r.status == "draft"), None),
-            "versions": [_summary(r) for r in by_name.get(tool.name, [])],
+            "name": name,
+            "title": ((found.get("current") or found["draft"]).manifest or {}).get("title"),
+            "current": _summary(found["current"]) if "current" in found else None,
+            "draft": _summary(found["draft"]) if "draft" in found else None,
         }
-        for tool in tools
+        for name, found in by_name.items()
     ]
 
 
-def version_view(storage: StorageSettings, name: str, version: int, *, files: bool = False) -> dict[str, Any]:
+def view(storage: StorageSettings, name: str, which: Which, *, files: bool = False) -> dict[str, Any]:
     with session() as db:
-        row = _row(db, name, version)
-        tool = db.get(ExternalTool, name)
+        row = _row(db, name, which)
 
-    view = {
+    if row is None:
+        raise ToolError(f"У `{name}` нет {'черновика' if which == 'draft' else 'одобренного кода'}")
+
+    found = {
         **_summary(row),
         "name": name,
-        "current": tool is not None and tool.current_version == version,
         "manifest": row.manifest,
         "packages": row.packages,
-        "hash": row.hash,
     }
 
     if files:
-        # The code apart from the version's own bookkeeping (tool.json is `manifest`, the
+        # The code apart from the command's own bookkeeping (tool.json is `manifest`, the
         # lock is `packages`): whoever shows or edits it need not know the folder's layout.
-        folder = version_dir(storage, name, version)
+        folder = tool_dir(storage, name, which)
         every = {
             path.relative_to(folder).as_posix(): path.read_text(encoding="utf-8", errors="replace")
             for path in sorted(folder.rglob("*"))
             if path.is_file() and not _ignored(path.relative_to(folder))
         }
-        view["entry"] = ENTRY
-        view["files"] = {path: text for path, text in every.items() if path not in _RESERVED}
-        view["requirements"] = [line.strip() for line in every.get(deps.REQUIREMENTS, "").splitlines() if line.strip()]
+        found["entry"] = ENTRY
+        found["files"] = {path: text for path, text in every.items() if path not in _RESERVED}
+        found["requirements"] = [line.strip() for line in every.get(deps.REQUIREMENTS, "").splitlines() if line.strip()]
 
-    return view
+    return found
 
 
 # -----------------------------
@@ -356,37 +318,17 @@ def _clear(folder: Path) -> None:
         shutil.rmtree(path) if path.is_dir() else path.unlink()
 
 
-def _draft(db, name: str) -> ExternalToolVersion | None:
-    return db.query(ExternalToolVersion).filter_by(name=name, status="draft").one_or_none()
+def _row(db, name: str, which: Which) -> ExternalTool | None:
+    return db.query(ExternalTool).filter_by(name=name, status=which).one_or_none()
 
 
-def _next_version(db, name: str) -> int:
-    numbers = [row.version for row in db.query(ExternalToolVersion).filter_by(name=name)]
-
-    return max(numbers, default=0) + 1
-
-
-def _row(db, name: str, version: int) -> ExternalToolVersion:
-    row = db.query(ExternalToolVersion).filter_by(name=name, version=version).one_or_none()
-    if row is None:
-        raise ToolError(f"Нет версии v{version} у `{name}`")
-
-    return row
-
-
-def _current(rows: list[ExternalToolVersion], version: int | None) -> dict[str, Any] | None:
-    row = next((r for r in rows if r.version == version), None) or (rows[-1] if rows else None)
-
-    return row.manifest if row else None
-
-
-def _summary(row: ExternalToolVersion) -> dict[str, Any]:
+def _summary(row: ExternalTool) -> dict[str, Any]:
     return {
-        "version": row.version,
         "status": row.status,
         "title": (row.manifest or {}).get("title"),
+        "hash": row.hash,
         "created_by": row.created_by,
-        # The chat that wrote the version: its card is shown there.
+        # The chat that wrote the draft: its card is shown there.
         "session_id": row.session_id,
         "created_at": row.created_at.isoformat(),
         "approved_at": row.approved_at.isoformat() if row.approved_at else None,

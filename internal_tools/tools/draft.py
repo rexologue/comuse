@@ -31,7 +31,6 @@ class Input(ToolInput):
 
 class Output(ToolOutput):
     tool: str
-    version: int
     status: str
     # The exact packages the lock resolved, transitive ones too: the user sees them.
     packages: list[str]
@@ -45,7 +44,7 @@ class Output(ToolOutput):
     description=(
         "Write or rewrite the draft of an own command (group.action, e.g. telegram.send): manifest, Python files, packages. "
         "Nothing runs: the draft is checked (schemas, syntax, packages) and waits for the user to approve it. "
-        "Every problem comes back at once; fix them and call again — the draft keeps its version number. "
+        "Every problem comes back at once; fix them and call again: the same draft is rewritten. "
         "A draft written by the user or another chat is never replaced."
     ),
     confirm=False,
@@ -79,7 +78,6 @@ async def draft(inp: Input, ctx: ToolContext) -> Output:
 
     return Output(
         tool=view["name"],
-        version=view["version"],
         status=view["status"],
         packages=view["packages"],
         next=(

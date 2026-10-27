@@ -1,4 +1,4 @@
-"""tool.json: what the agent, the compiler and the executor know about a version."""
+"""tool.json: what the agent, the compiler and the executor know about a command."""
 
 from __future__ import annotations
 

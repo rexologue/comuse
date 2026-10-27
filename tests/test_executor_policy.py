@@ -46,8 +46,11 @@ def test_spec_has_no_approval_section():
 
 
 class _Registry:
-    def get(self, name, version=None):
+    def get(self, name):
         return SPECS.get(name)
+
+    def manifest(self, name):
+        return SPECS[name].manifest() if name in SPECS else None
 
 
 def _runtime(settings):
@@ -100,7 +103,7 @@ async def test_what_a_tool_said_before_failing_reaches_the_caller(settings, monk
         raise ToolError("в четвёртом нет колонки «Сумма»")
 
     runtime = _runtime(settings)
-    monkeypatch.setattr(runtime.registry, "get", lambda name, version=None: replace(SPECS["data.map_rows"], fn=fails))
+    monkeypatch.setattr(runtime.registry, "get", lambda name: replace(SPECS["data.map_rows"], fn=fails))
 
     response = await runtime.execute(ExecuteRequest(tool="data.map_rows", args={"rows": [], "fields": {}}, context=ExecContext(mode="run")))
 

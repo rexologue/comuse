@@ -8,8 +8,7 @@ from pydantic import Field
 from common.external_tools import store
 from common.external_tools.spec import ExternalToolSpec
 from common.settings import StorageSettings
-from common.storage.db import session
-from common.storage.models import ExternalToolVersion
+from common.storage.models import ExternalTool
 from common.tools import ToolContext, ToolError, ToolInput, ToolOutput, tool
 from internal_tools.tools.common import chat_only
 
@@ -17,11 +16,9 @@ from internal_tools.tools.common import chat_only
 class Input(ToolInput):
     name: str = Field(description="Команда: группа.действие, например telegram.send")
     args: dict[str, Any] = Field(default_factory=dict, description="Аргументы, как их получит run(args, ctx)")
-    version: int | None = Field(default=None, description="Версия; по умолчанию черновик")
 
 
 class Output(ToolOutput):
-    version: int
     output: Any
 
 
@@ -30,7 +27,7 @@ class Output(ToolOutput):
     title="Попробовать свою команду",
     card="Попробовать «{name}» с аргументами {args}",
     description=(
-        "Run a draft (or another version) of an own command once, on real arguments, to see it work before "
+        "Run the draft of an own command once, on real arguments, to see it work before "
         "the user approves it. Installs its packages on first use. Asks the user every time: the code is not approved yet."
     ),
     confirm="always",
@@ -41,7 +38,7 @@ async def trial(inp: Input, ctx: ToolContext) -> Output:
     chat_only(ctx)
     name = inp.name.strip()
 
-    row = await asyncio.to_thread(_version, ctx.settings.storage, name, inp.version)
+    row = await asyncio.to_thread(_draft, ctx.settings.storage, name)
     spec = ExternalToolSpec.of(row, ctx.settings.storage)
 
     try:
@@ -50,20 +47,16 @@ async def trial(inp: Input, ctx: ToolContext) -> Output:
     except ToolError as e:
         raise ToolError(f"Аргументы не по схеме черновика: {e}") from e
 
-    return Output(version=row.version, output=await spec.call(args, ctx))
+    return Output(output=await spec.call(args, ctx))
 
 
-def _version(storage: StorageSettings, name: str, version: int | None) -> ExternalToolVersion:
-    with session() as db:
-        query = db.query(ExternalToolVersion).filter_by(name=name)
-        row = query.filter_by(version=version).one_or_none() if version else query.filter_by(status="draft").one_or_none()
-
+def _draft(storage: StorageSettings, name: str) -> ExternalTool:
+    row = store.draft_row(name)
     if row is None:
-        what = f"версии v{version}" if version else "черновика"
-        raise ToolError(f"У `{name}` нет {what}: сначала tools.draft")
+        raise ToolError(f"У `{name}` нет черновика: сначала tools.draft")
 
     # Files written since the draft was saved would run unchecked: save it again instead.
-    if store.files_hash(store.version_dir(storage, name, row.version)) != row.hash:
+    if store.files_hash(store.tool_dir(storage, name, "draft")) != row.hash:
         raise ToolError("Файлы черновика изменились после сохранения: сохрани его заново (tools.draft)")
 
     return row

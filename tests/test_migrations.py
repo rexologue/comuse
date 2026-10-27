@@ -83,7 +83,7 @@ def test_old_own_commands_get_a_group_and_their_folders_move(env):
     (storage.external_tools_dir / "parse_date" / "1").mkdir(parents=True)
     (storage.external_tools_dir / "parse_date" / "1" / "main.py").write_text("")
 
-    migrate.upgrade(engine, storage)
+    migrate._alembic(engine, command.upgrade, "0006", storage)
 
     with engine.connect() as connection:
         assert connection.execute(text("SELECT name FROM external_tools")).scalar() == "ext.parse_date"
@@ -112,3 +112,48 @@ def test_task_settings_move_to_changes_per_tool(env):
 
     assert json.loads(rows["task_on"]) == {"mail": {"mail.send": {"send_directly": {"all": True}}}}
     assert json.loads(rows["task_default"]) == {}
+
+
+def test_versions_give_way_to_current_code_and_kept_definitions(env):
+    """The current version becomes the current code, the draft stays, older ones go; a
+    task version drops tool_version and keeps no definition yet (it is looked at once)."""
+    storage = Settings.from_env("main").storage
+    engine = init_engine(storage)
+    migrate._alembic(engine, command.upgrade, "0007")
+
+    with engine.begin() as connection:
+        connection.execute(text("INSERT INTO external_tools (name, current_version, created_at, updated_at) VALUES ('ext.parse_date', 2, '2026-01-01', '2026-01-01')"))
+        for number, status in ((1, "approved"), (2, "approved"), (3, "draft")):
+            connection.execute(text(
+                "INSERT INTO external_tool_versions (id, name, version, status, hash, manifest, packages, created_by, created_at, updated_at) "
+                "VALUES (:id, 'ext.parse_date', :n, :status, :hash, '{}', '[]', 'user', '2026-01-01', '2026-01-01')"
+            ), {"id": f"etv_{number}", "n": number, "status": status, "hash": f"h{number}"})
+
+        spec = {"title": "t", "steps": [{"id": "a", "tool": "ext.parse_date", "tool_version": 2, "args": {}},
+                                        {"id": "b", "foreach": "{{ a.output }}", "steps": [{"id": "c", "tool": "fs.list", "args": {}}]}]}
+        cards = [{"id": "a", "tool": "ext.parse_date", "version": 2, "children": []}]
+        connection.execute(text(
+            "INSERT INTO task_versions (id, task_id, version_no, spec, status, summary, cards, created_by, created_at) "
+            "VALUES ('ver_1', 'task_1', 1, :spec, 'approved', '', :cards, 'compile', '2026-01-01')"
+        ), {"spec": json.dumps(spec), "cards": json.dumps(cards)})
+
+    for number in (1, 2, 3):
+        folder = storage.external_tools_dir / "ext" / "parse_date" / str(number)
+        (folder / ".venv").mkdir(parents=True)
+        (folder / "main.py").write_text(f"# v{number}")
+
+    migrate.upgrade(engine, storage)
+
+    with engine.connect() as connection:
+        rows = connection.execute(text("SELECT status, hash FROM external_tools ORDER BY status")).all()
+        spec, cards, tools = connection.execute(text("SELECT spec, cards, tools FROM task_versions")).one()
+
+    assert [tuple(row) for row in rows] == [("current", "h2"), ("draft", "h3")]
+    assert "tool_version" not in json.loads(spec)["steps"][0]
+    assert "version" not in json.loads(cards)[0]
+    assert json.loads(tools) == {"ext.parse_date": {}, "fs.list": {}}
+
+    folder = storage.external_tools_dir / "ext" / "parse_date"
+    assert sorted(p.name for p in folder.iterdir()) == ["current", "draft"]
+    assert (folder / "current" / "main.py").read_text() == "# v2"
+    assert not (folder / "current" / ".venv").exists()

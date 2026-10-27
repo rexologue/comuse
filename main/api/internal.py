@@ -48,17 +48,17 @@ async def publish(body: EventBody, request: Request):
     return request.app.state.bus.publish(body.type, body.payload)
 
 
-@router.get("/internal/tool-pins", summary="External tool versions tasks and unfinished runs still need")
-async def tool_pins(request: Request):
-    """Asked by the executor before it deletes old versions: tasks are the compiler's,
-    runs the runner's, and each says what it pins."""
-    registry = request.app.state.registry
-    found: list[dict[str, Any]] = []
+class ToolsChangedBody(BaseModel):
+    task_id: str
+    run_id: str
+    title: str
+    tools: list[str]
+    dry_run: bool = False
 
-    for service in ("compiler", "runner"):
-        found += (await registry.client(service).get("/tool-pins"))["pins"]
 
-    return {"pins": found}
+@router.post("/internal/tools-changed", summary="A run was refused: tools of its task are not the ones it was approved with")
+async def tools_changed(body: ToolsChangedBody, request: Request):
+    return await request.app.state.orchestrator.tools_changed(**body.model_dump())
 
 
 @router.api_route("/executor/{path:path}", methods=METHODS, summary="Proxy to executor")

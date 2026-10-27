@@ -22,9 +22,9 @@ class ExecContext(BaseModel):
 
 class ExecuteRequest(BaseModel):
     tool: str
-    # An own command: the approved version to run, as the task step pins it; None — the
-    # current one (the chat). Built-in tools have no versions.
-    version: int | None = None
+    # The hash of the tool's definition the task version was approved with: the call is
+    # refused if the tool is another now. None — whatever it is (the chat).
+    hash: str | None = None
     args: dict[str, Any] = Field(default_factory=dict)
     context: ExecContext = Field(default_factory=ExecContext)
 
@@ -35,8 +35,8 @@ class ExecuteResponse(BaseModel):
     error: str | None = None
     artifacts: list[str] = Field(default_factory=list)
     duration_ms: int = 0
-    # The version of an external tool (ext.*) that ran: the chat trace and run log keep it.
-    version: int | None = None
+    # The tool is not the one the task was approved with (`hash`): nothing ran.
+    tool_changed: bool = False
     # The tool did not finish in time: what it did meanwhile is unknown, so it is not retried.
     timed_out: bool = False
     # For the caller's log (the executor keeps none): a crash's traceback, what the

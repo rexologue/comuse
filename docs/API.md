@@ -67,14 +67,14 @@
 | Маршрут | Что делает |
 | --- | --- |
 | `GET /tasks` | Задачи, кроме архивных, с карточками шагов активной версии и расписанием словами (`schedule`) |
-| `GET /tasks/{id}` | Задача, её активная версия и список всех версий |
+| `GET /tasks/{id}` | Задача, её активная версия, список всех версий и `tool_changes` — команды, изменившиеся после одобрения (`[{tool, fields}]`) |
 | `GET /tasks/{id}/versions/{v}` | Одна версия: сценарий, карточки, правка, кем и из какого чата создана |
 | `GET /tasks/{id}/versions/{v}/diff` | Что изменилось относительно предыдущей версии |
 | `POST /compiler/compile` | Собрать задачу из чата → черновик и одобрение |
 | `POST /compiler/patch` | Правка словами (LLM) → черновик новой версии, diff и одобрение |
 | `POST /tasks/{id}/versions` | Правка вручную без LLM → черновик новой версии, diff и одобрение |
-| `GET /tasks?tool=telegram.send` | Задачи, активная версия которых (или черновик до первого одобрения) использует эту команду, с `tool_version` |
-| `POST /tasks/{id}/tool-versions` | `{"tool": "telegram.send", "version": 3}` (без `version` — текущая) → черновик, где шаги этой команды на новой версии, diff и одобрение; шаги не подходят к её схемам — `422` со списком |
+| `GET /tasks?tool=telegram.send` | Задачи, активная версия которых (или черновик до первого одобрения) вызывает эту команду |
+| `POST /tasks/{id}/tools/refresh` | Те же шаги с командами, как они есть сейчас → черновик, diff по командам и одобрение; команды не менялись или шаги не подходят к новым схемам — `422` (см. [TASKS.md](TASKS.md#команды-задачи)) |
 | `POST /tasks/{id}/versions/{v}/approve` | Сделать версию активной |
 | `POST /tasks/{id}/versions/{v}/reject` | Отклонить черновик |
 | `POST /tasks/{id}/pause`, `/resume`, `/archive` | Приостановить, возобновить, убрать в архив |
@@ -176,9 +176,9 @@ summary, cards, created_at}`. Одобрить или отклонить —
 
 | Маршрут | Что делает |
 | --- | --- |
-| `GET /tools` | Каталог команд: манифесты со схемами |
-| `GET /tools/{name}` | Манифест одной команды; `?version=N` — одобренная версия своей команды |
-| `GET /external-tools`, `PUT /external-tools/{name}/draft`, … | Свои команды: черновики, версии, одобрение — см. [EXTERNAL_TOOLS.md](EXTERNAL_TOOLS.md#api) |
+| `GET /tools` | Каталог команд: манифесты со схемами и хешем определения (`hash`) |
+| `GET /tools/{name}` | Манифест одной команды |
+| `GET /external-tools`, `PUT /external-tools/{name}/draft`, … | Свои команды: одобренный код, черновик, одобрение — см. [EXTERNAL_TOOLS.md](EXTERNAL_TOOLS.md#api) |
 | `GET /accounts` | Аккаунты без паролей: `id`, `name`, `kind`, `config` |
 | `GET /accounts/kinds` | Виды аккаунтов, которые объявили группы команд: поля для формы, название секрета, пресеты |
 | `POST /accounts` | Создать или изменить аккаунт (по имени); без `secret` остаётся сохранённый пароль |
@@ -244,6 +244,7 @@ summary, cards, created_at}`. Одобрить или отклонить —
 | `task.draft` | появился черновик версии, он ждёт решения (`task_id`, `version_id`, `session_id`, `title`) |
 | `task.approved`, `task.rejected` | версия одобрена или отклонена |
 | `task.pause`, `task.resume`, `task.archive` | задача приостановлена, возобновлена, в архиве |
+| `task.tools_changed` | запуск не начат: команды задачи не те, с которыми её одобрили (`task_id`, `run_id`, `tools`, `dry_run`) |
 | `run.started`, `run.finished` | запуск начался или закончился (`status`, `error`, `dry_run`) |
 | `notify` | запуск сообщил что-то пользователю |
 
@@ -258,7 +259,7 @@ summary, cards, created_at}`. Одобрить или отклонить —
 | `POST /internal/register {name, url}` | все сервисы | Сообщить свой адрес |
 | `POST /internal/events {type, payload}` | runner, agent-loop | Опубликовать событие |
 | `POST /internal/notify {task_id, run_id, title, message}` | runner | Доставить сообщение запуска в чат задачи |
-| `GET /internal/tool-pins` | executor | Версии своих команд, которые ещё нужны: main спрашивает компилятор (задачи) и runner (незаконченные запуски) |
+| `POST /internal/tools-changed {task_id, run_id, title, tools, dry_run}` | runner | Запуск не начат или остановлен: команды задачи изменились. main ставит задачу на паузу и пишет в её чат (пробный — только событие) |
 | `POST /executor/execute` | agent-loop, runner | Выполнить команду (формат — в [TOOLS.md](TOOLS.md#вызов-команды)) |
 | `/runner/*` | scheduler | Запустить задачу по cron |
 | `/scheduler/*` | — | Прокси к scheduler: `POST /reload {task_id?}` — перечитать задачи, `GET /jobs` (main сам зовёт scheduler напрямую после одобрения и смены статуса) |

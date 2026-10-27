@@ -7,8 +7,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from common import tunables
-from common.errors import ApiError
-from common.external_tools import store as external_tools
 from common.retention import sweep_forever
 from common.secrets import SecretStore
 from common.tools.areas import data_areas
@@ -22,22 +20,6 @@ from executor.runtime import ExecutorRuntime
 
 
 log = logging.getLogger("executor")
-
-
-async def _sweep_tool_versions(storage, registry: ToolRegistry, main) -> int:
-    # Only with the owners' word: without it nothing is deleted this time.
-    try:
-        pins = (await main.get("/internal/tool-pins"))["pins"]
-
-    except ApiError as e:
-        log.info("old external tool versions not swept: %s", e.message)
-        return 0
-
-    removed = await asyncio.to_thread(external_tools.sweep_unused, storage, {(p["tool"], p["version"]) for p in pins})
-    if removed:
-        registry.load()
-
-    return removed
 
 
 @asynccontextmanager
@@ -61,7 +43,6 @@ async def lifespan(app: FastAPI):
 
     sweepers = [
         asyncio.create_task(sweep_forever("output folders", lambda: sweep_outputs(settings.storage))),
-        asyncio.create_task(sweep_forever("external tool versions", lambda: _sweep_tool_versions(settings.storage, registry, app.state.main))),
     ]
 
     try:

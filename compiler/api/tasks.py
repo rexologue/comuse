@@ -26,17 +26,6 @@ class PatchBody(BaseModel):
     session_id: str | None = None
 
 
-class ToolVersionBody(BaseModel):
-    tool: str
-    # None: the tool's current approved version.
-    version: int | None = None
-
-
-@router.get("/tool-pins", summary="External tool versions the tasks may still run")
-async def tool_pins():
-    return {"pins": store.tool_pins()}
-
-
 @router.post("/compile", summary="Chat session → draft task (nothing runs)")
 async def compile_task(body: CompileBody, request: Request):
     return await request.app.state.compiler.compile(body.session_id, title=body.title, hint=body.hint)
@@ -59,9 +48,9 @@ async def edit_task(task_id: str, body: EditBody, request: Request):
     return await request.app.state.compiler.edit(task_id, spec=body.spec, ops=body.ops, summary=body.summary)
 
 
-@router.post("/tasks/{task_id}/tool-versions", summary="Move the task's steps to another version of an external tool → draft version")
-async def move_tool_version(task_id: str, body: ToolVersionBody, request: Request):
-    return await request.app.state.compiler.move_to_tool_version(task_id, body.tool, body.version)
+@router.post("/tasks/{task_id}/tools/refresh", summary="The same steps with the tools as they are now → draft version and diff")
+async def refresh_tools(task_id: str, request: Request):
+    return await request.app.state.compiler.refresh_tools(task_id)
 
 
 @router.post("/validate", summary="Check a spec against the tool catalog")
@@ -84,7 +73,8 @@ async def diff(task_id: str, version_id: str, request: Request):
 
 @router.post("/tasks/{task_id}/versions/{version_id}/approve", summary="Activate a draft version")
 async def approve(task_id: str, version_id: str, request: Request):
-    task = store.approve(task_id, version_id, await request.app.state.compiler.catalog())
+    # Fresh: the tools are checked as they are now, not as a minute ago.
+    task = store.approve(task_id, version_id, await request.app.state.compiler.catalog(fresh=True))
 
     return {"task_id": task.id, "status": task.status, "current_version_id": task.current_version_id}
 

@@ -1,6 +1,6 @@
 // Commands the agent and tasks use: the user's own (group.action, docs/EXTERNAL_TOOLS.md) with
-// their versions, code, packages and the tasks on each version, and the built-in ones.
-// A draft — written here or by the chat — is approved here too; only a person approves.
+// their approved code and draft, packages and the tasks that call them, and the built-in
+// ones. A draft — written here or by the chat — is approved here too; only a person approves.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, Pencil, Plus } from "lucide-react";
@@ -8,8 +8,8 @@ import { useState } from "react";
 import { Link } from "react-router";
 
 import { api } from "@/api/client";
-import { keys, useExternalTools, useExternalToolVersion, useTools } from "@/api/queries";
-import type { ExternalTool, ExternalToolVersion, TaskSummary, ToolManifest } from "@/api/types";
+import { keys, useExternalToolCode, useExternalTools, useTools } from "@/api/queries";
+import type { CodeState, ExternalTool, ExternalToolCode, TaskSummary, ToolManifest } from "@/api/types";
 import { DraftDecision } from "@/commands/DraftDecision";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -27,7 +27,7 @@ export function Commands() {
     <div className="flex flex-col gap-8">
       <Section
         title="Свои команды"
-        description="Ваши скрипты и те, что написал чат, в своих группах: telegram.send, reports.parse. Каждая версия — свой код и свои пакеты; задачи работают на той версии, с которой их одобрили."
+        description="Ваши скрипты и те, что написал чат, в своих группах: telegram.send, reports.parse. У команды есть одобренный код и, может быть, черновик. Задача помнит код, с которым её одобрили: после замены она ждёт вашего решения."
       >
         <div className="flex flex-col gap-2">
           {tools.data?.map((tool) => <OwnCommand key={tool.name} tool={tool} />)}
@@ -47,13 +47,18 @@ export function Commands() {
   );
 }
 
+const STATES: { which: CodeState; label: string }[] = [
+  { which: "current", label: "одобренный код" },
+  { which: "draft", label: "черновик" },
+];
+
 function OwnCommand({ tool }: { tool: ExternalTool }) {
-  const [open, setOpen] = useState(tool.draft_version !== null);
-  const fallback = tool.draft_version ?? tool.current_version ?? tool.versions.at(-1)?.version ?? 1;
-  const [picked, setPicked] = useState<number>(fallback);
+  const [open, setOpen] = useState(tool.draft !== null);
+  const fallback: CodeState = tool.draft ? "draft" : "current";
+  const [picked, setPicked] = useState<CodeState>(fallback);
   const [editing, setEditing] = useState(false);
-  // A draft thrown away (or swept) is no longer there to show.
-  const shown = tool.versions.some((version) => version.version === picked) ? picked : fallback;
+  // A draft thrown away (or approved) is no longer there to show.
+  const shown = tool[picked] ? picked : fallback;
 
   return (
     <div className="flex flex-col gap-3 rounded-lg border p-3">
@@ -62,21 +67,18 @@ function OwnCommand({ tool }: { tool: ExternalTool }) {
         <span className="font-medium">{tool.title ?? tool.name}</span>
         <span className="text-sm text-muted-foreground">{tool.name}</span>
         <span className="ml-auto flex gap-1">
-          {tool.current_version && <Badge variant="secondary">v{tool.current_version}</Badge>}
-          {tool.draft_version && <Badge variant="outline">черновик v{tool.draft_version}</Badge>}
+          {tool.current && <Badge variant="secondary">одобрена</Badge>}
+          {tool.draft && <Badge variant="outline">черновик</Badge>}
         </span>
       </button>
 
       {open && (
         <>
           <div className="flex flex-wrap gap-1">
-            {tool.versions.map((version) => (
-              <Button key={version.version} size="sm" variant={version.version === shown ? "secondary" : "ghost"} onClick={() => setPicked(version.version)}>
-                v{version.version}
-                <span className="text-xs text-muted-foreground">
-                  {version.status === "draft" ? "черновик" : version.version === tool.current_version ? "текущая" : "одобрена"} ·{" "}
-                  {version.created_by === "chat" ? "чат" : "вы"}
-                </span>
+            {STATES.filter(({ which }) => tool[which]).map(({ which, label }) => (
+              <Button key={which} size="sm" variant={which === shown ? "secondary" : "ghost"} onClick={() => setPicked(which)}>
+                {label}
+                <span className="text-xs text-muted-foreground">{tool[which]?.created_by === "chat" ? "чат" : "вы"}</span>
               </Button>
             ))}
           </div>
@@ -86,11 +88,11 @@ function OwnCommand({ tool }: { tool: ExternalTool }) {
               base={shown}
               onDone={(saved) => {
                 setEditing(false);
-                if (saved) setPicked(saved);
+                if (saved) setPicked("draft");
               }}
             />
           ) : (
-            <VersionDetail tool={tool} version={shown} onEdit={() => setEditing(true)} />
+            <CodeDetail tool={tool} which={shown} onEdit={() => setEditing(true)} />
           )}
           <TasksOn tool={tool} />
         </>
@@ -99,20 +101,20 @@ function OwnCommand({ tool }: { tool: ExternalTool }) {
   );
 }
 
-function VersionDetail({ tool, version, onEdit }: { tool: ExternalTool; version: number; onEdit: () => void }) {
-  const detail = useExternalToolVersion(tool.name, version);
+function CodeDetail({ tool, which, onEdit }: { tool: ExternalTool; which: CodeState; onEdit: () => void }) {
+  const detail = useExternalToolCode(tool.name, which);
 
   if (detail.isError) return <p className="text-sm text-destructive">{detail.error.message}</p>;
   if (!detail.data) return <p className="text-sm text-muted-foreground">Загрузка…</p>;
 
-  const data: ExternalToolVersion = detail.data;
+  const data: ExternalToolCode = detail.data;
 
   return (
     <div className="flex flex-col gap-3">
       <p className="text-sm">{data.manifest.description}</p>
       <div className="text-xs text-muted-foreground">
-        Создана {dateTime(data.created_at)}
-        {data.approved_at && ` · одобрена ${dateTime(data.approved_at)}`} · спрашивать перед вызовом:{" "}
+        Записан {dateTime(data.created_at)}
+        {data.approved_at && ` · одобрен ${dateTime(data.approved_at)}`} · спрашивать перед вызовом:{" "}
         {data.manifest.confirm === "always" ? "каждый раз" : data.manifest.confirm ? "да" : "нет"}
       </div>
       <div className="text-sm">
@@ -127,9 +129,9 @@ function VersionDetail({ tool, version, onEdit }: { tool: ExternalTool; version:
         </details>
       ))}
 
-      <DraftDecision version={data}>
+      <DraftDecision code={data}>
         <Button size="sm" variant="ghost" onClick={onEdit}>
-          <Pencil /> {data.status === "draft" ? "Править черновик" : "Новая версия на основе этой"}
+          <Pencil /> {data.status === "draft" ? "Править черновик" : "Черновик на основе этого кода"}
         </Button>
       </DraftDecision>
     </div>
@@ -139,7 +141,7 @@ function VersionDetail({ tool, version, onEdit }: { tool: ExternalTool; version:
 function TasksOn({ tool }: { tool: ExternalTool }) {
   const tasks = useQuery({
     queryKey: ["tasks", "tool", tool.name],
-    queryFn: async () => (await api<{ tasks: (TaskSummary & { tool_version: number })[] }>(`/tasks?tool=${encodeURIComponent(tool.name)}`)).tasks,
+    queryFn: async () => (await api<{ tasks: TaskSummary[] }>(`/tasks?tool=${encodeURIComponent(tool.name)}`)).tasks,
   });
 
   if (!tasks.data?.length) return <p className="text-xs text-muted-foreground">Задач с этой командой нет.</p>;
@@ -154,10 +156,6 @@ function TasksOn({ tool }: { tool: ExternalTool }) {
           className="flex items-center gap-2 rounded-md px-1 py-0.5 hover:bg-accent"
         >
           <span className="truncate">{task.title}</span>
-          <Badge variant={task.tool_version === tool.current_version ? "secondary" : "outline"} className="ml-auto">
-            v{task.tool_version}
-            {tool.current_version && task.tool_version < tool.current_version ? ` · есть v${tool.current_version}` : ""}
-          </Badge>
         </Link>
       ))}
     </div>
@@ -175,33 +173,31 @@ def run(args, ctx):
     return {"result": "…"}
 `;
 
-// A new command, or a draft of the next version on top of `base` (its files and
-// manifest as the starting point).
-function CommandForm({ tool, base, onDone }: { tool?: ExternalTool; base?: number; onDone: (saved?: number) => void }) {
+// A new command, or its draft on top of `base` (its files and manifest as the starting point).
+function CommandForm({ tool, base, onDone }: { tool?: ExternalTool; base?: CodeState; onDone: (saved?: boolean) => void }) {
   const queryClient = useQueryClient();
   const tools = useExternalTools();
-  const source = useExternalToolVersion(tool?.name ?? "", base ?? 0, tool !== undefined && base !== undefined);
+  const source = useExternalToolCode(tool?.name ?? "", base ?? "current", tool !== undefined && base !== undefined);
   const { busy, error, setError, run } = useAction();
 
   if (tool && !source.data) return <p className="text-sm text-muted-foreground">Загрузка…</p>;
 
   // A command has one draft, saved in place: saving here replaces whatever draft it has.
-  const replaces = (name: string) => (tool ?? tools.data?.find((known) => known.name === name))?.draft_version ?? null;
+  const hasDraft = (name: string) => Boolean((tool ?? tools.data?.find((known) => known.name === name))?.draft);
 
   return <CommandFields key={source.data?.hash ?? "new"} tool={tool} source={source.data} busy={busy !== null} error={error} onDone={() => onDone()} save={(name, body) => {
     if (!tool && tools.data?.some((known) => known.name === name)) {
-      setError(`Команда ${name} уже есть: откройте её и сделайте новую версию`);
+      setError(`Команда ${name} уже есть: откройте её и сделайте черновик`);
       return;
     }
 
-    const draft = replaces(name);
-    if (draft !== null && draft !== base && !window.confirm(`У команды уже есть черновик v${draft}. Заменить его этим?`)) return;
+    if (hasDraft(name) && base !== "draft" && !window.confirm("У команды уже есть черновик. Заменить его этим?")) return;
 
     run("save", async () => {
-      const saved = await api<{ version: number }>(`/external-tools/${name}/draft`, { method: "PUT", json: body });
+      await api(`/external-tools/${name}/draft`, { method: "PUT", json: body });
       await queryClient.invalidateQueries({ queryKey: keys.externalTools });
       await queryClient.invalidateQueries({ queryKey: ["external-tools", name] });
-      onDone(saved.version);
+      onDone(true);
     });
   }} />;
 }
@@ -215,13 +211,13 @@ function CommandFields({
   save,
 }: {
   tool?: ExternalTool;
-  source?: ExternalToolVersion;
+  source?: ExternalToolCode;
   busy: boolean;
   error: string | null;
   onDone: () => void;
   save: (name: string, body: Record<string, unknown>) => void;
 }) {
-  const manifest = source?.manifest as (ExternalToolVersion["manifest"] & { card?: string; timeout?: number | null }) | undefined;
+  const manifest = source?.manifest as (ExternalToolCode["manifest"] & { card?: string; timeout?: number | null }) | undefined;
   const [name, setName] = useState(tool?.name ?? "");
   const [title, setTitle] = useState(manifest?.title ?? "");
   const [description, setDescription] = useState(manifest?.description ?? "");
@@ -247,7 +243,7 @@ function CommandFields({
     }
     setProblem(null);
 
-    // Other files of the version stay as they were; the manifest and packages are
+    // Other files of the command stay as they were; the manifest and packages are
     // written from the fields.
     const kept = source?.files ?? {};
 
@@ -269,7 +265,9 @@ function CommandFields({
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-dashed p-3">
       <p className="text-xs text-muted-foreground">
-        {tool ? `Сохранится как черновик ${tool.name}: задачи и чат перейдут на него только после одобрения.` : "Новая команда сохранится черновиком; работать она начнёт после одобрения."}
+        {tool
+          ? `Сохранится как черновик ${tool.name}: чат получит его после одобрения, а задачи с командой — после вашего решения по каждой.`
+          : "Новая команда сохранится черновиком; работать она начнёт после одобрения."}
       </p>
       <div className="grid gap-2 sm:grid-cols-2">
         <Labeled title="Имя: группа.действие латиницей, группа своя (не mail, fs…)">

@@ -110,17 +110,6 @@ def _check_tool_step(
         errors.append(f"{where}: инструмента `{step.tool}` нет; доступны: {sorted(catalog)}")
         return
 
-    if manifest.get("source") == "external":
-        # The catalog holds the version the task runs (compiler/versions.py).
-        if step.tool_version != manifest.get("version"):
-            errors.append(
-                f"{where}: у `{step.tool}` нет версии v{step.tool_version}; одобренная текущая — v{manifest.get('version')}"
-            )
-            return
-
-    elif step.tool_version is not None:
-        errors.append(f"{where}: tool_version бывает только у своих команд, у `{step.tool}` его быть не должно")
-
     errors += [f"{where}.args: {err}" for err in templating.check_syntax(step.args)]
     _check_names(templating.referenced_names(step.args), visible, f"{where}.args", errors)
 

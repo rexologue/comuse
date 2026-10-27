@@ -26,15 +26,14 @@ class RunBody(BaseModel):
 # TASKS
 # -----------------------------
 
-@router.get("/tasks", summary="Tasks with their active scenario cards; `tool` — only those using it (with its version)")
+@router.get("/tasks", summary="Tasks with their active scenario cards; `tool` — only those using it")
 async def list_tasks(tool: str | None = None):
     return {"tasks": views.task_list(tool=tool)}
 
 
 @router.get("/tasks/{task_id}", summary="Task, current version and history")
 async def get_task(task_id: str, request: Request):
-    pins = views.current_pins(task_id)
-    task = views.task_detail(task_id, await _tool_versions(request, pins) if pins else {})
+    task = views.task_detail(task_id, await _catalog(request))
     if task is None:
         raise ApiError(status_code=404, message=f"Task `{task_id}` not found")
 
@@ -60,9 +59,9 @@ async def edit_task(task_id: str, body: dict[str, Any], request: Request):
     return await request.app.state.orchestrator.edit(task_id, body)
 
 
-@router.post("/tasks/{task_id}/tool-versions", summary="Move the task to another version of an external tool → draft version + approval")
-async def move_tool_version(task_id: str, body: dict[str, Any], request: Request):
-    return await request.app.state.orchestrator.move_tool_version(task_id, body)
+@router.post("/tasks/{task_id}/tools/refresh", summary="The same steps with the tools as they are now → draft version + diff + approval")
+async def refresh_tools(task_id: str, request: Request):
+    return await request.app.state.orchestrator.refresh_tools(task_id)
 
 
 @router.post("/tasks/{task_id}/versions/{version_id}/approve", summary="Make a version active")
@@ -125,13 +124,13 @@ async def cancel_run(run_id: str, request: Request):
     return await request.app.state.registry.client("runner").post(f"/runs/{run_id}/cancel")
 
 
-async def _tool_versions(request: Request, tools: dict[str, int]) -> dict[str, int]:
-    """The current version of each of these external tools: the executor keeps them.
-    Without its answer the task is shown without the note of a newer version."""
+async def _catalog(request: Request) -> dict[str, dict[str, Any]] | None:
+    """The tools as they are now: the executor keeps them. Without its answer the task is
+    shown without what changed in its tools."""
     try:
         catalog = (await request.app.state.registry.client("executor").get("/tools"))["tools"]
 
     except ApiError:
-        return {}
+        return None
 
-    return {m["name"]: m["version"] for m in catalog if m["name"] in tools and isinstance(m.get("version"), int)}
+    return {manifest["name"]: manifest for manifest in catalog}

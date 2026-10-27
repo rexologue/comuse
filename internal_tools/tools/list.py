@@ -13,7 +13,7 @@ class Input(ToolInput):
 
 
 class Output(ToolOutput):
-    # name (group.action), title, current_version, draft_version, versions
+    # name (group.action), title, current and draft (None: there is none)
     tools: list[dict[str, Any]]
 
 
@@ -21,7 +21,7 @@ class Output(ToolOutput):
     name="tools.list",
     title="Свои команды",
     card="Показать свои команды",
-    description="List the user's own commands (group.action, in groups of their own): their versions, which one is current, whether a draft waits for approval.",
+    description="List the user's own commands (group.action, in groups of their own): whether each has approved code and whether a draft waits for approval.",
     confirm=False,
     chat_only=True,
 )

@@ -23,6 +23,7 @@ from common.schemas.task import Step, TaskSpec
 from common.storage.db import session
 from common.storage.models import RUN_FINISHED, Run, RunLog, Task, TaskVersion
 from common.storage.queries import run_detail
+from common.tools.definition import changed
 from common.tools.settings import resolve
 from common.utils import truncate, utcnow
 
@@ -44,6 +45,16 @@ class _Stop(Exception):
 
 class _Fail(Exception):
     pass
+
+
+class _ToolsChanged(Exception):
+    """A tool is not the one the version was approved with: the run stops whatever the
+    step's on_error says, and the task waits for its user (main decides how)."""
+
+    def __init__(self, tools: list[str]):
+        super().__init__(f"Изменились команды задачи: {', '.join(tools)}. Задача ждёт, пока вы посмотрите изменения и одобрите её с ними")
+
+        self.tools = tools
 
 
 class RunEngine:
@@ -106,10 +117,34 @@ class RunEngine:
             )
             return run_detail(run_id)
 
+        try:
+            stale = changed(version.tools, spec.tools(), await self._catalog())
+
+        except ApiError as e:
+            stale, error = None, f"Каталог инструментов недоступен: {e.message}"
+
+        else:
+            error = str(_ToolsChanged(stale)) if stale else None
+
+        if error:
+            # Nothing ran: the run is closed before it starts, its reason in the log.
+            state.result = {"tools_changed": stale} if stale else None
+            self._close(run_id, journal, state, "failed", error)
+            await self.main.publish(
+                "run.finished",
+                {"run_id": run_id, "task_id": run.task_id, "title": task.title, "status": "failed", "error": error, "dry_run": run.dry_run},
+            )
+            if stale:
+                await self._report_changed(run, task, stale)
+
+            return run_detail(run_id)
+
         self.update(run_id, status="running", started_at=utcnow())
         await self.main.publish("run.started", {"run_id": run_id, "task_id": run.task_id, "title": task.title, "dry_run": run.dry_run})
 
-        walk = _Walk(self, run, spec, state, journal, title=task.title, task_settings=task.settings or {})
+        hashes = {tool: kept.get("hash") for tool, kept in version.tools.items()}
+        walk = _Walk(self, run, spec, state, journal, title=task.title, task_settings=task.settings or {}, hashes=hashes)
+        stale = None
 
         try:
             await walk.execute()
@@ -123,6 +158,11 @@ class RunEngine:
         except _Fail as e:
             status, error = "failed", str(e)
             state.result = {"artifacts": state.artifacts}
+
+        except _ToolsChanged as e:
+            # Changed while the run went: the steps before it ran with the approved tools.
+            status, error, stale = "failed", str(e), e.tools
+            state.result = {"tools_changed": e.tools, "artifacts": state.artifacts}
 
         except Exception as e:
             log.exception("run %s crashed", run_id)
@@ -156,8 +196,27 @@ class RunEngine:
             "run.finished",
             {"run_id": run_id, "task_id": run.task_id, "title": task.title, "status": status, "error": error, "dry_run": run.dry_run},
         )
+        if stale:
+            await self._report_changed(run, task, stale)
 
         return run_detail(run_id)
+
+
+    async def _catalog(self) -> dict[str, dict[str, Any]]:
+        """The tools as they are now: asked anew for every run."""
+        return {tool["name"]: tool for tool in (await self.main.get("/tools"))["tools"]}
+
+
+    async def _report_changed(self, run: Run, task: Task, tools: list[str]) -> None:
+        """What becomes of the task is not the runner's: main hears which tools changed."""
+        try:
+            await self.main.post(
+                "/internal/tools-changed",
+                json={"task_id": run.task_id, "run_id": run.id, "title": task.title, "tools": tools, "dry_run": run.dry_run},
+            )
+
+        except ApiError as e:
+            log.warning("tools changed for task %s, main not told: %s", run.task_id, e.message)
 
 
     def _close(self, run_id: str, journal: _Journal, state: _State, status: str, error: str | None) -> None:
@@ -218,6 +277,7 @@ class _Walk:
         *,
         title: str,
         task_settings: dict[str, Any],
+        hashes: dict[str, str],
     ):
 
         self.engine        = engine
@@ -227,6 +287,8 @@ class _Walk:
         self.journal       = journal
         self.title         = title
         self.task_settings = task_settings
+        # {tool: hash} of the definitions the version was approved with.
+        self.hashes        = hashes
 
         self.last_output: Any = None
 
@@ -325,6 +387,9 @@ class _Walk:
                 raise _Stop("cancelled", "Отменено пользователем")
 
             response = await self._call(step, key, args, attempt=attempt)
+            if response.get("tool_changed"):
+                raise _ToolsChanged([step.tool])
+
             status = response["status"]
             self.state.artifacts += [a for a in response.get("artifacts", []) if a not in self.state.artifacts]
 
@@ -380,7 +445,7 @@ class _Walk:
         try:
             response = await self.engine.main.post(
                 "/executor/execute",
-                json={"tool": step.tool, "version": step.tool_version, "args": args, "context": context},
+                json={"tool": step.tool, "hash": self.hashes.get(step.tool), "args": args, "context": context},
             )
 
         except ApiError as e:
@@ -460,7 +525,6 @@ class _Walk:
         data = {
             "step_id": step.id,
             "tool": step.tool,
-            "tool_version": step.tool_version,
             "attempt": attempt,
             "status": status,
             "input": inputs,

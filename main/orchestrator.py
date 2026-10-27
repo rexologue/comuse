@@ -1,5 +1,5 @@
 """Multi-service flows live here, not in the services: a new draft is announced to the
-user, an approved version reloads the triggers. The only approval is the user's, of a
+user, an approved version reloads the triggers, a task whose tools changed stops. The only approval is the user's, of a
 task version, and it is the version's own status (compiler): a draft waits for it, an
 approved one is active, a newer draft supersedes an older one. Runs never wait."""
 
@@ -47,8 +47,8 @@ class Orchestrator:
         return self._announce_draft(result, None)
 
 
-    async def move_tool_version(self, task_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        result = await self.registry.client("compiler").post(f"/tasks/{task_id}/tool-versions", json=body)
+    async def refresh_tools(self, task_id: str) -> dict[str, Any]:
+        result = await self.registry.client("compiler").post(f"/tasks/{task_id}/tools/refresh")
 
         return self._announce_draft(result, None)
 
@@ -89,6 +89,39 @@ class Orchestrator:
         )
 
         return result
+
+
+    async def tools_changed(self, *, task_id: str, run_id: str, title: str, tools: list[str], dry_run: bool) -> dict[str, Any]:
+        """The runner refused a run: tools of the task are not the ones approved. The task
+        pauses (its schedule with it) until the user reads the changes and approves the
+        task with them; a dry run only says so in its own result."""
+        self.bus.publish("task.tools_changed", {"task_id": task_id, "run_id": run_id, "tools": tools, "dry_run": dry_run})
+
+        if dry_run:
+            return {"paused": False}
+
+        try:
+            await self.set_task_status(task_id, "pause")
+            paused = True
+
+        except ApiError as e:
+            # Paused already, or never active: nothing more to stop.
+            if e.status_code != 409:
+                raise
+            paused = False
+
+        await self.notify(
+            task_id=task_id,
+            run_id=run_id,
+            title=title,
+            message=(
+                f"изменились команды {', '.join(f'`{tool}`' for tool in tools)}, и задача не запущена"
+                + (" и поставлена на паузу" if paused else "")
+                + ". Посмотрите изменения в карточке задачи, одобрите её с ними и возобновите."
+            ),
+        )
+
+        return {"paused": paused}
 
 
     # -----------------------------

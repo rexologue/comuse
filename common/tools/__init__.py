@@ -12,6 +12,7 @@ from typing import Any, Awaitable, Callable, Literal
 from pydantic import BaseModel, ConfigDict
 
 from common.tools.context import Credential, PermissionDenied, ToolContext, ToolError
+from common.tools.definition import definition_hash
 from common.tools.settings import ToolSettings, check_settings
 from common.tools.fields import PATH_ARG
 from common.tools.guides import guide_of
@@ -97,8 +98,9 @@ class ToolSpec:
 
 
     def manifest(self) -> dict[str, Any]:
-        """JSON description shared with agent-loop and compiler (no code, no callables)."""
-        return {
+        """JSON description shared with agent-loop and compiler (no code, no callables),
+        with the hash of its definition (common/tools/definition.py)."""
+        manifest = {
             "name": self.name,
             "function_name": function_name(self.name),
             "title": self.title,
@@ -118,6 +120,8 @@ class ToolSpec:
             "chat_only": self.chat_only,
             "source": "internal",
         }
+
+        return {**manifest, "hash": definition_hash(manifest)}
 
 
 _REGISTRY: dict[str, ToolSpec] = {}

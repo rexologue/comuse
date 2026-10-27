@@ -5,26 +5,26 @@
 import { ChevronDown, ChevronRight, Wrench } from "lucide-react";
 import { useState } from "react";
 
-import { useExternalTools, useExternalToolVersion } from "@/api/queries";
+import { useExternalToolCode, useExternalTools } from "@/api/queries";
 import type { ExternalTool } from "@/api/types";
 import { DraftDecision } from "@/commands/DraftDecision";
 
 export function ToolDraftCards({ sessionId }: { sessionId: string }) {
   const tools = useExternalTools();
 
-  const drafts = (tools.data ?? []).filter((tool) => tool.versions.some((version) => version.status === "draft" && version.session_id === sessionId));
+  const drafts = (tools.data ?? []).filter((tool) => tool.draft?.session_id === sessionId);
 
   return (
     <>
       {drafts.map((tool) => (
-        <ToolDraftCard key={tool.name} tool={tool} version={tool.draft_version as number} />
+        <ToolDraftCard key={tool.name} tool={tool} />
       ))}
     </>
   );
 }
 
-function ToolDraftCard({ tool, version }: { tool: ExternalTool; version: number }) {
-  const draft = useExternalToolVersion(tool.name, version);
+function ToolDraftCard({ tool }: { tool: ExternalTool }) {
+  const draft = useExternalToolCode(tool.name, "draft");
   const [open, setOpen] = useState(false);
 
   const manifest = draft.data?.manifest;
@@ -36,8 +36,8 @@ function ToolDraftCard({ tool, version }: { tool: ExternalTool; version: number 
         <div className="min-w-0">
           <div className="font-medium">{manifest?.title ?? tool.name}</div>
           <div className="text-sm text-muted-foreground">
-            {tool.name} v{version} · черновик команды ждёт вашего решения
-            {tool.current_version ? ` · сейчас работает v${tool.current_version}` : ""}
+            {tool.name} · черновик команды ждёт вашего решения
+            {tool.current ? " · он заменит одобренный код, и задачи с командой будут ждать вашего решения" : ""}
           </div>
         </div>
       </div>
@@ -66,7 +66,7 @@ function ToolDraftCard({ tool, version }: { tool: ExternalTool; version: number 
         нужно.
       </p>
 
-      {draft.data && <DraftDecision version={draft.data} />}
+      {draft.data && <DraftDecision code={draft.data} />}
     </div>
   );
 }

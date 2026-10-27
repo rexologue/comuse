@@ -1,11 +1,11 @@
-"""Packages of an external tool version, through uv (a dependency of the project, so it
-is wherever the agent is): requirements.txt → requirements.lock → the version's .venv.
+"""Packages of an own command, through uv (a dependency of the project, so it is
+wherever the agent is): requirements.txt → requirements.lock → the command's .venv.
 
 Only wheels are installed (`--only-binary :all:`): installing a wheel runs no code of
 the package, building one from source would. The lock pins exact versions with hashes
-and is part of the version, so the person approving it sees every package, transitive
+and is part of the code, so the person approving it sees every package, transitive
 ones included. Installs share uv's cache in DATA_DIR, so the same package in another
-version costs next to nothing."""
+command or draft costs next to nothing."""
 
 from __future__ import annotations
 
@@ -33,75 +33,75 @@ _LOCKS: dict[Path, threading.Lock] = {}
 _LOCKS_GUARD = threading.Lock()
 
 
-def lock(version_dir: Path, cache_dir: Path) -> list[str]:
+def lock(folder: Path, cache_dir: Path) -> list[str]:
     """Resolve requirements.txt into requirements.lock; the exact packages, "name==version"."""
-    requirements = (version_dir / REQUIREMENTS).read_text(encoding="utf-8") if (version_dir / REQUIREMENTS).is_file() else ""
+    requirements = (folder / REQUIREMENTS).read_text(encoding="utf-8") if (folder / REQUIREMENTS).is_file() else ""
 
     if not _lines(requirements):
-        (version_dir / LOCK).write_text("", encoding="utf-8")
+        (folder / LOCK).write_text("", encoding="utf-8")
         return []
 
     _uv(
         ["pip", "compile", REQUIREMENTS, "-o", LOCK, "--generate-hashes", "--only-binary", ":all:",
          "--python", sys.executable, "--no-header", "--quiet"],
-        cwd=version_dir,
+        cwd=folder,
         cache_dir=cache_dir,
         what="Не удалось подобрать пакеты",
     )
 
-    return packages(version_dir)
+    return packages(folder)
 
 
-def packages(version_dir: Path) -> list[str]:
-    path = version_dir / LOCK
+def packages(folder: Path) -> list[str]:
+    path = folder / LOCK
     text = path.read_text(encoding="utf-8") if path.is_file() else ""
 
     return [line.split()[0] for line in _lines(text) if "==" in line.split()[0]]
 
 
-def python_of(version_dir: Path) -> Path:
-    venv = version_dir / VENV
+def python_of(folder: Path) -> Path:
+    venv = folder / VENV
     return venv / "Scripts" / "python.exe" if os.name == "nt" else venv / "bin" / "python"
 
 
-def ensure_venv(version_dir: Path, cache_dir: Path, *, fresh: bool = False) -> Path:
-    """The version's .venv with its lock installed (made on first use, or anew when
+def ensure_venv(folder: Path, cache_dir: Path, *, fresh: bool = False) -> Path:
+    """The command's .venv with its lock installed (made on first use, or anew when
     `fresh`); its python."""
     with _LOCKS_GUARD:
-        guard = _LOCKS.setdefault(version_dir.resolve(), threading.Lock())
+        guard = _LOCKS.setdefault(folder.resolve(), threading.Lock())
 
     with guard:
         if fresh:
-            shutil.rmtree(version_dir / VENV, ignore_errors=True)
+            shutil.rmtree(folder / VENV, ignore_errors=True)
 
-        return _ensure_venv(version_dir, cache_dir)
+        return _ensure_venv(folder, cache_dir)
 
 
-def _ensure_venv(version_dir: Path, cache_dir: Path) -> Path:
-    lock_path = version_dir / LOCK
+def _ensure_venv(folder: Path, cache_dir: Path) -> Path:
+    lock_path = folder / LOCK
     lock_text = lock_path.read_text(encoding="utf-8") if lock_path.is_file() else ""
     digest = hashlib.sha256(lock_text.encode()).hexdigest()
 
-    venv = version_dir / VENV
+    venv = folder / VENV
     marker = venv / _MARKER
-    if marker.is_file() and marker.read_text(encoding="utf-8") == digest and python_of(version_dir).exists():
-        return python_of(version_dir)
+    if marker.is_file() and marker.read_text(encoding="utf-8") == digest and python_of(folder).exists():
+        return python_of(folder)
 
     shutil.rmtree(venv, ignore_errors=True)
-    _uv(["venv", VENV, "--python", sys.executable, "--quiet"], cwd=version_dir, cache_dir=cache_dir, what="Не удалось создать окружение")
+    _uv(["venv", VENV, "--python", sys.executable, "--quiet"], cwd=folder, cache_dir=cache_dir, what="Не удалось создать окружение")
 
     if _lines(lock_text):
         _uv(
-            ["pip", "sync", LOCK, "--python", str(python_of(version_dir)), "--require-hashes",
+            ["pip", "sync", LOCK, "--python", str(python_of(folder)), "--require-hashes",
              "--only-binary", ":all:", "--quiet"],
-            cwd=version_dir,
+            cwd=folder,
             cache_dir=cache_dir,
             what="Не удалось установить пакеты",
         )
 
     marker.write_text(digest, encoding="utf-8")
 
-    return python_of(version_dir)
+    return python_of(folder)
 
 
 def uv_bin() -> str:
