@@ -261,5 +261,6 @@ summary, cards, created_at}`. Одобрить или отклонить —
 | `POST /internal/notify {task_id, run_id, title, message}` | runner | Доставить сообщение запуска в чат задачи |
 | `POST /internal/tools-changed {task_id, run_id, title, tools, dry_run}` | runner | Запуск не начат или остановлен: команды задачи изменились. main ставит задачу на паузу и пишет в её чат (пробный — только событие) |
 | `POST /executor/execute` | agent-loop, runner | Выполнить команду (формат — в [TOOLS.md](TOOLS.md#вызов-команды)) |
+| `POST /executor/mcp` | — | Те же команды по MCP: `tools/list`, `tools/call` (см. [TOOLS.md](TOOLS.md#по-mcp)) |
 | `/runner/*` | scheduler | Запустить задачу по cron |
 | `/scheduler/*` | — | Прокси к scheduler: `POST /reload {task_id?}` — перечитать задачи, `GET /jobs` (main сам зовёт scheduler напрямую после одобрения и смены статуса) |

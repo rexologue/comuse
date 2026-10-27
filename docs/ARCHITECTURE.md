@@ -148,7 +148,8 @@ executor/
   paths.py           песочница путей
   outputs.py         удаление старых файлов результатов
   registry.py        каталог команд: internal_tools/ и свои команды
-  api/               execute и каталог, external-tools, accounts
+  mcp_server.py      команды как MCP-сервер: tools/list — каталог, tools/call — тот же конвейер
+  api/               execute и каталог, mcp, external-tools, accounts
 scheduler/
   jobs.py            задания cron
 common/

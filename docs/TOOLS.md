@@ -148,6 +148,24 @@ async def send(inp: Input, ctx: ToolContext) -> Output:
 при ошибке — в журнал вызывающего. Executor ничего не спрашивает и прав задачи не
 знает: кто вызывает, тот уже решил, что вызов нужен.
 
+### По MCP
+
+Те же команды executor отдаёт как MCP-сервер: `POST main/executor/mcp`, Streamable HTTP
+без сессий, ответы JSON (`executor/mcp_server.py`, `executor/api/mcp_http.py`).
+`tools/list` — каталог, `tools/call` — тот же конвейер, что у `/execute`. Чего в MCP
+нет, лежит в `_meta`:
+
+| Где | Что в `_meta` |
+| --- | --- |
+| Инструмент в `tools/list` | Остальной манифест: `hash`, `confirm`, `card`, `settings_schema`, `source`, `code_hash`… — из инструмента собирается ровно то, что даёт `GET /tools` |
+| Вызов `tools/call` | `hash` и `context` — как в `/execute` |
+| Результат | `logs`, `notifications`, `artifacts`, `duration_ms`, `traceback`, `timed_out`, `tool_changed` |
+
+Результат: `structuredContent` — вывод команды, `content` — он же текстом, ошибка —
+`isError` с текстом ошибки. `readOnlyHint` — у команд с `confirm: false`. Клиент, который
+о `_meta` не знает, видит обычные MCP-инструменты. Маршрут защищён внутренним токеном,
+как остальные маршруты executor.
+
 ## Пути
 
 Задачи хранят только переносимые ссылки, поэтому одна задача работает и на Windows, и

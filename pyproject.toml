@@ -28,8 +28,10 @@ dependencies = [
     "matplotlib>=3.9",
     "tzdata>=2026.5",
     "alembic>=1.13",
-    # Installs the packages of external tools, each version into its own .venv.
+    # Installs the packages of own commands, each into its own .venv.
     "uv>=0.9",
+    # The executor's commands as an MCP server (executor/mcp_server.py).
+    "mcp>=1.10,<2",
 ]
 
 [project.optional-dependencies]
