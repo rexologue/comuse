@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from common.tools import ToolError
+from internal_tools.mail.adapters import letter
 from internal_tools.mail.addresses import matches as address_matches
 
 
@@ -31,6 +32,12 @@ _DEFAULT_PORTS = {
 _LIST_RE = re.compile(r'\((?P<flags>[^)]*)\) "(?P<sep>[^"]*)" (?P<name>.+)')
 _UTF7_RE = re.compile(r"&([^-]*)-")
 _FETCH_UID_RE = re.compile(rb"\bUID (\d+)")
+_SIZE_RE = re.compile(rb"\bRFC822\.SIZE (\d+)")
+_FLAGS_RE = re.compile(rb"\bFLAGS \(([^)]*)\)")
+_MSGID_RE = re.compile(r"<[^<>\s]+>")
+
+# A bigger letter is not read: its text and files are more than a step should take in.
+MAX_LETTER_BYTES = 50 * 2**20
 
 # Message headers fetched per IMAP round trip while searching.
 _HEADERS_BATCH = 50
@@ -90,7 +97,8 @@ def search(
         if status != "OK":
             raise ToolError(f"Поиск в почте не удался: {data}")
 
-        newest_first = [int(u) for u in reversed(data[0].split())]
+        # Nothing found: iCloud sends no `* SEARCH` line at all, imaplib gives [None].
+        newest_first = [int(u) for u in reversed(((data or [None])[0] or b"").split())]
         found: list[dict[str, Any]] = []
 
         # Sender and subject are matched here, on decoded headers: servers disagree on
@@ -119,9 +127,16 @@ def _fetch_headers(imap: imaplib.IMAP4, uids: list[int]) -> dict[int, bytes]:
     if status != "OK":
         return {}
 
+    # Some servers put the UID after the headers: imaplib gives it as the next item, `b' UID 5)'`.
+    parts = list(parts or [])
     headers: dict[int, bytes] = {}
-    for part in parts or []:
-        if isinstance(part, tuple) and (match := _FETCH_UID_RE.search(part[0])):
+
+    for n, part in enumerate(parts):
+        if not isinstance(part, tuple):
+            continue
+
+        after = parts[n + 1] if n + 1 < len(parts) and isinstance(parts[n + 1], bytes) else b""
+        if match := _FETCH_UID_RE.search(part[0]) or _FETCH_UID_RE.search(after):
             headers[int(match.group(1))] = part[1]
 
     return headers
@@ -160,38 +175,50 @@ def read(config: dict[str, Any], secret: str, *, folder: str, uid: int, save_dir
     with _imap(config, secret) as imap:
         _select(imap, folder, readonly=True)
 
+        # Its size first: a letter of hundreds of megabytes is not downloaded to be refused.
+        status, parts = imap.uid("FETCH", str(uid), "(FLAGS RFC822.SIZE)")
+        info = b" ".join(part[0] if isinstance(part, tuple) else part for part in parts or [] if part) if status == "OK" else b""
+        size = _SIZE_RE.search(info)
+        if size is None:
+            raise ToolError(f"Письмо {uid} в «{folder}» не найдено")
+
+        if int(size.group(1)) > MAX_LETTER_BYTES:
+            raise ToolError(f"Письмо {uid} весит {int(size.group(1)) // 2**20} МБ — больше {MAX_LETTER_BYTES // 2**20} МБ, его не скачать")
+
         status, parts = imap.uid("FETCH", str(uid), "(BODY.PEEK[])")
-        if status != "OK" or not parts or parts[0] is None:
-            raise ToolError(f"Письмо {uid} не найдено")
+        # The letter is the literal after BODY[]: an unsolicited FETCH (new flags) may come first.
+        raw = next((part[1] for part in parts or [] if isinstance(part, tuple) and b"BODY[]" in part[0]), None) if status == "OK" else None
+        if raw is None:
+            raise ToolError(f"Письмо {uid} в «{folder}» не найдено")
 
-    message = message_from_bytes(parts[0][1], policy=policy.default)
+    message = message_from_bytes(raw, policy=policy.default)
+    text, files = letter.text_and_files(message)
 
-    body = message.get_body(preferencelist=("plain", "html"))
-    text = body.get_content() if body is not None else ""
-    if body is not None and body.get_content_type() == "text/html":
-        text = re.sub(r"<[^>]+>", " ", text)
-        text = re.sub(r"\s+", " ", text).strip()
-
-    attachments: list[Path] = []
-    for n, part in enumerate(message.iter_attachments(), start=1):
-        if not part.get_filename():
-            continue
-
-        save_dir.mkdir(parents=True, exist_ok=True)
-        target = _free_name(save_dir, _attachment_name(part.get_filename(), n))
-        target.write_bytes(part.get_payload(decode=True) or b"")
-        attachments.append(target)
+    attachments = [_save_file(save_dir, _attachment_name(file.filename or _unnamed(file, n), n), file.content) for n, file in enumerate(files, start=1)]
 
     return {
         "uid": uid,
         "from": _header(message, "From"),
         "from_email": address_of(_header(message, "From")),
         "to": _header(message, "To"),
+        "cc": _header(message, "Cc"),
+        "reply_to": _header(message, "Reply-To"),
         "subject": _header(message, "Subject"),
         "date": _iso_date(message.get("Date")),
+        "message_id": _header(message, "Message-ID").strip() or None,
+        "in_reply_to": _header(message, "In-Reply-To").strip() or None,
+        "references": _MSGID_RE.findall(_header(message, "References")),
+        "flags": _flags(_FLAGS_RE.search(info)),
         "text": text,
         "attachments": attachments,
     }
+
+
+def _flags(match: re.Match | None) -> list[str]:
+    """`\\Seen \\Answered $Label` → ["seen", "answered", "$Label"]; \\Recent is the server's, not the letter's."""
+    flags = match.group(1).decode(errors="replace").split() if match else []
+
+    return [flag[1:].lower() if flag.startswith("\\") else flag for flag in flags if flag.lower() != "\\recent"]
 
 
 def mark(config: dict[str, Any], secret: str, *, folder: str, uid: int, seen: bool | None, move_to: str | None) -> str:
@@ -505,14 +532,25 @@ def _attachment_name(filename: str, n: int) -> str:
     return name or f"attachment_{n}"
 
 
-def _free_name(folder: Path, name: str) -> Path:
-    """Two attachments called image.png: the second becomes image (2).png."""
+def _unnamed(file: letter.File, n: int) -> str:
+    """A file the sender gave no name: by its number and its type (an inline picture, a PDF as the whole letter)."""
+    return f"attachment_{n}{mimetypes.guess_extension(file.content_type) or ''}"
+
+
+def _save_file(folder: Path, name: str, content: bytes) -> Path:
+    """Two attachments called image.png: the second becomes image (2).png. The same file
+    again (the letter read once more, its next part of the text) is the one already saved."""
+    folder.mkdir(parents=True, exist_ok=True)
     target, stem, suffix = folder / name, Path(name).stem, Path(name).suffix
 
     for copy in range(2, 1000):
         if not target.exists():
             break
+        if target.read_bytes() == content:
+            return target
         target = folder / f"{stem} ({copy}){suffix}"
+
+    target.write_bytes(content)
 
     return target
 
@@ -528,10 +566,12 @@ def _header(message, name: str) -> str:
         return ""
 
     try:
-        return str(make_header(decode_header(str(value))))
+        text = str(make_header(decode_header(str(value))))
 
     except (ValueError, LookupError):
-        return str(value)
+        text = str(value)
+
+    return letter.header_text(message, name, text) if isinstance(message, EmailMessage) else text
 
 
 def _iso_date(value) -> str | None:

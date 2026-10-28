@@ -99,7 +99,8 @@ def _command(service: str, env: dict[str, str], reload: bool, port: int | None =
 
     if reload:
         watched = START_ORDER if single else [service]
-        for folder in [*watched, "common"]:
+        # internal_tools: the built-in commands, which common.tools discovers.
+        for folder in [*watched, "common", "internal_tools"]:
             command += ["--reload-dir", str(ROOT_DIR / folder)]
 
         command.insert(command.index("--app-dir"), "--reload")
