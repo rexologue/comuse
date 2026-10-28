@@ -90,11 +90,13 @@ executor переводит обратно в `Отчёты/x.xlsx` / `data:outp
 
 ```json
 {
-  "title": "Почта (mcp-email-server)",
-  "command": ["mcp-email-server", "stdio"],
-  "env": {"MCP_EMAIL_SERVER_LOG_LEVEL": "WARNING"},
+  "title": "CRM (crm-mcp)",
+  "command": ["crm-mcp", "stdio"],
+  "env": {"CRM_MCP_LOG_LEVEL": "WARNING"},
   "confirm": true,
-  "confirm_by_tool": {"list_emails_metadata": false},
+  "confirm_by_tool": {"find_deals": false, "get_deal": false},
+  "path_args": {"attach_file": {"path": "path"}, "export_deals": {"target": "path"}},
+  "hidden_tools": ["raw_query"],
   "timeout": 120
 }
 ```
@@ -106,7 +108,7 @@ executor переводит обратно в `Отчёты/x.xlsx` / `data:outp
 | `confirm`, `confirm_by_tool` | Спрашивать ли перед вызовом — для всех инструментов и для каждого (по имени на сервере). Подсказки самого сервера (`readOnlyHint`) — только его слова |
 | `dry_run` | Сервер сам делает пробный запуск (по `_meta.context.dry_run`). По умолчанию у функций — да, у своего сервера — нет |
 | `timeout` | Секунды на вызов |
-| `path_args` | Какие аргументы сервера — пути в рабочей папке, по инструментам: `{"send_email": {"attachments": "refs"}, "download_attachment": {"save_path": "path"}}` (`path` — один путь, `refs` — список). Сервер о нашей рабочей папке не знает и пометить их сам не может; executor проверяет их песочницей и передаёт полными путями, как у своих команд, а полные пути в ответе возвращает ссылками. Не помеченный путь executor не видит: сервер прочитает или запишет любой файл, доступный пользователю |
+| `path_args` | Какие аргументы сервера — пути в рабочей папке, по инструментам: `{"attach_file": {"path": "path"}, "export_deals": {"target": "path"}}` (`path` — один путь, `refs` — список). Сервер о нашей рабочей папке не знает и пометить их сам не может; executor проверяет их песочницей и передаёт полными путями, как у своих команд, а полные пути в ответе возвращает ссылками. Не помеченный путь executor не видит: сервер прочитает или запишет любой файл, доступный пользователю |
 | `hidden_tools` | Инструменты сервера, которых модель не видит вовсе (по именам на сервере): сырая команда протокола, то, чего плагину здесь делать не нужно |
 | `account` | Плагин работает от имени аккаунта — см. [ниже](#аккаунты) |
 
@@ -116,21 +118,25 @@ executor переводит обратно в `Отчёты/x.xlsx` / `data:outp
 ## Аккаунты
 
 Плагин, который работает от имени аккаунта (почтовый ящик, бот), объявляет его в
-манифесте. Пример — готовый сервер почты на аккаунтах нашего вида `imap_smtp`:
+манифесте. Пример — сервер CRM со своим видом аккаунта `crm`: адрес CRM — поле
+аккаунта, токен — его секрет, и оба попадают только в окружение процесса:
 
 ```json
 "account": {
-  "kind": "imap_smtp",
+  "kind": "crm",
+  "title": "CRM",
+  "fields": [
+    {"name": "url", "title": "Адрес CRM", "required": true, "hint": "https://crm.example.com"},
+    {"name": "region", "title": "Регион", "type": "choice", "choices": ["ru", "eu"], "default": "ru"}
+  ],
+  "secret_title": "Токен API",
   "argument": "account_name",
   "env": {
-    "MCP_EMAIL_SERVER_ACCOUNT_NAME": "${account.name}",
-    "MCP_EMAIL_SERVER_EMAIL_ADDRESS": "${account.email}",
-    "MCP_EMAIL_SERVER_USER_NAME": "${account.username}",
-    "MCP_EMAIL_SERVER_PASSWORD": "${account.secret}",
-    "MCP_EMAIL_SERVER_IMAP_HOST": "${account.imap_host}",
-    "MCP_EMAIL_SERVER_IMAP_PORT": "${account.imap_port}",
-    "MCP_EMAIL_SERVER_IMAP_SSL": "${account.imap_security|ssl=ssl}",
-    "MCP_EMAIL_SERVER_IMAP_START_SSL": "${account.imap_security|ssl=starttls}"
+    "CRM_MCP_ACCOUNT": "${account.name}",
+    "CRM_MCP_URL": "${account.url}",
+    "CRM_MCP_TOKEN": "${account.secret}",
+    "CRM_MCP_REGION": "${account.region|ru}",
+    "CRM_MCP_EU": "${account.region|ru=eu}"
   }
 }
 ```
