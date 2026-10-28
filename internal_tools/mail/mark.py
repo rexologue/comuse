@@ -8,6 +8,7 @@ from pydantic import Field, model_validator
 from common.tools import ToolContext, ToolInput, ToolOutput, tool
 from internal_tools.mail.accounts import mailbox
 from internal_tools.mail.adapters import imap_smtp
+from internal_tools.mail.labels import Label
 
 
 class Input(ToolInput):
@@ -17,6 +18,11 @@ class Input(ToolInput):
     seen: bool | None = Field(default=None, description="true — прочитано, false — непрочитано")
     flagged: bool | None = Field(default=None, description="true — отметить важным (звёздочка), false — снять")
     answered: bool | None = Field(default=None, description="true — отвечено, false — нет")
+    add_labels: list[Label] = Field(
+        default_factory=list,
+        description="Поставить метки: так задача отмечает обработанные письма, не трогая «прочитано» пользователя",
+    )
+    remove_labels: list[Label] = Field(default_factory=list, description="Снять метки")
     move_to: str | None = Field(default=None, description="Переложить в эту папку (создаётся, если нет)")
     move_to_role: Literal["inbox", "archive", "junk", "trash"] | None = Field(
         default=None,
@@ -28,8 +34,8 @@ class Input(ToolInput):
         if self.move_to and self.move_to_role:
             raise ValueError("укажи одно: move_to или move_to_role")
 
-        if not self.flags() and not self.move_to and not self.move_to_role:
-            raise ValueError("укажи seen, flagged, answered, move_to или move_to_role")
+        if not self.flags() and not self.add_labels and not self.remove_labels and not self.move_to and not self.move_to_role:
+            raise ValueError("укажи seen, flagged, answered, add_labels, remove_labels, move_to или move_to_role")
 
         return self
 
@@ -51,11 +57,12 @@ _ROLES = {"inbox": "во входящие", "archive": "в архив", "junk": 
 @tool(
     name="mail.mark",
     title="Пометить письма",
-    card="Пометить письма {uids} в «{account}»: прочитано — {seen}, важное — {flagged}, переложить в «{move_to}» {move_to_role}",
+    card="Пометить письма {uids} в «{account}»: прочитано — {seen}, важное — {flagged}, метки {add_labels}, переложить в «{move_to}» {move_to_role}",
     description=(
-        "Mark emails read/unread, flagged or answered and/or move them to a folder or to the mailbox's archive, junk, "
-        "trash (to delete) or inbox. Use after handling messages so the next run does not handle them again (e.g. "
-        "search unseen=true, then seen=true)."
+        "Mark emails read/unread, flagged or answered, add or remove labels and/or move them to a folder or to the "
+        "mailbox's archive, junk, trash (to delete) or inbox. A task marks what it has handled with a label of its own, "
+        "named for what it does (search not_labeled=['invoices_forwarded'], then add_labels=['invoices_forwarded']): "
+        "seen is the user's, not the task's."
     ),
     secrets=("account",),
 )
@@ -64,6 +71,8 @@ async def mark(inp: Input, ctx: ToolContext) -> Output:
 
     if ctx.dry_run:
         changes = [_SAID[name][0 if on else 1] for name, on in inp.flags().items()]
+        changes += [f"метки {', '.join(inp.add_labels)}"] if inp.add_labels else []
+        changes += [f"снять метки {', '.join(inp.remove_labels)}"] if inp.remove_labels else []
         changes += [f"переложить в «{inp.move_to}»"] if inp.move_to else []
         changes += [f"переложить {_ROLES[inp.move_to_role]}"] if inp.move_to_role else []
         ctx.log(f"Пробный запуск: письма {', '.join(map(str, inp.uids))} в «{inp.folder}» не тронуты; было бы: {', '.join(changes)}")
@@ -78,6 +87,8 @@ async def mark(inp: Input, ctx: ToolContext) -> Output:
         flags=inp.flags(),
         move_to=inp.move_to,
         move_to_role=inp.move_to_role,
+        add_labels=inp.add_labels,
+        remove_labels=inp.remove_labels,
     )
 
     if done["missing"]:

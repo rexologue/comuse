@@ -9,6 +9,7 @@ from common.tools import ToolContext, ToolError, ToolInput, ToolOutput, tool
 from internal_tools.mail.accounts import mailbox
 from internal_tools.mail.adapters import imap_smtp
 from internal_tools.mail.addresses import AddressMask
+from internal_tools.mail.labels import Label
 
 
 class Input(ToolInput):
@@ -26,6 +27,13 @@ class Input(ToolInput):
     subject: str | None = Field(default=None, description="Тема содержит")
     since: str | None = Field(default=None, description="Не раньше даты YYYY-MM-DD")
     unseen: bool = Field(default=False, description="Только непрочитанные")
+    flagged: bool | None = Field(default=None, description="true — только важные (звёздочка), false — только не важные")
+    answered: bool | None = Field(default=None, description="true — только отвеченные, false — только без ответа")
+    labeled: list[Label] = Field(default_factory=list, description="Только письма со всеми этими метками")
+    not_labeled: list[Label] = Field(
+        default_factory=list,
+        description="Только письма без этих меток: так задача берёт ещё не обработанные ею (её метку ставит mail.mark add_labels)",
+    )
     limit: int = Field(default=20, ge=1, le=200)
 
 
@@ -36,6 +44,7 @@ class MailHeader(BaseModel):
     to: str
     subject: str
     date: str | None
+    flags: list[str] = Field(description="seen, answered, flagged, draft и метки письма")
 
 
 class Output(ToolOutput):
@@ -46,7 +55,10 @@ class Output(ToolOutput):
     name="mail.search",
     title="Найти письма",
     card="Найти письма в «{account}»: отправитель «{sender}», только от {sender_in}, тема «{subject}»",
-    description="Search an IMAP mailbox; newest first. Returns uid, sender, sender_email (bare address for replies), to, subject, date.",
+    description=(
+        "Search an IMAP mailbox; newest first. Returns uid, sender, sender_email (bare address for replies), to, subject, "
+        "date, flags. A task that handles new mail takes the letters without its label (not_labeled) and labels them after."
+    ),
     confirm=False,
     secrets=("account",),
 )
@@ -70,6 +82,10 @@ async def search(inp: Input, ctx: ToolContext) -> Output:
         unseen=inp.unseen,
         limit=inp.limit,
         sender_in=inp.sender_in,
+        flagged=inp.flagged,
+        answered=inp.answered,
+        labeled=inp.labeled,
+        not_labeled=inp.not_labeled,
     )
 
     return Output(messages=[MailHeader.model_validate(item) for item in found])

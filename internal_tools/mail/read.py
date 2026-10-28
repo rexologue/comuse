@@ -7,6 +7,7 @@ from pydantic import Field
 from common.tools import ToolContext, ToolInput, ToolOutput, tool
 from internal_tools.mail.accounts import mailbox
 from internal_tools.mail.adapters import imap_smtp
+from internal_tools.mail.addresses import AddressMask
 
 
 class Input(ToolInput):
@@ -15,6 +16,13 @@ class Input(ToolInput):
     folder: str = Field(default="INBOX")
     offset: int = Field(default=0, ge=0, description="С какого символа текста читать: для длинного письма — offset + max_chars прошлого вызова")
     max_chars: int = Field(default=20000, ge=1, le=100000, description="Сколько символов текста вернуть")
+    sender_in: list[AddressMask] = Field(
+        default_factory=list,
+        description=(
+            "Читать, только если письмо от этих адресов или доменов (*@company.ru): иначе отказ. Обязательно, если "
+            "задача что-то делает с прочитанным: те же адреса, что у mail.search. Пусто — от кого угодно."
+        ),
+    )
 
 
 class Output(ToolOutput):
@@ -58,6 +66,7 @@ async def read(inp: Input, ctx: ToolContext) -> Output:
         folder=inp.folder,
         uid=inp.uid,
         save_dir=save_dir,
+        sender_in=inp.sender_in,
     )
 
     attachments = [ctx.to_ref(p) for p in data["attachments"]]

@@ -80,7 +80,13 @@ def search(
     unseen: bool,
     limit: int,
     sender_in: list[str] = (),
+    flagged: bool | None = None,
+    answered: bool | None = None,
+    labeled: list[str] = (),
+    not_labeled: list[str] = (),
 ) -> list[dict[str, Any]]:
+    """Flags and labels are the server's search (KEYWORD, UNKEYWORD): atoms every server
+    compares the same; sender and subject are ours (see below)."""
     # A message flagged \\Deleted is gone for the user even before the server purges it.
     criteria: list[str] = ["UNDELETED"]
 
@@ -89,6 +95,15 @@ def search(
 
     if unseen:
         criteria.append("UNSEEN")
+
+    if flagged is not None:
+        criteria.append("FLAGGED" if flagged else "UNFLAGGED")
+
+    if answered is not None:
+        criteria.append("ANSWERED" if answered else "UNANSWERED")
+
+    criteria += [word for label in labeled for word in ("KEYWORD", label)]
+    criteria += [word for label in not_labeled for word in ("UNKEYWORD", label)]
 
     with _imap(config, secret) as imap:
         _select(imap, folder, readonly=True)
@@ -112,7 +127,7 @@ def search(
                 if uid not in headers:
                     continue
 
-                item = _header_item(uid, headers[uid])
+                item = _header_item(uid, *headers[uid])
                 if matches(item, sender=sender, subject=subject, sender_in=sender_in):
                     found.append(item)
 
@@ -122,14 +137,16 @@ def search(
     return found
 
 
-def _fetch_headers(imap: imaplib.IMAP4, uids: list[int], fields: str = "FROM TO SUBJECT DATE") -> dict[int, bytes]:
-    status, parts = imap.uid("FETCH", ",".join(map(str, uids)), f"(UID BODY.PEEK[HEADER.FIELDS ({fields})])")
+def _fetch_headers(imap: imaplib.IMAP4, uids: list[int], fields: str = "FROM TO SUBJECT DATE") -> dict[int, tuple[bytes, list[str]]]:
+    """uid → (its headers, its flags)."""
+    status, parts = imap.uid("FETCH", ",".join(map(str, uids)), f"(UID FLAGS BODY.PEEK[HEADER.FIELDS ({fields})])")
     if status != "OK":
         return {}
 
-    # Some servers put the UID after the headers: imaplib gives it as the next item, `b' UID 5)'`.
+    # Some servers put the UID (and the flags) after the headers: imaplib gives them as
+    # the next item, `b' UID 5 FLAGS (\\Seen))'`.
     parts = list(parts or [])
-    headers: dict[int, bytes] = {}
+    headers: dict[int, tuple[bytes, list[str]]] = {}
 
     for n, part in enumerate(parts):
         if not isinstance(part, tuple):
@@ -137,16 +154,17 @@ def _fetch_headers(imap: imaplib.IMAP4, uids: list[int], fields: str = "FROM TO 
 
         after = parts[n + 1] if n + 1 < len(parts) and isinstance(parts[n + 1], bytes) else b""
         if match := _FETCH_UID_RE.search(part[0]) or _FETCH_UID_RE.search(after):
-            headers[int(match.group(1))] = part[1]
+            headers[int(match.group(1))] = (part[1], _flags(_FLAGS_RE.search(part[0]) or _FLAGS_RE.search(after)))
 
     return headers
 
 
-def _header_item(uid: int, raw: bytes) -> dict[str, Any]:
+def _header_item(uid: int, raw: bytes, flags: list[str]) -> dict[str, Any]:
     headers = message_from_bytes(raw, policy=policy.default)
 
     return {
         "uid": uid,
+        "flags": flags,
         "from": _header(headers, "From"),
         "from_email": address_of(_header(headers, "From")),
         "to": _header(headers, "To"),
@@ -194,9 +212,14 @@ def _fetch_letter(imap: imaplib.IMAP4, folder: str, uid: int) -> tuple[EmailMess
     return message_from_bytes(raw, policy=policy.default), info
 
 
-def read(config: dict[str, Any], secret: str, *, folder: str, uid: int, save_dir: Path) -> dict[str, Any]:
+def read(config: dict[str, Any], secret: str, *, folder: str, uid: int, save_dir: Path, sender_in: list[str] = ()) -> dict[str, Any]:
+    """`sender_in`: only a letter from these addresses or domains is read; another one
+    is refused before anything of it (its text, its files) is given or saved."""
     with _imap(config, secret) as imap:
         message, info = _fetch_letter(imap, folder, uid)
+
+    if sender_in and not address_matches(address_of(_header(message, "From")), sender_in):
+        raise ToolError(f"Письмо {uid} в «{folder}» не от {', '.join(sender_in)}: его не читаем")
 
     text, files = letter.text_and_files(message)
 
@@ -224,12 +247,12 @@ def thread_of(config: dict[str, Any], secret: str, *, folder: str, uid: int) -> 
     """What a reply to the letter takes from it: its subject and its place in the thread."""
     with _imap(config, secret) as imap:
         _select(imap, folder, readonly=True)
-        raw = _fetch_headers(imap, [uid], "SUBJECT MESSAGE-ID IN-REPLY-TO REFERENCES").get(uid)
+        found = _fetch_headers(imap, [uid], "SUBJECT MESSAGE-ID IN-REPLY-TO REFERENCES").get(uid)
 
-    if raw is None:
+    if found is None:
         raise ToolError(f"Письмо {uid} в «{folder}» не найдено")
 
-    headers = message_from_bytes(raw, policy=policy.default)
+    headers = message_from_bytes(found[0], policy=policy.default)
 
     return {
         "subject": _header(headers, "Subject"),
@@ -315,10 +338,13 @@ def mark(
     flags: dict[str, bool],
     move_to: str | None = None,
     move_to_role: str | None = None,
+    add_labels: list[str] = (),
+    remove_labels: list[str] = (),
 ) -> dict[str, Any]:
-    """Set or clear `flags` (FLAGS names → on/off) and/or move the letters to a folder
-    or to the folder of a role (archive, junk, trash, inbox). The letters that are not
-    in `folder` are named, the others done; none there at all is an error."""
+    """Set or clear `flags` (FLAGS names → on/off) and labels (IMAP keywords), and/or move
+    the letters to a folder or to the folder of a role (archive, junk, trash, inbox).
+    The letters that are not in `folder` are named, the others done; none there at all
+    is an error."""
     with _imap(config, secret) as imap:
         _select(imap, folder, readonly=False)
 
@@ -335,6 +361,13 @@ def mark(
         for name, on in flags.items():
             _store(imap, uid_set, "+FLAGS" if on else "-FLAGS", FLAGS[name], folder)
 
+        if add_labels:
+            _check_labels(imap, folder, add_labels)
+            _store(imap, uid_set, "+FLAGS", " ".join(add_labels), folder)
+
+        if remove_labels:
+            _store(imap, uid_set, "-FLAGS", " ".join(remove_labels), folder)
+
         target = move_to
         if move_to_role == "inbox":
             target = "INBOX"
@@ -347,6 +380,19 @@ def mark(
             _move(imap, uid_set, target)
 
     return {"uids": found, "missing": missing, "folder": target or folder}
+
+
+def _check_labels(imap: imaplib.IMAP4, folder: str, labels: list[str]) -> None:
+    """A server that keeps no labels of ours says so in PERMANENTFLAGS (no `\\*`) and may
+    still answer OK to STORE: the label would be gone at the next login, and a task that
+    skips labelled letters would handle them again and again."""
+    permanent = b" ".join(item for item in (getattr(imap, "untagged_responses", {}) or {}).get("PERMANENTFLAGS", []) if isinstance(item, bytes))
+    if not permanent:
+        return
+
+    kept = {flag.lower() for flag in permanent.decode(errors="replace").strip("()").split()}
+    if "\\*" not in kept and (lost := [label for label in labels if label.lower() not in kept]):
+        raise ToolError(f"Сервер не хранит свои метки писем в «{folder}»: «{', '.join(lost)}» не сохранится")
 
 
 def _store(imap: imaplib.IMAP4, uid_set: str, how: str, flag: str, folder: str) -> None:
