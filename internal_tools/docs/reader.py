@@ -31,6 +31,9 @@ def read_document(path: Path) -> str:
     if suffix in TEXT_SUFFIXES:
         return _read_text(path)
 
+    if suffix == ".eml":
+        return _read_eml(path)
+
     raise ToolError(f"Формат `{suffix}` пока не поддерживается")
 
 
@@ -91,7 +94,52 @@ def _read_docx(path: Path) -> str:
             tables += 1
             parts.append(f"Таблица T{tables}:\n{markdown_table(rows)}")
 
-    return "\n\n".join(parts)
+    # Headers and footers hold what a body does not (the company, the signature line):
+    # once each, however many sections repeat them.
+    def said(parts_of) -> list[str]:
+        seen, found = set(), []
+        for section in document.sections:
+            for part in parts_of(section):
+                if part.is_linked_to_previous:
+                    continue
+                text = " ".join(p.text.strip() for p in part.paragraphs if p.text.strip())
+                if text and text not in seen:
+                    seen.add(text)
+                    found.append(text)
+        return found
+
+    headers = said(lambda section: (section.first_page_header, section.header))
+    footers = said(lambda section: (section.first_page_footer, section.footer))
+
+    return "\n\n".join(
+        [f"Верхний колонтитул: {text}" for text in headers] + parts + [f"Нижний колонтитул: {text}" for text in footers]
+    )
+
+
+def _read_eml(path: Path) -> str:
+    """A saved letter (a forwarded one is kept so): its headers, its text, its files by name."""
+    from email import message_from_bytes, policy
+    from html import unescape
+    import re
+
+    message = message_from_bytes(path.read_bytes(), policy=policy.default)
+    lines = [f"{name}: {message[name]}" for name in ("From", "To", "Cc", "Date", "Subject") if message[name]]
+
+    body = message.get_body(preferencelist=("plain", "html"))
+    if body is not None:
+        try:
+            text = body.get_content()
+        except (LookupError, UnicodeError):
+            text = (body.get_payload(decode=True) or b"").decode("utf-8", errors="replace")
+        if body.get_content_type() == "text/html":
+            text = unescape(re.sub(r"<(script|style)\b.*?</\1>|<[^>]+>", " ", text, flags=re.S | re.I))
+        lines += ["", text.strip()]
+
+    files = [part.get_filename() for part in message.iter_attachments() if part.get_filename()]
+    if files:
+        lines += ["", "Вложения: " + ", ".join(files)]
+
+    return "\n".join(lines)
 
 
 def _read_xlsx(path: Path) -> str:

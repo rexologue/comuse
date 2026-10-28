@@ -10,7 +10,7 @@ from internal_tools.docs.reader import read_document
 
 
 class Input(ToolInput):
-    path: FileRefs = Field(description="Документ (docx, xlsx, pdf, txt, md, csv), список документов или результат шага со списком файлов")
+    path: FileRefs = Field(description="Документ (docx, xlsx, pdf, txt, md, csv, eml), список документов или результат шага со списком файлов")
     max_chars: int = Field(default=20000, ge=100, le=200000, description="Обрезать текст каждого документа до стольких символов")
     offset: int = Field(default=0, ge=0, description="С какого символа читать: для длинного документа — offset + max_chars прошлого вызова")
 
@@ -37,7 +37,7 @@ class Output(ToolOutput):
     title="Прочитать документ",
     card="Прочитать «{path}»",
     description=(
-        "Read documents (docx, xlsx, pdf, txt, md, csv) as text; tables become markdown tables. "
+        "Read documents (docx with its headers and footers, xlsx, pdf, txt, md, csv, eml letters) as text; tables become markdown tables. "
         "Its `text` is what a model step works on. A long one is read in windows: offset, max_chars; truncated=true — there is more."
     ),
     confirm=False,

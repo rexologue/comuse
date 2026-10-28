@@ -25,7 +25,7 @@ class Input(ToolInput):
 @tool(
     name="mail.forward",
     title="Переслать письмо",
-    card="Переслать письмо {uid} из «{folder}» адресатам {to}",
+    card="Переслать письмо {uid} адресатам {to}, копия {cc}, скрытая копия {bcc}, из папки «{folder}»",
     description=(
         "Forward an email (its text and attachments, under an optional note) to new recipients; subject Fwd: <original>. "
         "In a task it saves a draft instead unless the task's setting send_directly says to send; a dry run always saves "

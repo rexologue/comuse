@@ -11,6 +11,7 @@ import binascii
 import imaplib
 import re
 from dataclasses import dataclass
+from typing import Any
 
 from common.tools import ToolError
 
@@ -123,7 +124,7 @@ def special_folder(imap: imaplib.IMAP4, role: str) -> str:
     name = _prefix(folders) + ROLES[role][2]
     status, data = imap.create(quote(name))
     if status != "OK" and b"ALREADYEXISTS" not in b" ".join(item for item in data or [] if isinstance(item, bytes)).upper():
-        raise ToolError(f"Нет папки «{ROLES[role][2]}» и не удалось её создать: {data}")
+        raise ToolError(f"Нет папки «{ROLES[role][2]}» и не удалось её создать: {said(data)}")
 
     return name
 
@@ -140,6 +141,34 @@ def _prefix(folders: list[Folder]) -> str:
     return ""
 
 
+def said(data: Any) -> str:
+    """What the server answered, as text: [b'EXAMINE failed. No such mailbox'] → «EXAMINE failed. No such mailbox»."""
+    items = data if isinstance(data, (list, tuple)) else [data]
+    parts = [item.decode(errors="replace") if isinstance(item, bytes) else str(item) for item in items if item not in (None, b"")]
+
+    return "; ".join(parts) or "сервер не объяснил"
+
+
+def on_server(imap: imaplib.IMAP4, name: str) -> str:
+    """A folder as the person writes it, «Рассылки/Новости», as this server names it: its
+    hierarchy delimiter for the slash («Рассылки.Новости» where it is «.») — unless a
+    folder of that very name is there."""
+    if "/" not in name:
+        return name
+
+    found = list_folders(imap)
+    if any(folder.name == name for folder in found):
+        return name
+
+    delimiter = next((folder.delimiter for folder in found if folder.delimiter), None)
+    if delimiter is None:
+        status, rows = imap.list('""', '""')
+        root = parse_list(rows) if status == "OK" else []
+        delimiter = root[0].delimiter if root else None
+
+    return name.replace("/", delimiter) if delimiter and delimiter != "/" else name
+
+
 def ensure_folder(imap: imaplib.IMAP4, name: str) -> None:
     """A folder to put mail in: there and selectable, or made (a \\Noselect placeholder
     of that name is not a folder mail can go to)."""
@@ -148,7 +177,7 @@ def ensure_folder(imap: imaplib.IMAP4, name: str) -> None:
 
     status, data = imap.create(quote(name))
     if status != "OK":
-        raise ToolError(f"Не удалось создать папку почты «{name}»: {data}")
+        raise ToolError(f"Не удалось создать папку почты «{name}»: {said(data)}")
 
 
 def quote(folder: str) -> str:

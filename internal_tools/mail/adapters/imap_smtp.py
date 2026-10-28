@@ -116,7 +116,7 @@ def search(
 
         status, data = imap.uid("SEARCH", *criteria)
         if status != "OK":
-            raise ToolError(f"Поиск в почте не удался: {data}")
+            raise ToolError(f"Поиск в почте не удался: {folders.said(data)}")
 
         # Nothing found: iCloud sends no `* SEARCH` line at all, imaplib gives [None].
         newest_first = [int(u) for u in reversed(((data or [None])[0] or b"").split())]
@@ -150,7 +150,7 @@ def _imap_date(day: date) -> str:
 
 def _fetch_headers(imap: imaplib.IMAP4, uids: list[int], fields: str = "FROM TO SUBJECT DATE") -> dict[int, tuple[bytes, list[str]]]:
     """uid → (its headers, its flags)."""
-    status, parts = imap.uid("FETCH", ",".join(map(str, uids)), f"(UID FLAGS BODY.PEEK[HEADER.FIELDS ({fields})])")
+    status, parts = imap.uid("FETCH", ",".join(map(str, uids)), f"(UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS ({fields})])")
     if status != "OK":
         return {}
 
@@ -165,12 +165,13 @@ def _fetch_headers(imap: imaplib.IMAP4, uids: list[int], fields: str = "FROM TO 
 
         after = parts[n + 1] if n + 1 < len(parts) and isinstance(parts[n + 1], bytes) else b""
         if match := _FETCH_UID_RE.search(part[0]) or _FETCH_UID_RE.search(after):
-            headers[int(match.group(1))] = (part[1], _flags(_FLAGS_RE.search(part[0]) or _FLAGS_RE.search(after)))
+            info = part[0] + b" " + after
+            headers[int(match.group(1))] = (part[1], _flags(_FLAGS_RE.search(info)), _received(info))
 
     return headers
 
 
-def _header_item(uid: int, raw: bytes, flags: list[str]) -> dict[str, Any]:
+def _header_item(uid: int, raw: bytes, flags: list[str], received: str | None = None) -> dict[str, Any]:
     headers = message_from_bytes(raw, policy=policy.default)
 
     return {
@@ -180,8 +181,19 @@ def _header_item(uid: int, raw: bytes, flags: list[str]) -> dict[str, Any]:
         "from_email": address_of(_header(headers, "From")),
         "to": _header(headers, "To"),
         "subject": _header(headers, "Subject"),
-        "date": _iso_date(headers.get("Date")),
+        "date": _iso_date(headers.get("Date")) or received,
     }
+
+
+def _received(info: bytes) -> str | None:
+    """When the server got the letter (INTERNALDATE): every letter has it, Date is the sender's and may be missing."""
+    stamp = imaplib.Internaldate2tuple(info) if b"INTERNALDATE" in info else None
+    if stamp is None:
+        return None
+
+    from datetime import datetime
+
+    return datetime(*stamp[:6]).astimezone().isoformat()
 
 
 def matches(item: dict[str, Any], *, sender: str | None, subject: str | None, sender_in: list[str] = ()) -> bool:
@@ -205,7 +217,7 @@ def _fetch_letter(imap: imaplib.IMAP4, folder: str, uid: int) -> tuple[EmailMess
     _select(imap, folder, readonly=True)
 
     # Its size first: a letter of hundreds of megabytes is not downloaded to be refused.
-    status, parts = imap.uid("FETCH", str(uid), "(FLAGS RFC822.SIZE)")
+    status, parts = imap.uid("FETCH", str(uid), "(FLAGS RFC822.SIZE INTERNALDATE)")
     info = b" ".join(part[0] if isinstance(part, tuple) else part for part in parts or [] if part) if status == "OK" else b""
     size = _SIZE_RE.search(info)
     if size is None:
@@ -244,7 +256,7 @@ def read(config: dict[str, Any], secret: str, *, folder: str, uid: int, save_dir
         "cc": _header(message, "Cc"),
         "reply_to": _header(message, "Reply-To"),
         "subject": _header(message, "Subject"),
-        "date": _iso_date(message.get("Date")),
+        "date": _iso_date(message.get("Date")) or _received(info),
         "message_id": _header(message, "Message-ID").strip() or None,
         "in_reply_to": _header(message, "In-Reply-To").strip() or None,
         "references": _MSGID_RE.findall(_header(message, "References")),
@@ -385,7 +397,8 @@ def mark(
         elif move_to_role is not None:
             target = folders.special_folder(imap, move_to_role)
         elif move_to:
-            folders.ensure_folder(imap, move_to)
+            target = folders.on_server(imap, move_to)
+            folders.ensure_folder(imap, target)
 
         if target and target != folder:
             _move(imap, uid_set, target)
@@ -409,31 +422,31 @@ def _check_labels(imap: imaplib.IMAP4, folder: str, labels: list[str]) -> None:
 def _store(imap: imaplib.IMAP4, uid_set: str, how: str, flag: str, folder: str) -> None:
     status, data = imap.uid("STORE", uid_set, how, f"({flag})")
     if status != "OK":
-        raise ToolError(f"Не удалось изменить пометки писем {uid_set} в «{folder}»: {data}")
+        raise ToolError(f"Не удалось изменить пометки писем {uid_set} в «{folder}»: {folders.said(data)}")
 
 
 def _move(imap: imaplib.IMAP4, uid_set: str, target: str) -> None:
     if "MOVE" in imap.capabilities:  # RFC 6851
         status, data = imap.uid("MOVE", uid_set, folders.quote(target))
         if status != "OK":
-            raise ToolError(f"Не удалось переложить письма {uid_set} в «{target}»: {data}")
+            raise ToolError(f"Не удалось переложить письма {uid_set} в «{target}»: {folders.said(data)}")
 
         return
 
     status, data = imap.uid("COPY", uid_set, folders.quote(target))
     if status != "OK":
-        raise ToolError(f"Не удалось переложить письма {uid_set} в «{target}»: {data}")
+        raise ToolError(f"Не удалось переложить письма {uid_set} в «{target}»: {folders.said(data)}")
 
     status, data = imap.uid("STORE", uid_set, "+FLAGS", r"(\Deleted)")
     if status != "OK":
-        raise ToolError(f"Письма {uid_set} скопированы в «{target}», но оригиналы не помечены удалёнными: {data}")
+        raise ToolError(f"Письма {uid_set} скопированы в «{target}», но оригиналы не помечены удалёнными: {folders.said(data)}")
 
     # A plain EXPUNGE would also purge everything else the user flagged \Deleted;
     # without UIDPLUS (RFC 4315) the originals just stay flagged, which search skips.
     if "UIDPLUS" in imap.capabilities:
         status, data = imap.uid("EXPUNGE", uid_set)
         if status != "OK":
-            raise ToolError(f"Письма {uid_set} скопированы в «{target}», но оригиналы не убраны: {data}")
+            raise ToolError(f"Письма {uid_set} скопированы в «{target}», но оригиналы не убраны: {folders.said(data)}")
 
 
 def folder_list(config: dict[str, Any], secret: str) -> list[dict[str, Any]]:
@@ -553,7 +566,7 @@ def append_draft(config: dict[str, Any], secret: str, message: EmailMessage) -> 
 
         status, data = imap.append(folders.quote(folder), r"(\Draft \Seen)", None, message.as_bytes())
         if status != "OK":
-            raise ToolError(f"Не удалось сохранить черновик: {data}")
+            raise ToolError(f"Не удалось сохранить черновик: {folders.said(data)}")
 
     return folder
 
@@ -572,7 +585,7 @@ def append_sent(config: dict[str, Any], secret: str, message: EmailMessage) -> s
 
         status, data = imap.append(folders.quote(folder), r"(\Seen)", None, message.as_bytes())
         if status != "OK":
-            raise ToolError(f"Не удалось сохранить письмо в «{folder}»: {data}")
+            raise ToolError(f"Не удалось сохранить письмо в «{folder}»: {folders.said(data)}")
 
     return folder
 
@@ -667,9 +680,9 @@ def _close(conn) -> None:
 
 
 def _select(imap: imaplib.IMAP4, folder: str, *, readonly: bool) -> None:
-    status, data = imap.select(folders.quote(folder), readonly=readonly)
+    status, data = imap.select(folders.quote(folders.on_server(imap, folder)), readonly=readonly)
     if status != "OK":
-        raise ToolError(f"Папка почты «{folder}» не найдена: {data}")
+        raise ToolError(f"Папка почты «{folder}» не найдена: {folders.said(data)}")
 
 
 def _attachment_name(filename: str, n: int) -> str:

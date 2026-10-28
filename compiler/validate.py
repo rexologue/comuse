@@ -17,7 +17,8 @@ from common.utils import strings_in
 
 _OUTPUT_REF = re.compile(r"\b([a-z][a-z0-9_]*)\.output((?:\.[A-Za-z_][A-Za-z0-9_]*)*)")
 
-_ABSOLUTE_PATH = re.compile(r"^(?:[a-zA-Z]:[\\/]|/(?:home|Users|mnt|tmp|var|etc)/|~[\\/])")
+# C:\…, ~/…, and /a/b or /a.ext: what looks like a path from the root, not «/start».
+_ABSOLUTE_PATH = re.compile(r"^(?:[a-zA-Z]:[\\/]|~[\\/]|/[^/\s]+(?:/|\.\w+$))")
 
 
 class SpecError(ValueError):
@@ -140,11 +141,13 @@ def _check_tool_step(
         if key not in properties:
             continue
 
+        # Anywhere in the value: an attachment in a list, a path in a mapping.
+        for text in strings_in(value):
+            if not templating.has_template(text) and _ABSOLUTE_PATH.match(text):
+                errors.append(f"{where}.args.{key}: абсолютный путь {text!r}; используй путь относительно рабочей папки")
+
         if _contains_template(value):
             continue
-
-        if isinstance(value, str) and _ABSOLUTE_PATH.match(value):
-            errors.append(f"{where}.args.{key}: абсолютный путь {value!r}; используй путь относительно рабочей папки")
 
         if not isinstance(properties[key], dict):
             if properties[key] is False:

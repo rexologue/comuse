@@ -114,8 +114,8 @@ class Mailbox:
 
 
     def uid(self, command, uid, items):
-        if items == "(FLAGS RFC822.SIZE)":
-            return "OK", [f"1 (UID {uid} FLAGS (\\Seen \\Answered \\Recent $Важно) RFC822.SIZE {self.size})".encode()]
+        if items.startswith("(FLAGS RFC822.SIZE"):
+            return "OK", [f'1 (UID {uid} FLAGS (\\Seen \\Answered \\Recent $Важно) RFC822.SIZE {self.size} INTERNALDATE "28-Oct-2026 09:15:00 +0300")'.encode()]
 
         self.bodies += 1
         parts = [b"1 (FLAGS (\\Seen))"] if self.unsolicited else []

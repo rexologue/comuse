@@ -126,20 +126,34 @@ def _card(step: Step, catalog: dict[str, dict[str, Any]]) -> dict[str, Any]:
         "id": step.id,
         "tool": step.tool,
         "confirm": manifest.get("confirm"),
-        "text": step.title or _format_card(template, step.args, fallback=manifest.get("title") or step.tool or step.id),
+        "text": step.title or _format_card(template, step.args, fallback=manifest.get("title") or step.tool or step.id, schema=manifest.get("input_schema")),
         "args": step.args,
         "children": [],
     }
 
 
-def _format_card(template: str, args: dict[str, Any], *, fallback: str) -> str:
+def _format_card(template: str, args: dict[str, Any], *, fallback: str, schema: dict[str, Any] | None = None) -> str:
     """The card with the step's arguments; a card a person or the chat wrote may be
-    broken (`{0}`, `{amount:.2f}`, a lone `{`), and then it is just the tool's title."""
-    values = {key: _readable(value) for key, value in args.items()}
+    broken (`{0}`, `{amount:.2f}`, a lone `{`), and then it is just the tool's title.
+    An argument not given reads as its default; a part of the card all of whose
+    arguments are empty is left out — «прочитано — —, важное — —» says nothing."""
+    defaults = {name: prop.get("default") for name, prop in ((schema or {}).get("properties") or {}).items() if isinstance(prop, dict)}
+    values = {key: _readable(value) for key, value in {**defaults, **args}.items()}
 
     try:
-        fields = {name for _, name, _, _ in string.Formatter().parse(template) if name}
-        return template.format(**{name: values.get(name, "—") for name in fields})
+        pieces = re.split(r"(, |; |: )", template)
+        kept: list[str] = []
+        for i in range(0, len(pieces), 2):
+            names = {name for _, name, _, _ in string.Formatter().parse(pieces[i]) if name}
+            if names and all(values.get(name, "—") == "—" for name in names):
+                continue
+            if kept:
+                kept.append(pieces[i - 1])
+            kept.append(pieces[i])
+
+        text = "".join(kept)
+        fields = {name for _, name, _, _ in string.Formatter().parse(text) if name}
+        return text.format(**{name: values.get(name, "—") for name in fields}) or fallback
 
     except (ValueError, IndexError, KeyError, AttributeError):
         return fallback

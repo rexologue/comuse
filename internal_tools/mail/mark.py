@@ -57,7 +57,10 @@ _ROLES = {"inbox": "во входящие", "archive": "в архив", "junk": 
 @tool(
     name="mail.mark",
     title="Пометить письма",
-    card="Пометить письма {uids} в «{account}»: прочитано — {seen}, важное — {flagged}, метки {add_labels}, переложить в «{move_to}» {move_to_role}",
+    card=(
+        "Пометить письма {uids} в «{account}»: прочитано — {seen}, важное — {flagged}, отвечено — {answered}, "
+        "метки {add_labels}, снять метки {remove_labels}, переложить в «{move_to}», переложить в особую папку {move_to_role}"
+    ),
     description=(
         "Mark emails read/unread, flagged or answered, add or remove labels and/or move them to a folder or to the "
         "mailbox's archive, junk, trash (to delete) or inbox. A task marks what it has handled with a label of its own, "
