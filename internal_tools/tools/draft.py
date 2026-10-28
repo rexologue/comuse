@@ -31,7 +31,10 @@ class Input(ToolInput):
     )
     output_schema: dict[str, Any] = Field(description="JSON Schema ответа (type: object)")
     files: dict[str, str] = Field(
-        description="Файлы: путь → текст. Обязателен main.py с def run(args, ctx), который возвращает dict"
+        description=(
+            "Файлы команды: путь → текст. Обязателен main.py с def run(args, ctx), который возвращает dict. "
+            "Путь — внутри папки команды (main.py) или как его показывает tools.show (<действие>/main.py): это одно и то же"
+        )
     )
     requirements: list[str] = Field(default_factory=list, description="Пакеты из PyPI, например ['pandas>=2']")
 

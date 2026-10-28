@@ -11,6 +11,8 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
 from common.errors import ApiError
+from common.storage.db import session
+from common.storage.models import Account
 from common.tools import ToolError
 from executor.plugins import store
 from executor.plugins.launch import check_draft as run_check
@@ -47,7 +49,7 @@ async def get_code(name: str, which: Literal["current", "draft"], request: Reque
 
 @router.put("/plugins/{name}/draft", summary="Write the plugin's draft (new or in place)")
 async def put_draft(name: str, body: Draft, request: Request):
-    return await _call(
+    view = await _call(
         store.save_draft,
         request.app.state.settings.storage,
         name,
@@ -56,11 +58,16 @@ async def put_draft(name: str, body: Draft, request: Request):
         requirements=body.requirements,
         taken_groups=request.app.state.registry.builtin_groups(),
     )
+    # A new plugin's own account kind: accounts of it can be made to try the draft.
+    request.app.state.plugins.offer_kind(name)
+
+    return view
 
 
 @router.delete("/plugins/{name}/draft", summary="Throw the draft away")
 async def delete_draft(name: str, request: Request):
     await _call(store.drop_draft, request.app.state.settings.storage, name)
+    request.app.state.plugins.offer_kind(name)
 
     return {"status": "deleted"}
 
@@ -89,17 +96,44 @@ async def restart(name: str, request: Request):
     return request.app.state.plugins.state(name)
 
 
-@router.delete("/plugins/{name}", summary="Remove the plugin: its server, approved code and draft")
+@router.delete("/plugins/{name}", summary="Remove the plugin: its server, approved code, draft and the accounts of its own kind")
 async def remove(name: str, request: Request):
+    kinds = _own_kinds(name)
+
     await request.app.state.plugins.stop(name)
     await _call(store.remove, request.app.state.settings.storage, name)
 
-    return {"status": "deleted"}
+    # Accounts of a kind only this plugin had: their secrets are for nothing now, and a
+    # plugin made later with the same kind must not inherit them.
+    with session() as db:
+        accounts = db.query(Account).filter(Account.kind.in_(kinds)).all() if kinds else []
+        names = sorted(account.name for account in accounts)
+        for account in accounts:
+            request.app.state.secrets.delete(account.secret_ref)
+            db.delete(account)
+        db.commit()
+
+    return {"status": "deleted", "accounts_deleted": names}
+
+
+def _own_kinds(name: str) -> set[str]:
+    """The account kinds the plugin declared as its own (with fields), in its code or draft."""
+    kinds = set()
+    for which in ("current", "draft"):
+        row = store.row(name, which)
+        account = (row.manifest or {}).get("account") if row else None
+        if account and account.get("fields") is not None:
+            kinds.add(account["kind"])
+
+    return kinds
 
 
 async def _call(fn, *args, **kwargs):
     try:
         return await asyncio.to_thread(fn, *args, **kwargs)
+
+    except store.NotFound as e:
+        raise ApiError(status_code=404, message=str(e)) from e
 
     except ToolError as e:
         raise ApiError(status_code=400, message=str(e)) from e

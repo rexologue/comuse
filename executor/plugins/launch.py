@@ -112,24 +112,36 @@ def first_account(load: Callable[[str], Credential]) -> FirstAccount:
     return find
 
 
-def kind_of(plugin: str, manifest: PluginManifest) -> AccountKind | None:
-    """The plugin's own account kind, if its manifest declares one (`account.fields`)."""
+def kind_of(plugin: str, manifest: PluginManifest, *, draft: bool = False) -> AccountKind | None:
+    """The plugin's own account kind, if its manifest declares one (`account.fields`);
+    a draft's, before the plugin was ever approved, so that it can be tried with one."""
     spec = manifest.account
     if spec is None or spec.fields is None:
         return None
 
     required = [field.name for field in spec.fields if field.required]
+    fields = {field.name: field for field in spec.fields}
 
     def prepare(config: dict[str, Any]) -> dict[str, Any]:
         missing = [name for name in required if not config.get(name)]
         if missing:
             raise ValueError(f"не хватает настроек: {', '.join(missing)}")
 
+        # What the form offers is what the account may hold: a typo is not a setting.
+        unknown = sorted(set(config) - set(fields))
+        if unknown:
+            raise ValueError(f"нет таких настроек: {', '.join(unknown)}; есть: {', '.join(fields)}")
+
+        for name, value in config.items():
+            field = fields[name]
+            if field.type == "choice" and value not in (None, "") and str(value) not in field.choices:
+                raise ValueError(f"{field.title}: «{value}» — нужно одно из: {', '.join(field.choices)}")
+
         return config
 
     return AccountKind(
         name=spec.kind,
-        title=spec.title or manifest.title,
+        title=(spec.title or manifest.title) + (" (черновик плагина)" if draft else ""),
         fields=tuple(
             AccountField(f.name, f.title, type=f.type, required=f.required, choices=tuple(f.choices), hint=f.hint, default=f.default)
             for f in spec.fields
@@ -166,6 +178,12 @@ class Plugins:
 
         for row in store.rows("current"):
             await self.start(row.name)
+
+        # A plugin that is a draft only: its own account kind, to try it with an account.
+        current = {row.name for row in store.rows("current")}
+        for row in store.rows("draft"):
+            if row.name not in current:
+                self.offer_kind(row.name)
 
 
     async def start(self, name: str) -> None:
@@ -208,8 +226,22 @@ class Plugins:
                 await self.start(row.name)
 
 
-    def _offer_kind(self, name: str, manifest: PluginManifest) -> None:
-        kind = kind_of(name, manifest)
+    def offer_kind(self, name: str) -> None:
+        """After a draft is written or thrown away: the kind of the approved code if there
+        is one, else the draft's, else none."""
+        current, draft = store.row(name, "current"), store.row(name, "draft")
+        row = current or draft
+
+        if row is None:
+            if name in self._kinds:
+                drop_account_kind(self._kinds.pop(name), name)
+            return
+
+        self._offer_kind(name, PluginManifest.model_validate(row.manifest), draft=current is None)
+
+
+    def _offer_kind(self, name: str, manifest: PluginManifest, *, draft: bool = False) -> None:
+        kind = kind_of(name, manifest, draft=draft)
 
         if name in self._kinds and (kind is None or self._kinds[name] != kind.name):
             drop_account_kind(self._kinds.pop(name), name)

@@ -54,6 +54,10 @@ log = logging.getLogger("upstream")
 # How long a server may take to start and list its tools.
 _START_TIMEOUT_SEC = 60
 
+# A server idle this long is pinged before a call: its process may have died meanwhile.
+_PING_AFTER_IDLE_SEC = 10
+_PING_TIMEOUT_SEC = 5
+
 # A tool without an output schema answers in text: {"text": …} is its output.
 TEXT_OUTPUT = {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}
 
@@ -172,9 +176,28 @@ class Upstream:
 
 
     async def ensure_running(self) -> None:
-        if self._session is None or self._task is None or self._task.done():
-            log.info("upstream %s is not running: starting it", self.group)
-            await self.start()
+        """A server that is not running, or one whose process died meanwhile (a kill, a
+        crash between calls), is started anew before the call: the call is not lost to
+        a process that is no longer there."""
+        if self._session is not None and self._task is not None and not self._task.done():
+            # A dead process looks alive until it is spoken to; a ping is not a call,
+            # so a failed one is safe to answer with a restart. Not before every call of
+            # a burst: one that just answered is there.
+            if time.monotonic() - self._last_used < _PING_AFTER_IDLE_SEC:
+                return
+
+            try:
+                await asyncio.wait_for(self._session.send_ping(), _PING_TIMEOUT_SEC)
+                return
+
+            except Exception as e:
+                log.warning("upstream %s did not answer a ping (%r): starting it anew", self.group, e)
+                # This process only: the account servers are processes of their own.
+                async with self._starting:
+                    await self._end()
+
+        log.info("upstream %s is not running: starting it", self.group)
+        await self.start()
 
 
     async def call(self, name: str, arguments: dict[str, Any], meta: dict[str, Any] | None = None) -> types.CallToolResult:
@@ -196,7 +219,7 @@ class Upstream:
         session, task, stop = self._session, self._task, self._stop
 
         try:
-            return await session.call_tool(name, arguments, meta=meta)
+            return await self._unless_stopped(session.call_tool(name, arguments, meta=meta), stop)
 
         except asyncio.CancelledError:
             # No call goes to it any more; its process is stopped in the background.
@@ -221,6 +244,29 @@ class Upstream:
         except RuntimeError as e:
             # The SDK checks a result against the tool's output schema.
             raise ToolError(f"Ответ сервера «{self.group}» не по схеме инструмента: {e}") from e
+
+
+    async def _unless_stopped(self, call: Any, stop: asyncio.Event) -> types.CallToolResult:
+        """The call's answer, or an error as soon as this server is stopped (a restart, new
+        code approved): its answer would never come, and the call would wait out its
+        timeout for nothing."""
+        answer = asyncio.ensure_future(call)
+        stopped = asyncio.ensure_future(stop.wait())
+
+        try:
+            await asyncio.wait({answer, stopped}, return_when=asyncio.FIRST_COMPLETED)
+
+        except asyncio.CancelledError:
+            answer.cancel()
+            stopped.cancel()
+            raise
+
+        stopped.cancel()
+        if answer.done():
+            return answer.result()
+
+        answer.cancel()
+        raise ToolError(f"Сервер «{self.group}» остановлен посреди вызова (перезапуск или новый код плагина): дошёл ли вызов, неизвестно")
 
 
     async def _serve(self) -> None:

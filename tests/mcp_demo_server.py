@@ -48,6 +48,19 @@ def raw_command(command: str) -> str:
     return command
 
 
+@server.tool(description="Номер процесса сервера")
+def pid() -> int:
+    return os.getpid()
+
+
+@server.tool(description="Ждёт столько секунд")
+def slow(sec: float) -> str:
+    import time
+
+    time.sleep(sec)
+    return "done"
+
+
 @server.tool(description="Всегда ошибка")
 def fail() -> str:
     raise ValueError("сломалось")

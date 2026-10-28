@@ -35,6 +35,10 @@ MANIFEST = "plugin.json"
 _RESERVED = {MANIFEST, deps.REQUIREMENTS, deps.LOCK}
 
 _LOCKS: dict[str, threading.Lock] = {}
+
+
+class NotFound(ToolError):
+    """No such plugin, or no draft (or approved code) of it."""
 _LOCKS_GUARD = threading.Lock()
 
 
@@ -72,8 +76,17 @@ def save_draft(
             )
 
         folder = plugin_dir(storage, name, "draft")
-        # Packages first, aside: when they do not resolve, the draft stays as it was.
-        lock_text, packages = code.resolve(folder, requirements, storage.uv_cache_dir)
+        # Packages first, aside: when they do not resolve, the draft stays as it was —
+        # and a plugin that was not there before leaves no empty folder behind.
+        try:
+            lock_text, packages = code.resolve(folder, requirements, storage.uv_cache_dir)
+
+        except ToolError:
+            with session() as db:
+                known = db.query(Plugin).filter_by(name=name).count()
+            if not known:
+                shutil.rmtree(storage.plugins_dir / name, ignore_errors=True)
+            raise
         code.write(
             folder,
             files,
@@ -122,7 +135,10 @@ def save_tool(
     prefix = f"{action}/"
 
     manifest["tools"] = [tool for tool in manifest["tools"] if tool["name"] != action] + [{**entry, "name": action, "entry": f"{prefix}main.py"}]
-    merged = {path: text for path, text in kept.items() if not path.startswith(prefix)} | {prefix + path: text for path, text in files.items()}
+    # tools.show gives a command's files as `<action>/main.py`: written back the same way,
+    # they are the same files, not `<action>/<action>/main.py`.
+    own = {path.removeprefix(prefix): text for path, text in files.items()}
+    merged = {path: text for path, text in kept.items() if not path.startswith(prefix)} | {prefix + path: text for path, text in own.items()}
     packages = list(dict.fromkeys([*kept_requirements, *requirements]))
 
     return save_draft(
@@ -185,7 +201,7 @@ def drop_draft(storage: StorageSettings, name: str) -> None:
     with _lock(name), session() as db:
         draft = _row(db, name, "draft")
         if draft is None:
-            raise ToolError(f"У плагина «{name}» нет черновика")
+            raise NotFound(f"У плагина «{name}» нет черновика")
 
         shutil.rmtree(plugin_dir(storage, name, "draft"), ignore_errors=True)
         db.delete(draft)
@@ -200,7 +216,7 @@ def approve(storage: StorageSettings, name: str, seen_hash: str) -> dict[str, An
             row = _row(db, name, "draft")
 
         if row is None:
-            raise ToolError(f"У плагина «{name}» нет черновика")
+            raise NotFound(f"У плагина «{name}» нет черновика")
 
         if row.hash != seen_hash:
             raise ToolError("Черновик изменился, пока вы его читали: посмотрите его ещё раз")
@@ -231,7 +247,7 @@ def remove(storage: StorageSettings, name: str) -> None:
     """The plugin whole: its approved code and its draft."""
     with _lock(name), session() as db:
         if not db.query(Plugin).filter_by(name=name).count():
-            raise ToolError(f"Плагина «{name}» нет")
+            raise NotFound(f"Плагина «{name}» нет")
 
         db.query(Plugin).filter_by(name=name).delete()
         db.commit()
@@ -277,7 +293,7 @@ def view(storage: StorageSettings, name: str, which: Which, *, files: bool = Fal
         found = _row(db, name, which)
 
     if found is None:
-        raise ToolError(f"У плагина «{name}» нет {'черновика' if which == 'draft' else 'одобренного кода'}")
+        raise NotFound(f"У плагина «{name}» нет {'черновика' if which == 'draft' else 'одобренного кода'}")
 
     result = {
         **_summary(found),
