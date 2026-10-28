@@ -21,7 +21,7 @@ from common.errors import ApiError
 from common.llm import LLM, LLMNotConfigured
 from common.settings import Settings
 from common.tools import tool_name
-from common.utils import truncate
+from common.utils import shrink
 
 
 log = logging.getLogger("loop")
@@ -29,9 +29,18 @@ log = logging.getLogger("loop")
 # Tool results are cut before they go back into the context window.
 _RESULT_CHARS = 6000
 
+# A reply this short («да», «нет», «продолжай») says little by itself: the tools for the
+# turn are chosen by what it answers too.
+_SHORT_REPLY_CHARS = 80
+
 _MODEL_ATTEMPTS = 3
 
 _STALLED = "Не получилось завершить работу. Попробуйте переформулировать просьбу."
+_LIMIT = (
+    "Шаги на этот ход закончились, инструменты больше не вызывай. Коротко скажи пользователю: что из просьбы "
+    "сделано (по результатам вызовов выше), что не сделано и почему, и спроси, продолжать ли."
+)
+_LIMIT_FALLBACK = "Я сделал много шагов подряд и остановился: {done}. Напишите, продолжать ли."
 _NUDGE = "Ты остановился без ответа. Продолжи работу инструментами или коротко сообщи пользователю результат."
 
 
@@ -93,12 +102,16 @@ class AgentLoop:
             history.add_message(session_id, "assistant", content)
             return TurnResult(session_id=session_id, content=content)
 
-        manifests = await self.catalog.select(user_text, always=history.used_tools(session_id))
+        query = user_text if len(user_text) >= _SHORT_REPLY_CHARS else f"{history.answered_text(session_id)}\n{user_text}"
+        manifests = await self.catalog.select(query, always=history.used_tools(session_id))
         by_function = {m["function_name"]: m for m in manifests}
         tools = [to_function(m) for m in manifests] + meta_tools.DEFINITIONS
 
         result = TurnResult(session_id=session_id, content="")
         nudged = False
+        # The calls of this turn that failed, by what was called: the same call again
+        # would fail the same way, and a turn of fifteen such calls says nothing.
+        failed: dict[str, str] = {}
 
         for _ in range(tunables.get("agent_max_iterations")):
             messages = [{"role": "system", "content": system_prompt(datetime.now().astimezone(), collect(manifests, "agent"))}]
@@ -126,13 +139,32 @@ class AgentLoop:
                 return result
 
             for call in tool_calls:
-                try:
-                    output = await self._dispatch(session_id, message_id, call, by_function)
+                # A tool the model reached outside this turn's selection joins it: its next
+                # calls come with the schema, not guessed.
+                if (added := await self._offer(call, by_function)) is not None:
+                    manifests.append(added)
+                    tools.insert(len(tools) - len(meta_tools.DEFINITIONS), to_function(added))
 
-                except Exception as e:
-                    # Every call gets its result, or the chat could not go on.
-                    log.exception("tool call %s failed", call["function"]["name"])
-                    output = {"status": "error", "error": f"Сбой: {e}"}
+                key = f"{call['function']['name']}:{call['function'].get('arguments') or ''}"
+                if key in failed:
+                    output = {
+                        "status": "error",
+                        "error": (
+                            f"Этот вызов с теми же аргументами уже не удался: {failed[key]}. Не повторяй его: "
+                            "измени аргументы, если знаешь как, или скажи пользователю, что не получилось и почему."
+                        ),
+                    }
+                else:
+                    try:
+                        output = await self._dispatch(session_id, message_id, call, by_function)
+
+                    except Exception as e:
+                        # Every call gets its result, or the chat could not go on.
+                        log.exception("tool call %s failed", call["function"]["name"])
+                        output = {"status": "error", "error": f"Сбой: {e}"}
+
+                    if output.get("status") == "error":
+                        failed[key] = str(output.get("error"))[:300]
 
                 event = {"tool": tool_name(call["function"]["name"]), "status": output.get("status")}
                 result.tool_events.append(event)
@@ -143,15 +175,48 @@ class AgentLoop:
                 history.add_message(
                     session_id,
                     "tool",
-                    truncate(output, _RESULT_CHARS),
+                    shrink(output, _RESULT_CHARS),
                     tool_call_id=call["id"],
                     name=call["function"]["name"],
                 )
 
-        result.content = "Я сделал много шагов подряд и остановился. Напишите, продолжать ли."
+        result.content = await self._limit_answer(session_id, manifests, result)
         history.add_message(session_id, "assistant", result.content)
 
         return result
+
+
+    async def _limit_answer(self, session_id: str, manifests: list[dict[str, Any]], result: TurnResult) -> str:
+        """Out of steps: the model says, without tools, what got done and what did not —
+        not a bare «stopped» after a dozen calls the user cannot see."""
+        messages = [{"role": "system", "content": system_prompt(datetime.now().astimezone(), collect(manifests, "agent"))}]
+        messages += history.llm_history(session_id, tunables.get("agent_history_messages"))
+        messages.append({"role": "user", "content": _LIMIT})
+
+        try:
+            reply = await self._complete(messages, [])
+            if reply.get("content") and not reply.get("tool_calls"):
+                return reply["content"]
+
+        except ApiError as e:
+            log.warning("limit answer failed: %s", e.message)
+
+        ok = sum(1 for event in result.tool_events if event["status"] in ("ok", "confirmed"))
+        errors = sum(1 for event in result.tool_events if event["status"] == "error")
+
+        return _LIMIT_FALLBACK.format(done=f"вызовов — {len(result.tool_events)}, удачных — {ok}, с ошибкой — {errors}")
+
+
+    async def _offer(self, call: dict[str, Any], by_function: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+        name = call["function"]["name"]
+        if name in by_function or name in meta_tools.NAMES or name == "action_confirm":
+            return None
+
+        manifest = (await self.catalog.manifests()).get(tool_name(name))
+        if manifest is not None:
+            by_function[name] = manifest
+
+        return manifest
 
 
     async def _complete(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> dict[str, Any]:

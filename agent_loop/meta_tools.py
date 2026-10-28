@@ -54,7 +54,14 @@ DEFINITIONS: list[dict[str, Any]] = [
         {"task_id": _STR, "instruction": _STR},
         ["task_id", "instruction"],
     ),
-    _fn("task_list", "Список задач пользователя с их шагами и расписанием.", {}),
+    _fn("task_list", "Список задач пользователя: шаги, расписание словами, настройки и черновик, который ждёт одобрения.", {}),
+    _fn(
+        "task_runs",
+        "Последние запуски задачи (новые сначала): run_id, когда, пробный или нет, чем закончился. Подробности — run_status.",
+        {"task_id": _STR},
+        ["task_id"],
+    ),
+    _fn("accounts_list", "Аккаунты пользователя (почтовые ящики и другие): имя для аргумента account, вид, адрес. Без паролей.", {}),
     _fn("task_run_now", "Запустить задачу прямо сейчас.", {"task_id": _STR}, ["task_id"]),
     _fn(
         "task_control",
@@ -86,6 +93,8 @@ TITLES = {
     "task_reject": "Отклонить черновик",
     "task_patch": "Изменить задачу",
     "task_list": "Список задач",
+    "task_runs": "Запуски задачи",
+    "accounts_list": "Аккаунты",
     "task_run_now": "Запустить задачу",
     "task_control": "Пауза, возобновление или архив задачи",
     "run_status": "Состояние запуска",
@@ -180,11 +189,59 @@ async def _patch(main: MainClient, session_id: str, args: dict[str, Any]) -> Any
 
 async def _list(main: MainClient, session_id: str, args: dict[str, Any]) -> Any:
     data = await main.get("/tasks")
+    # A draft waiting for the user is part of what the task is now: the chat names it.
+    drafts = {item["task_id"]: item for item in (await main.get("/approvals")).get("approvals", [])}
 
+    # Steps by their card text: every task must fit the model's view, however many there
+    # are — a list cut short would hide the one the user asked about.
     return [
-        {"task_id": t["id"], "title": t["title"], "status": t["status"], "trigger": t["trigger"], "steps": t["cards"]}
+        {
+            "task_id": t["id"],
+            "title": t["title"],
+            "status": t["status"],
+            "schedule": t.get("schedule"),
+            "steps": _step_texts(t["cards"]),
+            "settings": t.get("settings") or {},
+            "draft": (
+                {"version_id": draft["version_id"], "summary": draft.get("summary"), "steps": _step_texts(draft.get("cards") or [])}
+                if (draft := drafts.get(t["id"])) else None
+            ),
+        }
         for t in data["tasks"]
     ]
+
+
+def _step_texts(cards: list[dict[str, Any]], depth: int = 0) -> list[str]:
+    texts = []
+    for card in cards:
+        texts.append(("  " * depth) + card["text"])
+        texts += _step_texts(card.get("children") or [], depth + 1)
+
+    return texts
+
+
+async def _runs(main: MainClient, session_id: str, args: dict[str, Any]) -> Any:
+    runs = (await main.get(f"/tasks/{args['task_id']}/runs?include_empty=true"))["runs"]
+
+    return [
+        {
+            "run_id": run["id"],
+            "status": run["status"],
+            "dry_run": run.get("dry_run"),
+            "trigger": run.get("trigger"),
+            "started_at": run.get("started_at"),
+            "finished_at": run.get("finished_at"),
+            "error": run.get("error"),
+        }
+        for run in runs[:10]
+    ]
+
+
+async def _accounts(main: MainClient, session_id: str, args: dict[str, Any]) -> Any:
+    data = await main.get("/accounts")
+    accounts = data.get("accounts", data) if isinstance(data, dict) else data
+
+    return [{"name": a["name"], "kind": a["kind"], "address": (a.get("config") or {}).get("email")} for a in accounts]
 
 
 async def _run_now(main: MainClient, session_id: str, args: dict[str, Any]) -> Any:
@@ -200,8 +257,10 @@ async def _run_status(main: MainClient, session_id: str, args: dict[str, Any]) -
 
     return {
         "status": run["status"],
+        "dry_run": run.get("dry_run"),
         "error": run["error"],
         "result": run["result"],
+        # Finished ones: the step that runs now is not in the list until it ends.
         "steps": [{"step": s["step_key"], "status": s["status"], "error": s.get("error")} for s in run["steps"]],
     }
 
@@ -212,6 +271,8 @@ HANDLERS: dict[str, Handler] = {
     "task_reject": _reject,
     "task_patch": _patch,
     "task_list": _list,
+    "task_runs": _runs,
+    "accounts_list": _accounts,
     "task_run_now": _run_now,
     "task_control": _control,
     "run_status": _run_status,

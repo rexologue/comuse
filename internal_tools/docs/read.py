@@ -12,12 +12,15 @@ from internal_tools.docs.reader import read_document
 class Input(ToolInput):
     path: FileRefs = Field(description="Документ (docx, xlsx, pdf, txt, md, csv), список документов или результат шага со списком файлов")
     max_chars: int = Field(default=20000, ge=100, le=200000, description="Обрезать текст каждого документа до стольких символов")
+    offset: int = Field(default=0, ge=0, description="С какого символа читать: для длинного документа — offset + max_chars прошлого вызова")
 
 
 class Document(BaseModel):
     path: str
     text: str
+    # The text goes on past this window: read on with offset + max_chars.
     truncated: bool
+    text_length: int = 0
 
 
 class Output(ToolOutput):
@@ -35,7 +38,7 @@ class Output(ToolOutput):
     card="Прочитать «{path}»",
     description=(
         "Read documents (docx, xlsx, pdf, txt, md, csv) as text; tables become markdown tables. "
-        "Its `text` is what a model step works on."
+        "Its `text` is what a model step works on. A long one is read in windows: offset, max_chars; truncated=true — there is more."
     ),
     confirm=False,
     core=True,
@@ -49,7 +52,8 @@ async def read(inp: Input, ctx: ToolContext) -> Output:
     for ref in refs:
         path = ctx.read_path(ref)
         text = await asyncio.to_thread(read_document, path)
-        documents.append(Document(path=ctx.to_ref(path), text=text[: inp.max_chars], truncated=len(text) > inp.max_chars))
+        end = inp.offset + inp.max_chars
+        documents.append(Document(path=ctx.to_ref(path), text=text[inp.offset : end], truncated=len(text) > end, text_length=len(text)))
 
     if len(documents) == 1:
         text = documents[0].text

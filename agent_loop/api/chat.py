@@ -17,8 +17,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from agent_loop import history, meta_tools
 from agent_loop.loop import TurnResult
+from common import tunables
 from common.errors import ApiError
-from common.utils import new_id
+from common.utils import new_id, truncate
 
 
 router = APIRouter()
@@ -49,6 +50,18 @@ async def models():
 async def chat_completions(body: ChatRequest, request: Request):
     session_id = body.session_id or (body.metadata or {}).get("session_id")
     user_text = _last_user_text(body.messages)
+
+    # Refused before anything is kept: a stored message the model cannot take in would
+    # break every later turn of the chat, the window always holding the current one whole.
+    limit = tunables.get("agent_message_max_chars")
+    if len(user_text) > limit:
+        raise ApiError(
+            status_code=413,
+            message=(
+                f"Сообщение слишком длинное: {len(user_text)} символов, можно до {limit}. "
+                "Положите текст в файл в рабочей папке и попросите его прочитать"
+            ),
+        )
 
     if session_id is None:
         session_id = history.find_session(_earlier_dialogue(body.messages))
@@ -115,7 +128,9 @@ async def post_message(session_id: str, body: PostedMessage):
         raise ApiError(status_code=404, message=f"Session `{session_id}` not found")
 
     # Its own role: it may arrive in the middle of a turn, and it is not the model's words.
-    message_id = history.add_message(session_id, "notice", body.content)
+    # Cut, not refused: the run that sent it is over, and a notice too long for the model
+    # would break the chat as a message would.
+    message_id = history.add_message(session_id, "notice", truncate(body.content, tunables.get("agent_message_max_chars")))
 
     return {"session_id": session_id, "message_id": message_id}
 

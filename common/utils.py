@@ -45,6 +45,74 @@ def truncate(value: Any, limit: int = 4000) -> str:
     return f"{text[:limit]}… [обрезано, всего {len(text)} символов]"
 
 
+def shrink(value: Any, limit: int) -> str:
+    """JSON of `value` within `limit` characters, every field kept: the longest strings
+    are shortened (each says how much is left out), then the longest lists. A cut through
+    the whole text would drop whatever comes after a long field — `truncated`, the list
+    of attachments — and the model would not know they exist."""
+    text = json.dumps(value, ensure_ascii=False, default=str)
+    if len(text) <= limit or not isinstance(value, (dict, list)):
+        return truncate(value, limit)
+
+    value = json.loads(text)
+
+    for _ in range(200):
+        excess = len(text) - limit
+        if excess <= 0:
+            return text
+
+        holder, key, item = _largest(value)
+        if holder is None:
+            break
+
+        if isinstance(item, str):
+            keep = max(100, len(item) - excess - 80)
+            if keep >= len(item):
+                break
+            holder[key] = f"{item[:keep]}… [обрезано: показано {keep} из {len(item)} символов]"
+
+        else:
+            # In one cut, by the size of an item: a list cut again would count its own marker.
+            size = len(json.dumps(item, ensure_ascii=False, default=str))
+            keep = max(3, int(len(item) * max(0, size - excess - 80) / size))
+            if keep >= len(item):
+                break
+            holder[key] = [*item[:keep], f"… [ещё {len(item) - keep} из {len(item)}]"]
+
+        text = json.dumps(value, ensure_ascii=False, default=str)
+
+    return truncate(text, limit)
+
+
+def _largest(value: Any) -> tuple[Any, Any, Any]:
+    """The longest string (over 100 characters) or the largest list (over 3 items)
+    inside `value`, with what holds it."""
+    best: tuple[int, Any, Any, Any] = (0, None, None, None)
+    lists: tuple[int, Any, Any, Any] = (0, None, None, None)
+
+    def walk(node: Any) -> None:
+        nonlocal best, lists
+        pairs = node.items() if isinstance(node, dict) else enumerate(node)
+        for key, item in pairs:
+            if isinstance(item, str) and len(item) > 100 and len(item) > best[0]:
+                best = (len(item), node, key, item)
+            elif isinstance(item, (dict, list)):
+                if isinstance(item, list) and len(item) > 3:
+                    size = len(json.dumps(item, ensure_ascii=False, default=str))
+                    if size > lists[0]:
+                        lists = (size, node, key, item)
+                walk(item)
+
+    walk(value)
+
+    # Whichever frees more: one long text, or a list of many short items.
+    string_saves = best[0] - 100 if best[1] is not None else 0
+    list_saves = lists[0] * (1 - 3 / len(lists[3])) if lists[1] is not None else 0
+    found = best if string_saves >= list_saves and best[1] is not None else lists
+
+    return found[1], found[2], found[3]
+
+
 def extract_json(text: str) -> Any:
     """Parse JSON from an LLM reply, tolerating ```json fences and surrounding prose."""
     cleaned = strip_think(text)

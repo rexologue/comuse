@@ -233,6 +233,22 @@ def update_trace(trace_id: int, *, status: str, result: Any) -> None:
         db.commit()
 
 
+def answered_text(session_id: str) -> str:
+    """What the user's latest message answers: the assistant's last words and the user's
+    message before them («Переслать 3 письма и пометить?» — «да»)."""
+    with session() as db:
+        rows = (
+            db.query(ChatMessage)
+            .filter(ChatMessage.session_id == session_id, ChatMessage.role.in_(("user", "assistant")), ChatMessage.content != "")
+            .order_by(ChatMessage.id.desc())
+            .limit(3)
+            .all()
+        )
+
+    # rows[0] is the message being answered now; the two before it are its context.
+    return "\n".join(row.content for row in reversed(rows[1:]))
+
+
 def used_tools(session_id: str) -> set[str]:
     with session() as db:
         rows = db.query(TraceEvent.tool).filter(TraceEvent.session_id == session_id).distinct().all()
