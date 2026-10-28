@@ -35,6 +35,9 @@ _FETCH_UID_RE = re.compile(rb"\bUID (\d+)")
 _SIZE_RE = re.compile(rb"\bRFC822\.SIZE (\d+)")
 _FLAGS_RE = re.compile(rb"\bFLAGS \(([^)]*)\)")
 _MSGID_RE = re.compile(r"<[^<>\s]+>")
+# A subject that is a reply already (Re:, RE[2]:, Ответ:, AW: …), a forward already (Fwd:, FW:, Пересл:).
+_RE_RE = re.compile(r"^\s*(re|ответ|aw|sv)\s*(\[\d+\])?\s*:", re.IGNORECASE)
+_FWD_RE = re.compile(r"^\s*(fwd?|пересл)\s*(\[\d+\])?\s*:", re.IGNORECASE)
 
 # A bigger letter is not read: its text and files are more than a step should take in.
 MAX_LETTER_BYTES = 50 * 2**20
@@ -122,8 +125,8 @@ def search(
     return found
 
 
-def _fetch_headers(imap: imaplib.IMAP4, uids: list[int]) -> dict[int, bytes]:
-    status, parts = imap.uid("FETCH", ",".join(map(str, uids)), "(UID BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE)])")
+def _fetch_headers(imap: imaplib.IMAP4, uids: list[int], fields: str = "FROM TO SUBJECT DATE") -> dict[int, bytes]:
+    status, parts = imap.uid("FETCH", ",".join(map(str, uids)), f"(UID BODY.PEEK[HEADER.FIELDS ({fields})])")
     if status != "OK":
         return {}
 
@@ -171,27 +174,33 @@ def matches(item: dict[str, Any], *, sender: str | None, subject: str | None, se
     return True
 
 
+def _fetch_letter(imap: imaplib.IMAP4, folder: str, uid: int) -> tuple[EmailMessage, bytes]:
+    """The whole letter and what the server says of it (its flags, its size)."""
+    _select(imap, folder, readonly=True)
+
+    # Its size first: a letter of hundreds of megabytes is not downloaded to be refused.
+    status, parts = imap.uid("FETCH", str(uid), "(FLAGS RFC822.SIZE)")
+    info = b" ".join(part[0] if isinstance(part, tuple) else part for part in parts or [] if part) if status == "OK" else b""
+    size = _SIZE_RE.search(info)
+    if size is None:
+        raise ToolError(f"Письмо {uid} в «{folder}» не найдено")
+
+    if int(size.group(1)) > MAX_LETTER_BYTES:
+        raise ToolError(f"Письмо {uid} весит {int(size.group(1)) // 2**20} МБ — больше {MAX_LETTER_BYTES // 2**20} МБ, его не скачать")
+
+    status, parts = imap.uid("FETCH", str(uid), "(BODY.PEEK[])")
+    # The letter is the literal after BODY[]: an unsolicited FETCH (new flags) may come first.
+    raw = next((part[1] for part in parts or [] if isinstance(part, tuple) and b"BODY[]" in part[0]), None) if status == "OK" else None
+    if raw is None:
+        raise ToolError(f"Письмо {uid} в «{folder}» не найдено")
+
+    return message_from_bytes(raw, policy=policy.default), info
+
+
 def read(config: dict[str, Any], secret: str, *, folder: str, uid: int, save_dir: Path) -> dict[str, Any]:
     with _imap(config, secret) as imap:
-        _select(imap, folder, readonly=True)
+        message, info = _fetch_letter(imap, folder, uid)
 
-        # Its size first: a letter of hundreds of megabytes is not downloaded to be refused.
-        status, parts = imap.uid("FETCH", str(uid), "(FLAGS RFC822.SIZE)")
-        info = b" ".join(part[0] if isinstance(part, tuple) else part for part in parts or [] if part) if status == "OK" else b""
-        size = _SIZE_RE.search(info)
-        if size is None:
-            raise ToolError(f"Письмо {uid} в «{folder}» не найдено")
-
-        if int(size.group(1)) > MAX_LETTER_BYTES:
-            raise ToolError(f"Письмо {uid} весит {int(size.group(1)) // 2**20} МБ — больше {MAX_LETTER_BYTES // 2**20} МБ, его не скачать")
-
-        status, parts = imap.uid("FETCH", str(uid), "(BODY.PEEK[])")
-        # The letter is the literal after BODY[]: an unsolicited FETCH (new flags) may come first.
-        raw = next((part[1] for part in parts or [] if isinstance(part, tuple) and b"BODY[]" in part[0]), None) if status == "OK" else None
-        if raw is None:
-            raise ToolError(f"Письмо {uid} в «{folder}» не найдено")
-
-    message = message_from_bytes(raw, policy=policy.default)
     text, files = letter.text_and_files(message)
 
     attachments = [_save_file(save_dir, _attachment_name(file.filename or _unnamed(file, n), n), file.content) for n, file in enumerate(files, start=1)]
@@ -212,6 +221,81 @@ def read(config: dict[str, Any], secret: str, *, folder: str, uid: int, save_dir
         "text": text,
         "attachments": attachments,
     }
+
+
+def thread_of(config: dict[str, Any], secret: str, *, folder: str, uid: int) -> dict[str, Any]:
+    """What a reply to the letter takes from it: its subject and its place in the thread."""
+    with _imap(config, secret) as imap:
+        _select(imap, folder, readonly=True)
+        raw = _fetch_headers(imap, [uid], "SUBJECT MESSAGE-ID IN-REPLY-TO REFERENCES").get(uid)
+
+    if raw is None:
+        raise ToolError(f"Письмо {uid} в «{folder}» не найдено")
+
+    headers = message_from_bytes(raw, policy=policy.default)
+
+    return {
+        "subject": _header(headers, "Subject"),
+        "message_id": (_MSGID_RE.findall(_header(headers, "Message-ID")) or [None])[0],
+        "in_reply_to": (_MSGID_RE.findall(_header(headers, "In-Reply-To")) or [None])[0],
+        "references": _MSGID_RE.findall(_header(headers, "References")),
+    }
+
+
+def forward_message(
+    config: dict[str, Any],
+    secret: str,
+    *,
+    folder: str,
+    uid: int,
+    to: list[str],
+    cc: list[str],
+    bcc: list[str],
+    note: str,
+    attachments: bool,
+) -> EmailMessage:
+    """A new letter that carries the source's text and files under the note. Only what
+    we write goes in: none of the source's own headers (Received, its Bcc, its DKIM)."""
+    with _imap(config, secret) as imap:
+        source, _ = _fetch_letter(imap, folder, uid)
+
+    text, files = letter.text_and_files(source)
+
+    fields = {"От": "From", "Дата": "Date", "Тема": "Subject", "Кому": "To", "Копия": "Cc"}
+    quoted = ["---------- Пересылаемое письмо ----------"]
+    quoted += [f"{label}: {_header(source, name)}" for label, name in fields.items() if _header(source, name)]
+
+    body = "\n\n".join(part for part in (note.strip(), "\n".join(quoted), text) if part)
+    subject = _header(source, "Subject")
+
+    message = build_message(
+        config,
+        to=to,
+        cc=cc,
+        bcc=bcc,
+        subject=subject if _FWD_RE.match(subject) else f"Fwd: {subject}",
+        body=body,
+        attachments=[],
+    )
+
+    for n, file in enumerate(files if attachments else [], start=1):
+        name = _attachment_name(file.filename or _unnamed(file, n), n)
+        if file.content_type == "message/rfc822":
+            message.add_attachment(message_from_bytes(file.content, policy=policy.default), filename=name)
+        else:
+            maintype, _, subtype = file.content_type.partition("/")
+            message.add_attachment(file.content, maintype=maintype, subtype=subtype or "octet-stream", filename=name)
+
+    return message
+
+
+def set_flag(config: dict[str, Any], secret: str, *, folder: str, uid: int, flag: str) -> None:
+    with _imap(config, secret) as imap:
+        _select(imap, folder, readonly=False)
+
+        status, data = imap.uid("STORE", str(uid), "+FLAGS", f"({flag})")
+        if status != "OK" or not data or data[0] is None:
+            raise ToolError(f"Письмо {uid} в «{folder}» не найдено")
 
 
 def _flags(match: re.Match | None) -> list[str]:
@@ -270,16 +354,37 @@ def build_message(
     subject: str,
     body: str,
     attachments: list[Path],
+    bcc: list[str] = (),
+    reply_to: str | None = None,
+    parent: dict[str, Any] | None = None,
 ) -> EmailMessage:
+    """`parent` (thread_of): the letter this one answers — the thread headers mail
+    clients group by, and Re: before the subject unless it is there."""
     message = EmailMessage()
     message["From"] = config["email"]
     message["To"] = ", ".join(to)
     if cc:
         message["Cc"] = ", ".join(cc)
+    # Kept in our copies (Drafts, Sent) as mail clients do; smtplib leaves it out of what goes out.
+    if bcc:
+        message["Bcc"] = ", ".join(bcc)
+    if reply_to:
+        message["Reply-To"] = reply_to
+
     # A line break from a model's text is not a header error: one line, as mail clients do.
-    message["Subject"] = " ".join(subject.split())
+    subject = " ".join(subject.split())
+    if parent is not None and not _RE_RE.match(subject):
+        subject = f"Re: {subject}"
+    message["Subject"] = subject
+
+    if parent is not None and parent["message_id"]:
+        ancestors = parent["references"] or [parent["in_reply_to"]] * bool(parent["in_reply_to"])
+        message["In-Reply-To"] = parent["message_id"]
+        message["References"] = " ".join([*ancestors, parent["message_id"]])
+
     message["Date"] = formatdate(localtime=True)
-    message["Message-ID"] = make_msgid()
+    # The sender's domain, not this machine's name: that is no one's business, and spam filters frown at it.
+    message["Message-ID"] = make_msgid(domain=config["email"].rsplit("@", 1)[-1])
     message.set_content(body)
 
     for path in attachments:
@@ -290,16 +395,38 @@ def build_message(
     return message
 
 
+class DeliveryUnknown(ToolError):
+    """The connection broke while the letter itself was going: it may have been delivered."""
+
+
 def send(config: dict[str, Any], secret: str, message: EmailMessage) -> dict[str, str]:
     """The recipients the server refused (address → its answer); the others got it."""
     with _smtp(config, secret) as smtp:
+        # Which part of the talk broke: before DATA nothing went out, a refusal of the
+        # data is a refusal; a connection lost during it leaves the letter's fate unknown.
+        data = smtp.data
+        sending = []
+
+        def data_phase(msg):
+            sending.append(True)
+            return data(msg)
+
+        smtp.data = data_phase
+
         try:
             refused = smtp.send_message(message)
 
         except smtplib.SMTPRecipientsRefused as e:
             raise ToolError(f"Сервер не принял ни одного адресата: {_refusals(e.recipients)}") from e
 
-        except (smtplib.SMTPException, OSError) as e:
+        except smtplib.SMTPResponseException as e:
+            # The server answered with a refusal: nothing went out.
+            raise ToolError(f"Не удалось отправить письмо: {e}") from e
+
+        # SMTPException is an OSError too: a lost connection, a timeout.
+        except OSError as e:
+            if sending:
+                raise DeliveryUnknown(f"Связь с сервером оборвалась, пока письмо передавалось: {e or type(e).__name__}") from e
             raise ToolError(f"Не удалось отправить письмо: {e}") from e
 
     return _refusals(refused)
