@@ -4,6 +4,7 @@ started as a process of its own, like a plugin's server."""
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import TypedDict
 
 from mcp.server.fastmcp import FastMCP
@@ -29,6 +30,22 @@ def say_hi(name: str) -> str:
 @server.tool(description="Имена переменных окружения процесса")
 def env_names() -> list[str]:
     return sorted(os.environ)
+
+
+@server.tool(description="Читает файлы по полным путям")
+def read_files(paths: list[str]) -> list[str]:
+    return [Path(path).read_text(encoding="utf-8") for path in paths]
+
+
+@server.tool(description="Пишет файл по полному пути")
+def write_file(path: str, text: str) -> str:
+    Path(path).write_text(text, encoding="utf-8")
+    return path
+
+
+@server.tool(description="Сырая команда протокола")
+def raw_command(command: str) -> str:
+    return command
 
 
 @server.tool(description="Всегда ошибка")

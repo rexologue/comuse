@@ -133,3 +133,38 @@ async def test_a_dry_run_calls_only_what_never_asks_of_a_server_that_cannot_do_o
     assert added.output == {"sum": 3}
     assert hi.output == {} and any("не вызван" in line for line in hi.logs)
     assert registry.manifest("demo.add") is None   # closed: nothing left in the catalog
+
+
+async def test_the_plugin_names_the_servers_path_arguments_and_hides_tools(settings, env):
+    """A server knows nothing of our workspace: the manifest says which of its arguments
+    are paths, and the executor checks them and gives them as full paths (answers back as
+    refs); a tool the manifest hides is not in the catalog."""
+    manifest = {
+        "title": "Демо", "command": ["python"], "confirm_by_tool": {"read_files": False},
+        "path_args": {"read_files": {"paths": "refs"}, "write_file": {"path": "path"}},
+        "hidden_tools": ["raw_command"],
+    }
+    (env / "workspace" / "a.txt").write_text("первый", encoding="utf-8")
+
+    registry = ToolRegistry(settings.storage)
+    registry.load()
+    await registry.connect(_upstream(manifest=manifest))
+    runtime = ExecutorRuntime(settings, registry, secrets=None)
+
+    try:
+        read = await _call(runtime, "demo.read_files", {"paths": ["a.txt"]})
+        outside = await _call(runtime, "demo.read_files", {"paths": ["../../etc/passwd"]})
+        written = await _call(runtime, "demo.write_file", {"path": "b.txt", "text": "второй"})
+        shown = registry.manifest("demo.write_file")["input_schema"]["properties"]["path"]
+        hidden = registry.manifest("demo.raw_command")
+
+    finally:
+        await registry.close()
+
+    assert read.output == {"result": ["первый"]}
+    assert outside.status == "error" and "Нет доступа" in outside.error
+    # Written where the workspace says; the answer's full path comes back as a ref.
+    assert (env / "workspace" / "b.txt").read_text(encoding="utf-8") == "второй"
+    assert written.output == {"result": "b.txt"}
+    assert shown["x-path"] == "path"
+    assert hidden is None

@@ -125,6 +125,14 @@ class PluginManifest(BaseModel):
     # and per tool (its name on the server). A server's own hints are only its word.
     confirm: Confirm = True
     confirm_by_tool: dict[str, Confirm] = Field(default_factory=dict)
+    # A server's arguments that are workspace paths, per tool (its name on the server):
+    # {"send_email": {"attachments": "refs"}}. The executor checks them (inside the
+    # workspace) and gives them as full paths, as for our own {"x-path": …} marks; the
+    # server's schema cannot say it, it knows nothing of our workspace.
+    path_args: dict[str, dict[str, Literal["path", "refs"]]] = Field(default_factory=dict)
+    # A server's tools the model never sees (by their names on the server): a raw
+    # protocol command, what the plugin should not do here.
+    hidden_tools: list[str] = Field(default_factory=list)
     # The plugin does as a dry run asks (_meta context.dry_run): our functions do (ctx.dry_run),
     # a server from elsewhere does not unless it says so; then in a dry run only its tools
     # that never ask are called.

@@ -44,6 +44,7 @@ from mcp.shared.exceptions import McpError
 from common.tools import Confirm, Credential, ToolContext, ToolError, function_name
 from common.tools.context import PermissionDenied
 from common.tools.definition import definition_hash
+from common.tools.fields import PATH_ARG
 from executor.plugins.manifest import PluginManifest, account_env, path_args
 
 
@@ -232,10 +233,14 @@ class Upstream:
 
 
     def specs(self) -> dict[str, UpstreamToolSpec]:
-        """Its tools as `<group>.<tool>`; a tool whose name clashes with another is left out."""
+        """Its tools as `<group>.<tool>`; one the plugin hides, or whose name clashes with
+        another, is left out."""
         found: dict[str, UpstreamToolSpec] = {}
 
         for tool in self.tools:
+            if tool.name in self.manifest.hidden_tools:
+                continue
+
             name = f"{self.group}.{_local_name(tool.name)}"
             if name in found:
                 log.error("upstream %s: tool %s clashes with another one, left out", self.group, tool.name)
@@ -297,7 +302,7 @@ class UpstreamToolSpec:
         manifest = upstream.manifest
         entry = manifest.entry_of(tool.name)
         title = tool.title or (tool.annotations.title if tool.annotations and tool.annotations.title else None) or tool.name
-        schema = _with_account(tool.inputSchema, manifest)
+        schema = _with_paths(_with_account(tool.inputSchema, manifest), manifest.path_args.get(tool.name, {}))
 
         return cls(
             name=name,
@@ -310,7 +315,7 @@ class UpstreamToolSpec:
             output_schema=tool.outputSchema or TEXT_OUTPUT,
             upstream=upstream,
             remote_name=tool.name,
-            path_args=path_args(tool.inputSchema),
+            path_args=path_args(schema),
             secrets=("account",) if manifest.account else (),
             _validator=jsonschema.Draft202012Validator(schema),
         )
@@ -423,6 +428,9 @@ class UpstreamToolSpec:
         if kind == "refs" and isinstance(value, list):
             return [str(ctx.read_path(item)) if isinstance(item, str) else item for item in value]
 
+        if kind == "refs" and isinstance(value, str):
+            return str(ctx.read_path(value))
+
         return value
 
 
@@ -440,6 +448,26 @@ def _with_account(schema: dict[str, Any], manifest: PluginManifest) -> dict[str,
 
     properties["account"] = {"type": "string", "description": f"Имя аккаунта из настроек (вид {spec.kind})"}
     schema["required"] = ["account", *(name for name in schema.get("required", []) if name not in (spec.argument, "account"))]
+
+    return schema
+
+
+def _with_paths(schema: dict[str, Any], marks: dict[str, str]) -> dict[str, Any]:
+    """The arguments the plugin's manifest names as workspace paths, marked as ours are
+    ({"x-path": …}): the model sees them as paths in the workspace, the executor checks them."""
+    if not marks:
+        return schema
+
+    schema = copy.deepcopy(schema)
+
+    for name, kind in marks.items():
+        prop = (schema.get("properties") or {}).get(name)
+        if not isinstance(prop, dict):
+            continue
+
+        target = prop["items"] if kind == "refs" and isinstance(prop.get("items"), dict) else prop
+        target[PATH_ARG] = "path" if target is not prop else kind
+        prop["description"] = (prop.get("description", "") + " Пути — в рабочей папке, как их дают другие команды.").strip()
 
     return schema
 
