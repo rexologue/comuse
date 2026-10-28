@@ -13,6 +13,7 @@ from mcp.shared.exceptions import McpError
 
 from common.errors import ApiError
 from common.settings import ServiceSettings
+from common.tools.definition import Catalog
 from common.tools.mcp_codec import call_meta, manifest_of, response_of
 from common.utils import error_body
 
@@ -116,12 +117,15 @@ class MainClient:
     # TOOLS (the executor's MCP server, through main)
     # -----------------------------
 
-    async def tools(self) -> dict[str, dict[str, Any]]:
-        """The commands by name: their manifests, each with its definition's hash."""
+    async def tools(self) -> Catalog:
+        """The commands by name: their manifests, each with its definition's hash; and
+        the plugins whose server is not running (`unavailable`)."""
         async with self._mcp() as session:
             result = await session.list_tools()
 
-        return {manifest["name"]: manifest for manifest in map(manifest_of, result.tools)}
+        unavailable = (result.meta or {}).get("unavailable")
+
+        return Catalog({manifest["name"]: manifest for manifest in map(manifest_of, result.tools)}, unavailable)
 
 
     async def call_tool(

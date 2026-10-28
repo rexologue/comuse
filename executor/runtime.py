@@ -60,6 +60,11 @@ class ExecutorRuntime:
         spec, manifest = self.registry.get(req.tool), self.registry.manifest(req.tool)
 
         if spec is None:
+            group = req.tool.split(".", 1)[0]
+            if group in self.registry.unavailable:
+                # Not gone: its plugin's server is not running. Not a change to review either.
+                return ExecuteResponse(status="error", error=f"Плагин «{group}» не запущен: {self.registry.unavailable[group]}")
+
             if req.hash is not None:
                 return ExecuteResponse(status="error", error=f"Инструмента `{req.tool}` больше нет", tool_changed=True)
 

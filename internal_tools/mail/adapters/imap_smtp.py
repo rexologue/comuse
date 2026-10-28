@@ -457,7 +457,10 @@ def send(config: dict[str, Any], secret: str, message: EmailMessage) -> dict[str
         smtp.data = data_phase
 
         try:
-            refused = smtp.send_message(message)
+            # Cyrillic text goes as 8-bit (and so does a forwarded letter, as it came): said
+            # so to a server that takes it, as RFC 6152 asks; smtplib never says it.
+            options = ["BODY=8BITMIME"] if smtp.has_extn("8bitmime") and _is_8bit(message) else []
+            refused = smtp.send_message(message, mail_options=options)
 
         except smtplib.SMTPRecipientsRefused as e:
             raise ToolError(f"Сервер не принял ни одного адресата: {_refusals(e.recipients)}") from e
@@ -473,6 +476,10 @@ def send(config: dict[str, Any], secret: str, message: EmailMessage) -> dict[str
             raise ToolError(f"Не удалось отправить письмо: {e}") from e
 
     return _refusals(refused)
+
+
+def _is_8bit(message: EmailMessage) -> bool:
+    return any(byte > 0x7F for byte in message.as_bytes())
 
 
 def _refusals(recipients: dict[str, tuple[int, bytes]]) -> dict[str, str]:

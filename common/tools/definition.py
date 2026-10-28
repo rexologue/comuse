@@ -41,6 +41,27 @@ LABELS = {
 }
 
 
+class Catalog(dict):
+    """The tools by name as the executor lists them, and `unavailable`: the plugins whose
+    server is not running (group → why). Their tools are missing for now, not gone: a
+    task that calls them waits for the plugin, it is not a task with other tools."""
+
+    def __init__(self, manifests: dict[str, dict[str, Any]] | None = None, unavailable: dict[str, str] | None = None):
+        super().__init__(manifests or {})
+        self.unavailable = dict(unavailable or {})
+
+
+def down(tools: Iterable[str], catalog: dict[str, dict[str, Any]]) -> dict[str, str]:
+    """{tool: why} for the tools of `tools` that are missing because their plugin is not running."""
+    unavailable = getattr(catalog, "unavailable", {})
+
+    return {
+        name: unavailable[name.split(".", 1)[0]]
+        for name in sorted(set(tools))
+        if name not in catalog and name.split(".", 1)[0] in unavailable
+    }
+
+
 def definition(manifest: dict[str, Any]) -> dict[str, Any]:
     return {key: manifest[key] for key in FIELDS if manifest.get(key) is not None}
 
@@ -62,9 +83,12 @@ def snapshot(tools: Iterable[str], catalog: dict[str, dict[str, Any]]) -> dict[s
 
 def changed(kept: dict[str, dict[str, Any]], tools: Iterable[str], catalog: dict[str, dict[str, Any]]) -> list[str]:
     """The tools of `tools` whose definition is not the kept one: changed, gone, or never
-    kept (a version from before definitions were kept has `{}` for each)."""
+    kept (a version from before definitions were kept has `{}` for each). A tool whose
+    plugin is not running is not among them (`down`)."""
+    missing = down(tools, catalog)
+
     return sorted(
-        name for name in set(tools)
+        name for name in set(tools) if name not in missing
         if name not in catalog or not kept.get(name, {}).get("hash") or kept[name]["hash"] != catalog[name].get("hash")
     )
 
@@ -92,6 +116,7 @@ def differences(kept: dict[str, dict[str, Any]], now: dict[str, dict[str, Any]])
 def changes(kept: dict[str, dict[str, Any]], catalog: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     """What changed in the kept tools since, those gone too: what the user reads before
     approving the task with the tools as they are now."""
-    gone = [{"tool": name, "fields": ["команды больше нет"]} for name in sorted(kept) if name not in catalog]
+    missing = down(kept, catalog)
+    gone = [{"tool": name, "fields": ["команды больше нет"]} for name in sorted(kept) if name not in catalog and name not in missing]
 
     return differences(kept, snapshot(kept, catalog)) + gone

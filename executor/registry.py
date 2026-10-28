@@ -27,6 +27,8 @@ class ToolRegistry:
         self._manifests: dict[str, dict[str, Any]] = {}
         # Servers whose tools are offered here, by their group.
         self.upstreams: dict[str, Upstream] = {}
+        # The plugins whose server is not running, by group: why (the catalog says so).
+        self.unavailable: dict[str, str] = {}
 
 
     def load(self) -> None:

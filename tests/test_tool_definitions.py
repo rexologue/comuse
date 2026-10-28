@@ -13,7 +13,7 @@ from common.schemas.task import TaskSpec
 from common.storage.db import session
 from common.storage.models import Run, Task, TaskVersion
 from common.tools import discover
-from common.tools.definition import changed, changes, definition_hash, snapshot
+from common.tools.definition import Catalog, changed, changes, definition_hash, down, snapshot
 from compiler import store
 from compiler.compile import Compiler
 from runner.engine import RunEngine
@@ -81,6 +81,18 @@ def test_a_tool_is_changed_when_its_hash_differs_it_is_gone_or_was_never_kept():
 
     assert changes(kept, {"demo.count": NEW_ARGS}) == [{"tool": "demo.count", "fields": ["аргументы"]}]
     assert changes(kept, {}) == [{"tool": "demo.count", "fields": ["команды больше нет"]}]
+
+
+def test_a_tool_whose_plugin_is_not_running_is_missing_not_gone():
+    kept = snapshot(["crm.find"], {"crm.find": V1 | {"name": "crm.find"}})
+    catalog = Catalog({}, {"crm": "не запустился: нет программы crm-mcp"})
+
+    assert down(["crm.find", "fs.list"], catalog) == {"crm.find": "не запустился: нет программы crm-mcp"}
+    # Not a change to review: the same plugin, its server is just not up.
+    assert changed(kept, ["crm.find"], catalog) == []
+    assert changes(kept, catalog) == []
+    # A plain catalog knows of no such plugins: a missing tool is gone.
+    assert changed(kept, ["crm.find"], {}) == ["crm.find"]
 
 
 async def test_a_draft_is_approved_only_with_the_tools_it_shows(settings):
@@ -156,6 +168,22 @@ async def test_a_run_whose_tools_changed_does_not_start_and_main_hears_of_it(set
     assert [(c["tools"], c["dry_run"]) for c in main.changed] == [(["fs.list"], False)]
 
 
+async def test_a_run_whose_plugin_is_not_running_fails_with_why_and_the_task_does_not_wait(settings):
+    main = FakeMain({})
+    main.tools = lambda: _async(Catalog({}, {"crm": "сервер завершился при запуске"}))
+    spec = {"title": "CRM", "steps": [{"id": "deals", "tool": "crm.find", "args": {}}]}
+
+    run = await RunEngine(main).execute(_run(spec, {"crm.find": {"hash": "h"}}))
+
+    assert run["status"] == "failed"
+    assert run["error"] == "Не запущены плагины задачи: «crm» — сервер завершился при запуске"
+    assert main.calls == [] and main.changed == []
+
+
+async def _async(value):
+    return value
+
+
 async def test_a_version_that_kept_no_definitions_does_not_run(settings):
     main = FakeMain({"fs.list": lambda args, ctx: {"output": {"files": []}}})
 
@@ -201,9 +229,13 @@ async def test_the_executor_refuses_a_call_for_another_definition(settings):
     stale = await runtime.execute(request("fs.list", "another"))
     gone = await runtime.execute(request("demo.gone", "another"))
     right = await runtime.execute(request("fs.list", registry.manifest("fs.list")["hash"]))
+    registry.unavailable["crm"] = "сервер завершился при запуске"
+    down_ = await runtime.execute(request("crm.find", "another"))
 
     assert stale.tool_changed and "изменился" in stale.error
     assert gone.tool_changed
+    # A plugin not running: why, and not a change of the task's tools.
+    assert down_.error == "Плагин «crm» не запущен: сервер завершился при запуске" and not down_.tool_changed
     assert right.status == "ok" and not right.tool_changed
 
 

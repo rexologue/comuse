@@ -147,7 +147,8 @@ class Plugins:
         self.registry      = registry
         self.storage       = storage
         self.first_account = first_account
-        self.errors: dict[str, str] = {}
+        # What went wrong with each, the registry's: the catalog tells whoever asks.
+        self.errors = registry.unavailable
         # The account kind each plugin declared, by plugin.
         self._kinds: dict[str, str] = {}
 

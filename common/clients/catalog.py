@@ -7,6 +7,7 @@ import time
 from typing import Any, Callable
 
 from common.clients.main_client import MainClient
+from common.tools.definition import Catalog
 
 
 _TTL_SEC = 60
@@ -25,7 +26,8 @@ class CatalogCache:
 
     async def get(self, *, fresh: bool = False) -> dict[str, dict[str, Any]]:
         if fresh or not self._manifests or time.monotonic() - self._loaded_at > _TTL_SEC:
-            self._manifests = {name: manifest for name, manifest in (await self.main.tools()).items() if self.keep(manifest)}
+            catalog = await self.main.tools()
+            self._manifests = Catalog({name: manifest for name, manifest in catalog.items() if self.keep(manifest)}, getattr(catalog, "unavailable", None))
             self._loaded_at = time.monotonic()
 
         return self._manifests

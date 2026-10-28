@@ -53,6 +53,8 @@ def configure_logging(settings: Settings) -> None:
 
     # httpx logs every request at INFO: each call between services and to the LLM.
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    # So does the MCP SDK: each tools/list and tools/call, each stateless session's end.
+    logging.getLogger("mcp").setLevel(logging.WARNING)
 
     path = log_file(settings)
     # uvicorn's own loggers (startup failures among them) do not reach the root one.

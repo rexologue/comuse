@@ -23,7 +23,7 @@ from common.schemas.task import Step, TaskSpec
 from common.storage.db import session
 from common.storage.models import RUN_FINISHED, Run, RunLog, Task, TaskVersion
 from common.storage.queries import run_detail
-from common.tools.definition import changed
+from common.tools.definition import changed, down
 from common.tools.settings import resolve
 from common.utils import truncate, utcnow
 
@@ -55,6 +55,13 @@ class _ToolsChanged(Exception):
         super().__init__(f"Изменились команды задачи: {', '.join(tools)}. Задача ждёт, пока вы посмотрите изменения и одобрите её с ними")
 
         self.tools = tools
+
+
+def _not_running(missing: dict[str, str]) -> str:
+    """Why the run did not start: the plugins whose server is not running, each with its reason."""
+    plugins = {tool.split(".", 1)[0]: why for tool, why in missing.items()}
+
+    return "Не запущены плагины задачи: " + "; ".join(f"«{name}» — {why}" for name, why in plugins.items())
 
 
 class RunEngine:
@@ -118,13 +125,16 @@ class RunEngine:
             return run_detail(run_id)
 
         try:
-            stale = changed(version.tools, spec.tools(), await self._catalog())
+            catalog = await self._catalog()
+            stale = changed(version.tools, spec.tools(), catalog)
 
         except ApiError as e:
             stale, error = None, f"Каталог инструментов недоступен: {e.message}"
 
         else:
-            error = str(_ToolsChanged(stale)) if stale else None
+            # A plugin that is not running: the task waits for it, nothing to review.
+            missing = down(spec.tools(), catalog)
+            error = _not_running(missing) if missing else str(_ToolsChanged(stale)) if stale else None
 
         if error:
             # Nothing ran: the run is closed before it starts, its reason in the log.

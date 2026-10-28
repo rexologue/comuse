@@ -55,10 +55,13 @@ def test_a_hidden_copy_is_in_our_copy_only():
 class FakeSMTP(smtplib.SMTP):
     """smtplib's own send_message over a talk we script: no socket."""
 
-    def __init__(self, fail_at: str | None, error: Exception):
+    def __init__(self, fail_at: str | None, error: Exception, extensions: tuple[str, ...] = ()):
         super().__init__()
-        self.fail_at, self.error = fail_at, error
+        self.fail_at, self.error, self.extensions = fail_at, error, extensions
+        # As after EHLO: smtplib passes MAIL options only then.
+        self.does_esmtp = True
         self.envelope: list[str] = []
+        self.options: list[str] = []
         self.sent: bytes | None = None
 
 
@@ -67,10 +70,11 @@ class FakeSMTP(smtplib.SMTP):
 
 
     def has_extn(self, name):
-        return False
+        return name.lower() in self.extensions
 
 
     def mail(self, sender, options=()):
+        self.options = list(options)
         if self.fail_at == "mail":
             raise self.error
         return 250, b"ok"
@@ -88,8 +92,8 @@ class FakeSMTP(smtplib.SMTP):
         return 250, b"ok"
 
 
-def _smtp(monkeypatch, fail_at=None, error=None) -> FakeSMTP:
-    smtp = FakeSMTP(fail_at, error)
+def _smtp(monkeypatch, fail_at=None, error=None, extensions=()) -> FakeSMTP:
+    smtp = FakeSMTP(fail_at, error, extensions)
     monkeypatch.setattr(imap_smtp._smtp, "__enter__", lambda self: smtp)
     monkeypatch.setattr(imap_smtp._smtp, "__exit__", lambda self, *exc: None)
     return smtp
@@ -102,6 +106,22 @@ def test_a_hidden_copy_goes_in_the_envelope_not_the_letter(monkeypatch):
 
     assert smtp.envelope == ["boss@company.ru", "secret@company.ru"]
     assert b"secret@company.ru" not in smtp.sent
+
+
+@pytest.mark.parametrize(
+    ("body", "extensions", "options"),
+    [
+        ("Добрый день", ("8bitmime",), ["BODY=8BITMIME"]),   # 8-bit text, said so
+        ("Hello", ("8bitmime",), []),                         # plain ASCII: nothing to say
+        ("Добрый день", (), []),                              # a server without it is not told what it does not know
+    ],
+)
+def test_an_8bit_letter_is_said_to_be_one(monkeypatch, body, extensions, options):
+    smtp = _smtp(monkeypatch, extensions=extensions)
+
+    imap_smtp.send(CONFIG, "", _build(body=body))
+
+    assert smtp.options == options
 
 
 @pytest.mark.parametrize(

@@ -130,6 +130,7 @@ async def test_the_services_client_reads_and_calls_through_mcp(settings, runtime
             return main
 
         main = client("test-token")
+        runtime.registry.unavailable["crm"] = "сервер завершился при запуске"
         tools = await main.tools()
         good = tools["fs.list"]["hash"]
         ok = await main.call_tool("fs.list", {"folder": "."}, hash=good, context=RUN["context"])
@@ -139,6 +140,8 @@ async def test_the_services_client_reads_and_calls_through_mcp(settings, runtime
             await client("forged").tools()
 
     assert tools["fs.list"] == runtime.registry.manifest("fs.list")
+    # The plugins not running come with the catalog: their tools are missing, not gone.
+    assert tools.unavailable == {"crm": "сервер завершился при запуске"}
     assert ok["status"] == "ok" and any(item["path"] == "a.txt" for item in ok["output"]["files"])
     assert stale["status"] == "error" and stale["tool_changed"] is True
     assert e.value.status_code == 401

@@ -24,8 +24,12 @@ def build_server(registry: ToolRegistry, runtime: ExecutorRuntime) -> Server:
     server = Server(NAME)
 
     @server.list_tools()
-    async def list_tools() -> list[types.Tool]:
-        return [tool_of(manifest) for manifest in registry.catalog()]
+    async def list_tools(request: types.ListToolsRequest) -> types.ListToolsResult:
+        # The plugins not running ride along: their tools are missing for now, not gone.
+        return types.ListToolsResult.model_validate({
+            "tools": [tool_of(manifest) for manifest in registry.catalog()],
+            "_meta": {"unavailable": dict(registry.unavailable)},
+        })
 
 
     # The arguments are checked by the pipeline, with its own messages: not twice.
