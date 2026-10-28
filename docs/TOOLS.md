@@ -128,7 +128,7 @@ Streamable HTTP без сессий, ответы JSON (`executor/mcp_server.py`
 | --- | --- |
 | Инструмент в `tools/list` | Остальной манифест: `hash`, `confirm`, `card`, `settings_schema`, `source`, `code_hash`… — из инструмента собирается ровно тот манифест, что сделал реестр |
 | Вызов `tools/call` | `hash` — хеш определения, с которым одобрили задачу (runner берёт его из версии задачи, чат не передаёт); `context` — `mode`, `run_id`, `step_key`, `tool_settings` (значения настроек для этого шага), `dry_run`, `session_id` |
-| Результат | `logs`, `notifications`, `artifacts`, `duration_ms`, `traceback`, `timed_out`, `tool_changed` |
+| Результат | `logs`, `notifications`, `artifacts`, `moved` (какой файл куда переложен: артефакт запуска в списке — там, где он теперь), `duration_ms`, `traceback`, `timed_out`, `tool_changed` |
 
 Ответ: `structuredContent` — вывод команды, `content` — он же текстом; ошибка — `isError`
 с текстом ошибки. `readOnlyHint` — у команд с `confirm: false`. Клиент, который о `_meta`

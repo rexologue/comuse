@@ -19,7 +19,7 @@ from common.schemas.task import TaskSpec
 from common.settings import Settings
 from common import templating
 from common.storage.models import TaskVersion
-from common.tools.definition import differences, snapshot
+from common.tools.definition import differences, down, snapshot
 from common.utils import strings_in
 from compiler import prompts, store, task_settings
 from compiler.cards import build_cards, describe_trigger, diff_specs, summarize
@@ -175,6 +175,19 @@ class Compiler:
         # Fresh: a command approved a moment ago is what the user means.
         catalog = await self.catalog(fresh=True)
 
+        tools = TaskSpec.model_validate(base.spec).tools()
+        missing = down(tools, catalog)
+        if missing:
+            raise ApiError(status_code=409, message=f"Не запущены плагины команд {', '.join(sorted(missing))}: обновлять пока нечем")
+
+        gone = sorted(set(tools) - set(catalog))
+        if gone:
+            # Not a change to approve: the steps have to go, the command come back.
+            raise ApiError(
+                status_code=409,
+                message=f"Команд {', '.join(gone)} больше нет: обновить нечем — уберите их шаги (словами в чате задачи) или верните команды",
+            )
+
         try:
             spec = validate_spec(base.spec, catalog)
 
@@ -209,10 +222,13 @@ class Compiler:
         cards = build_cards(spec, catalog)
         # Every version keeps the tools as they are now: a change since the base is shown.
         tools = snapshot(spec.tools(), catalog)
-        diff = diff_specs(TaskSpec.model_validate(base.spec), spec, catalog, differences(base.tools, tools))
-
-        if not diff["changes"]:
+        if not diff_specs(TaskSpec.model_validate(base.spec), spec, catalog, differences(base.tools, tools))["changes"]:
             raise ApiError(status_code=422, message="Изменение ничего не меняет в задаче")
+
+        # What the user approves is this against what runs now, not against a draft in
+        # between: a change built on an earlier one shows both.
+        active = store.active_version(task_id) or base
+        diff = diff_specs(TaskSpec.model_validate(active.spec), spec, catalog, differences(active.tools, tools))
 
         version = store.add_version(
             task_id,
@@ -242,7 +258,10 @@ class Compiler:
         if not version.parent_version_id:
             return {"changes": [], "lines": ["Первая версия задачи"]}
 
-        parent = store.get_version(task_id, version.parent_version_id)
+        # A draft against what runs now (what approving it changes); another against the
+        # version it was made from.
+        active = store.active_version(task_id) if version.status == "draft" else None
+        parent = active if active is not None and active.id != version.id else store.get_version(task_id, version.parent_version_id)
 
         return diff_specs(
             TaskSpec.model_validate(parent.spec),

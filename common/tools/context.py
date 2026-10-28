@@ -53,6 +53,8 @@ class ToolContext:
     # Accounts the executor loaded for the tool's `secrets` arguments, by argument name.
     credentials: dict[str, Credential] = field(default_factory=dict)
     artifacts: list[str] = field(default_factory=list)
+    # Files this call moved, ref → ref: what was a run's artifact is listed where it went.
+    moved: dict[str, str] = field(default_factory=dict)
     logs: list[str] = field(default_factory=list)
     notifications: list[str] = field(default_factory=list)
 

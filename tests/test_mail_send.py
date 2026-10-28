@@ -37,9 +37,10 @@ def test_a_reply_stays_in_its_thread(parent, in_reply_to, references):
     assert message["Subject"] == "Re: Счёт"
 
 
-@pytest.mark.parametrize("subject", ["Re: Счёт", "RE[2]: Счёт", "Ответ: Счёт", "AW: Счёт"])
+@pytest.mark.parametrize("subject", ["Счёт", "Re: Счёт", "RE[2]: Счёт", "Ответ: Счёт", "AW: Счёт", "Re: Re: Счёт", "Re:Re: RE: Счёт"])
 def test_a_reply_subject_gets_one_re(subject):
-    assert _build(subject=subject, parent={"message_id": None, "references": [], "in_reply_to": None})["Subject"] == subject
+    """However many prefixes it came with (a template's «Re: {{ subject }}» on a «Re:» letter)."""
+    assert _build(subject=subject, parent={"message_id": None, "references": [], "in_reply_to": None})["Subject"] == "Re: Счёт"
 
 
 def test_the_message_id_names_the_senders_domain():

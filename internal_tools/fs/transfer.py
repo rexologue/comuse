@@ -38,6 +38,7 @@ async def copy_file(inp: Input, ctx: ToolContext) -> Output:
 
     dst.parent.mkdir(parents=True, exist_ok=True)
     await asyncio.to_thread(shutil.copy2, src, dst)
+    ctx.artifacts.append(ctx.to_ref(dst))
 
     return Output(path=ctx.to_ref(dst))
 
@@ -57,8 +58,10 @@ async def move_file(inp: Input, ctx: ToolContext) -> Output:
         ctx.log(f"Пробный запуск: переложил бы «{ctx.to_ref(src)}» в «{ctx.to_ref(dst)}»")
         return Output(path=ctx.to_ref(dst))
 
+    source = ctx.to_ref(src)
     dst.parent.mkdir(parents=True, exist_ok=True)
     await asyncio.to_thread(shutil.move, src, dst)
+    ctx.moved[source] = ctx.to_ref(dst)
 
     return Output(path=ctx.to_ref(dst))
 

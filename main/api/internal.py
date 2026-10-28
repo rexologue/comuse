@@ -53,6 +53,8 @@ class ToolsChangedBody(BaseModel):
     run_id: str
     title: str
     tools: list[str]
+    # Those of `tools` the catalog has no more.
+    gone: list[str] = []
     dry_run: bool = False
 
 

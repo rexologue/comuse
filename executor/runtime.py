@@ -139,6 +139,7 @@ class ExecutorRuntime:
             status="ok",
             output=output,
             artifacts=ctx.artifacts,
+            moved=ctx.moved,
             logs=ctx.logs,
             notifications=ctx.notifications,
         )

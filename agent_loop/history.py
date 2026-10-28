@@ -382,7 +382,11 @@ def transcript(session_id: str) -> dict[str, Any]:
 
     return {
         "text": "\n".join(lines),
-        "done_tools": sorted({event.tool for event in trace if event.status in ("ok", "confirmed")}),
+        # A command tried by tools.try is a command that worked in the chat: the task may call it.
+        "done_tools": sorted(
+            {event.tool for event in trace if event.status in ("ok", "confirmed")}
+            | {str(event.args.get("name")) for event in trace if event.tool == "tools.try" and event.status in ("ok", "confirmed")}
+        ),
         "given": [m.content for m in messages if m.role == "user" and m.content]
         + [s for event in trace if event.status in ("ok", "needs_approval", "confirmed") for s in strings_in(event.args)],
     }

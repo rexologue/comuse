@@ -91,7 +91,7 @@ class Orchestrator:
         return result
 
 
-    async def tools_changed(self, *, task_id: str, run_id: str, title: str, tools: list[str], dry_run: bool) -> dict[str, Any]:
+    async def tools_changed(self, *, task_id: str, run_id: str, title: str, tools: list[str], dry_run: bool, gone: list[str] = ()) -> dict[str, Any]:
         """The runner refused a run: tools of the task are not the ones approved. The task
         pauses (its schedule with it) until the user reads the changes and approves the
         task with them; a dry run only says so in its own result."""
@@ -110,15 +110,22 @@ class Orchestrator:
                 raise
             paused = False
 
+        changed = [tool for tool in tools if tool not in gone]
+        said = []
+        if changed:
+            said.append(f"изменились команды {', '.join(f'`{tool}`' for tool in changed)}")
+        if gone:
+            said.append(f"команд {', '.join(f'`{tool}`' for tool in gone)} больше нет")
+        advice = (
+            "Уберите их шаги из задачи (попросите в этом чате) или верните команды, потом возобновите её."
+            if gone else "Посмотрите изменения в карточке задачи, одобрите её с ними и возобновите."
+        )
+
         await self.notify(
             task_id=task_id,
             run_id=run_id,
             title=title,
-            message=(
-                f"изменились команды {', '.join(f'`{tool}`' for tool in tools)}, и задача не запущена"
-                + (" и поставлена на паузу" if paused else "")
-                + ". Посмотрите изменения в карточке задачи, одобрите её с ними и возобновите."
-            ),
+            message=f"{' и '.join(said)}, и задача не запущена" + (" и поставлена на паузу" if paused else "") + f". {advice}",
         )
 
         return {"paused": paused}

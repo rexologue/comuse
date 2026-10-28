@@ -48,6 +48,13 @@ def validate_spec(data: Any, catalog: dict[str, dict[str, Any]]) -> TaskSpec:
     for name, expr in spec.variables.items():
         errors += [f"variables.{name}: {err}" for err in templating.check_syntax(expr)]
 
+        # Nobody fills it in: a task asks no one anything when it runs.
+        if not str(expr).strip():
+            errors.append(
+                f"variables.{name}: пустое значение — у задачи нет ввода при запуске; значение, которое задал "
+                "пользователь, впиши в аргументы шага, а вычисляемое (дата) — выражением"
+            )
+
         unknown = templating.referenced_names(expr) - templating.BUILTIN_NAMES - variable_names
         if unknown:
             errors.append(f"variables.{name}: неизвестные имена {sorted(unknown)}")
@@ -73,6 +80,8 @@ def _check_steps(
     `outputs` maps visible step ids to their tools' output schemas."""
     visible = set(scope)
     outputs = dict(outputs)
+    # The foreach steps above, by id: the ids of their own steps.
+    foreachs: dict[str, list[str]] = {}
 
     for i, step in enumerate(steps):
         where = f"{path}[{i}] ({step.id})"
@@ -87,14 +96,17 @@ def _check_steps(
             _check_names(templating.expression_names(step.foreach), visible, f"{where}.foreach", errors)
             _check_output_refs(step.foreach, outputs, catalog, f"{where}.foreach", errors)
             _check_steps(step.steps or [], visible | {step.as_}, outputs, catalog, errors, f"{where}.steps")
-            # A foreach yields a list of per-item results; its fields are not checked.
+            # A foreach yields a list of per-item results; their fields are not checked, but
+            # the two ways to get them wrong are (_check_foreach_refs).
             outputs[step.id] = None
+            foreachs[step.id] = [child.id for child in step.steps or []]
 
         else:
             _check_tool_step(step, visible, catalog, errors, where)
             _check_output_refs(step.args, outputs, catalog, f"{where}.args", errors)
             outputs[step.id] = catalog.get(step.tool or "", {}).get("output_schema")
 
+        _check_foreach_refs(step, foreachs, f"{where}", errors)
         visible.add(step.id)
 
 
@@ -177,6 +189,32 @@ def _check_output_refs(
                     break
 
                 node = properties[field]
+
+
+_TEMPLATE = re.compile(r"\{\{.*?\}\}|\{%.*?%\}", re.S)
+
+
+def _check_foreach_refs(step: Step, foreachs: dict[str, list[str]], where: str, errors: list[str]) -> None:
+    """A foreach's result is `<id>.output`, a list of {<as>: item, <step id>: its result}:
+    `{% for r in sort %}` (no .output) and `r.move.output.path` (a step's result there is
+    under its id, not under .output) pass every other check and fail at the run."""
+    texts = [step.when or "", step.foreach or "", *_strings(step.args)]
+
+    for text in texts:
+        for template in _TEMPLATE.findall(text):
+            for foreach_id, children in foreachs.items():
+                if re.search(rf"(?<![\w.]){foreach_id}\b(?!\.output)", template):
+                    errors.append(
+                        f"{where}: `{foreach_id}` — шаг foreach, его результат — `{foreach_id}.output` (список); "
+                        f"например {{% for r in {foreach_id}.output %}}"
+                    )
+
+                for child in children:
+                    if re.search(rf"[.'\"]{child}\.output\b", template):
+                        errors.append(
+                            f"{where}: в результате foreach `{foreach_id}` результат шага `{child}` лежит прямо под его id: "
+                            f"`r.{child}.<поле>`, без `.output`"
+                        )
 
 
 def _strings(value: Any) -> list[str]:

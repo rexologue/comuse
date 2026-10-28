@@ -137,6 +137,13 @@ def shown_version(task: Task) -> TaskVersion | None:
         )
 
 
+def active_version(task_id: str) -> TaskVersion | None:
+    task = get_task(task_id)
+
+    with session() as db:
+        return db.get(TaskVersion, task.current_version_id) if task.current_version_id else None
+
+
 def base_version(task_id: str) -> TaskVersion:
     """What a change builds on: the newest draft after the active version (the user is
     still shaping it: a second change must keep the first), else the active version."""
@@ -209,6 +216,14 @@ def reject(task_id: str, version_id: str) -> TaskVersion:
             raise ApiError(status_code=409, message=f"Version is {version.status}, only drafts can be rejected")
 
         version.status = "rejected"
+
+        # A task never approved, its last draft gone: nothing is left of it to run or to
+        # change. It goes to the archive, not to stay a «draft» with no draft.
+        task = db.get(Task, task_id)
+        waiting = db.query(TaskVersion).filter(TaskVersion.task_id == task_id, TaskVersion.status == "draft", TaskVersion.id != version_id).count()
+        if task is not None and task.current_version_id is None and not waiting:
+            task.status = "archived"
+
         db.commit()
 
     return version

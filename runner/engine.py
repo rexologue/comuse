@@ -51,10 +51,18 @@ class _ToolsChanged(Exception):
     """A tool is not the one the version was approved with: the run stops whatever the
     step's on_error says, and the task waits for its user (main decides how)."""
 
-    def __init__(self, tools: list[str]):
-        super().__init__(f"Изменились команды задачи: {', '.join(tools)}. Задача ждёт, пока вы посмотрите изменения и одобрите её с ними")
+    def __init__(self, tools: list[str], gone: list[str] = ()):
+        changed = [tool for tool in tools if tool not in gone]
+        said = []
+        if changed:
+            said.append(f"Изменились команды задачи: {', '.join(changed)}. Задача ждёт, пока вы посмотрите изменения и одобрите её с ними")
+        if gone:
+            # Nothing to approve it with: the step has to go, or the command come back.
+            said.append(f"Команд {', '.join(gone)} больше нет: уберите их шаги из задачи (попросите в её чате) или верните команды")
+        super().__init__(". ".join(said))
 
         self.tools = tools
+        self.gone = list(gone)
 
 
 def _not_running(missing: dict[str, str]) -> str:
@@ -134,7 +142,8 @@ class RunEngine:
         else:
             # A plugin that is not running: the task waits for it, nothing to review.
             missing = down(spec.tools(), catalog)
-            error = _not_running(missing) if missing else str(_ToolsChanged(stale)) if stale else None
+            gone = [tool for tool in stale if tool not in catalog]
+            error = _not_running(missing) if missing else str(_ToolsChanged(stale, gone)) if stale else None
 
         if error:
             # Nothing ran: the run is closed before it starts, its reason in the log.
@@ -145,7 +154,7 @@ class RunEngine:
                 {"run_id": run_id, "task_id": run.task_id, "title": task.title, "status": "failed", "error": error, "dry_run": run.dry_run},
             )
             if stale:
-                await self._report_changed(run, task, stale)
+                await self._report_changed(run, task, stale, gone)
 
             return run_detail(run_id)
 
@@ -217,12 +226,13 @@ class RunEngine:
         return await self.main.tools()
 
 
-    async def _report_changed(self, run: Run, task: Task, tools: list[str]) -> None:
-        """What becomes of the task is not the runner's: main hears which tools changed."""
+    async def _report_changed(self, run: Run, task: Task, tools: list[str], gone: list[str] = ()) -> None:
+        """What becomes of the task is not the runner's: main hears which tools changed,
+        and which of them are gone."""
         try:
             await self.main.post(
                 "/internal/tools-changed",
-                json={"task_id": run.task_id, "run_id": run.id, "title": task.title, "tools": tools, "dry_run": run.dry_run},
+                json={"task_id": run.task_id, "run_id": run.id, "title": task.title, "tools": tools, "gone": list(gone), "dry_run": run.dry_run},
             )
 
         except ApiError as e:
@@ -376,7 +386,9 @@ class _Walk:
                     raise
                 failed = str(e)
 
-            result = {child.id: inner.get(child.id, {}).get("output") for child in step.steps or []}
+            # The item itself, by its `as` name, beside its steps' results: what the
+            # results are about («счёт_45.pdf → Документы/счёт»), not just the results.
+            result = {step.as_: item, **{child.id: inner.get(child.id, {}).get("output") for child in step.steps or []}}
             results.append({**result, "error": failed} if failed else result)
 
         return await self._check_empty(step, key, {"items": len(items)}, results)
@@ -401,6 +413,9 @@ class _Walk:
                 raise _ToolsChanged([step.tool])
 
             status = response["status"]
+            # An artifact moved on is listed where it is now, not where it was.
+            moved = response.get("moved") or {}
+            self.state.artifacts = [moved.get(a, a) for a in self.state.artifacts]
             self.state.artifacts += [a for a in response.get("artifacts", []) if a not in self.state.artifacts]
 
             await self._deliver(response.get("notifications") or [], key)

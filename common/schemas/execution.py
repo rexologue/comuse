@@ -35,6 +35,8 @@ class ExecuteResponse(BaseModel):
     output: Any = None
     error: str | None = None
     artifacts: list[str] = Field(default_factory=list)
+    # Files the call moved (from → to): a run's artifact moved on is listed where it is now.
+    moved: dict[str, str] = Field(default_factory=dict)
     duration_ms: int = 0
     # The tool is not the one the task was approved with (`hash`): nothing ran.
     tool_changed: bool = False

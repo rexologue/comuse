@@ -473,7 +473,10 @@ def build_message(
 
     # A line break from a model's text is not a header error: one line, as mail clients do.
     subject = " ".join(subject.split())
-    if parent is not None and not _RE_RE.match(subject):
+    if parent is not None:
+        # One «Re:», however many the subject came with («Re: Re: Бюджет» from a template).
+        while _RE_RE.match(subject):
+            subject = _RE_RE.sub("", subject, count=1).lstrip()
         subject = f"Re: {subject}"
     message["Subject"] = subject
 

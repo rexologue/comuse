@@ -40,5 +40,6 @@ async def write_file(inp: Input, ctx: ToolContext) -> Output:
 
     path.parent.mkdir(parents=True, exist_ok=True)
     await asyncio.to_thread(path.write_text, inp.content, encoding="utf-8")
+    ctx.artifacts.append(ctx.to_ref(path))
 
     return Output(path=ctx.to_ref(path), size=path.stat().st_size)
