@@ -48,6 +48,7 @@ async def lifespan(app: FastAPI):
 
     sweepers = [
         asyncio.create_task(sweep_forever("output folders", lambda: sweep_outputs(settings.storage))),
+        asyncio.create_task(sweep_forever("idle account servers", app.state.plugins.stop_idle, every_sec=60)),
     ]
 
     try:

@@ -5,7 +5,7 @@ import asyncio
 from pydantic import Field
 
 from common.tools import ToolContext, ToolInput, tool
-from internal_tools.mail.accounts import mailbox
+from internal_tools.mail.accounts import check_recipients, mailbox
 from internal_tools.mail.addresses import EmailAddress
 from internal_tools.mail.adapters import imap_smtp
 from internal_tools.mail.send import Output, Settings, deliver, keeps_draft
@@ -38,6 +38,7 @@ class Input(ToolInput):
 )
 async def forward(inp: Input, ctx: ToolContext) -> Output:
     account = mailbox(ctx)
+    check_recipients(account, inp.to, inp.cc, inp.bcc)
 
     message = await asyncio.to_thread(
         imap_smtp.forward_message,

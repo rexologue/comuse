@@ -7,7 +7,7 @@ from pydantic import Field
 
 from common.tools import Credential, ToolContext, ToolInput, ToolOutput, ToolSettings, tool
 from common.tools.fields import WorkspacePath
-from internal_tools.mail.accounts import mailbox
+from internal_tools.mail.accounts import check_recipients, mailbox
 from internal_tools.mail.addresses import EmailAddress
 from internal_tools.mail.adapters import imap_smtp
 
@@ -49,6 +49,8 @@ class Output(ToolOutput):
 
 
 async def compose(inp: Input, ctx: ToolContext, account: Credential) -> EmailMessage:
+    check_recipients(account, inp.to, inp.cc, inp.bcc)
+
     parent = None
     if inp.in_reply_to is not None:
         parent = await asyncio.to_thread(imap_smtp.thread_of, account.config, account.secret, folder=inp.in_reply_to_folder, uid=inp.in_reply_to)

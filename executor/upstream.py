@@ -31,6 +31,7 @@ import json
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -79,8 +80,11 @@ class Upstream:
         # Whose account's settings this process has in its environment (account_key()).
         self.account_key = account_key
         self.on_change = on_change
-        # A plugin with accounts: a server per account, started at its first call.
+        # A plugin with accounts: a server per account, started at its first call and
+        # stopped when no call came for a while (stop_idle).
         self._accounts: dict[str, Upstream] = {}
+        self._last_used = time.monotonic()
+        self._busy = 0
 
         self.tools: list[types.Tool] = []
         self._session: ClientSession | None = None
@@ -140,7 +144,24 @@ class Upstream:
             child = Upstream(self.group, self.params.model_copy(update={"env": env}), self.manifest, code_hash=self.code_hash, account_key=key)
             self._accounts[credential.name] = child
 
+        # Its call comes next: not idle, whatever stop_idle sees meanwhile.
+        child._last_used = time.monotonic()
+
         return child
+
+
+    async def stop_idle(self, idle_sec: float) -> int:
+        """Stop the account servers no call came to for `idle_sec` (the next call starts
+        one anew); the one that gives the catalog its tools stays. How many stopped."""
+        now, stopped = time.monotonic(), 0
+
+        for name, child in list(self._accounts.items()):
+            if child._busy == 0 and now - child._last_used > idle_sec:
+                del self._accounts[name]
+                await child.stop()
+                stopped += 1
+
+        return stopped
 
 
     async def _end(self) -> None:
@@ -160,6 +181,16 @@ class Upstream:
         """One call. A server that went away is not called again here (whether the call
         reached it is unknown): it is stopped, and the next call starts it anew. So is a
         server whose call was given up (a timeout): what it still does is not waited for."""
+        self._busy += 1
+        try:
+            return await self._call(name, arguments, meta)
+
+        finally:
+            self._busy -= 1
+            self._last_used = time.monotonic()
+
+
+    async def _call(self, name: str, arguments: dict[str, Any], meta: dict[str, Any] | None) -> types.CallToolResult:
         await self.ensure_running()
         # This server, not whichever runs when the call ends: one started meanwhile stays.
         session, task, stop = self._session, self._task, self._stop

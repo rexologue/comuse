@@ -94,9 +94,9 @@ class ExecutorRuntime:
 
         try:
             # A built-in tool's input is its model, a plugin's a dict.
-            credentials = {
-                argument: self.load_credential(inp[argument] if isinstance(inp, dict) else getattr(inp, argument)) for argument in spec.secrets
-            }
+            # An optional one left empty (tools.try of a plugin without accounts) loads nothing.
+            named = {argument: inp.get(argument) if isinstance(inp, dict) else getattr(inp, argument) for argument in spec.secrets}
+            credentials = {argument: self.load_credential(name) for argument, name in named.items() if name is not None}
 
         except ToolError as e:
             return ExecuteResponse(status="error", error=str(e))

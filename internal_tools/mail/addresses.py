@@ -15,7 +15,7 @@ from pydantic import AfterValidator, Field
 _MASK_RE = re.compile(r"^(?:[^@\s*<>,;]+|\*)@[^@\s*<>,;]+$")
 
 
-def _check_mask(value: str) -> str:
+def check_mask(value: str) -> str:
     value = value.strip().lower()
 
     if not _MASK_RE.match(value):
@@ -24,7 +24,7 @@ def _check_mask(value: str) -> str:
     return value
 
 
-AddressMask = Annotated[str, AfterValidator(_check_mask), Field(description="Адрес (boss@company.ru) или все адреса домена (*@company.ru)")]
+AddressMask = Annotated[str, AfterValidator(check_mask), Field(description="Адрес (boss@company.ru) или все адреса домена (*@company.ru)")]
 
 
 _EMAIL_RE = re.compile(r"^[^@\s<>,;]+@[^@\s<>,;]+$")

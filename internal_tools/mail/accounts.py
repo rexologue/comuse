@@ -8,6 +8,7 @@ from common.tools import Credential, ToolContext, ToolError
 from common.tools.accounts import AccountField, AccountKind, account_kind
 from internal_tools.mail.adapters import imap_smtp
 from internal_tools.mail.adapters.presets import PRESETS
+from internal_tools.mail.addresses import check_mask, matches
 
 
 KIND = "imap_smtp"
@@ -27,6 +28,10 @@ def _prepare(config: dict[str, Any]) -> dict[str, Any]:
 
     except ToolError as e:
         raise ValueError(str(e)) from e
+
+    # Kept as the person wrote it; a mask that is not one is refused now, not at a send.
+    for mask in allowed_recipients(config):
+        check_mask(mask)
 
     # No username stored for the address: the login falls back to it, so editing the
     # address later does not leave a stale login behind.
@@ -51,6 +56,11 @@ account_kind(
             AccountField("drafts_folder", "Папка черновиков", hint="если не находится сама"),
             AccountField("sent_folder", "Папка отправленных", hint="если не находится сама"),
             AccountField(
+                "allowed_recipients",
+                "Кому можно писать",
+                hint="адреса и домены через запятую: boss@company.ru, *@company.ru; пусто — кому угодно",
+            ),
+            AccountField(
                 "save_sent",
                 "Копия в отправленных",
                 type="choice",
@@ -65,6 +75,23 @@ account_kind(
         check=imap_smtp.check,
     )
 )
+
+
+def allowed_recipients(config: dict[str, Any]) -> list[str]:
+    return [mask.strip().lower() for mask in str(config.get("allowed_recipients") or "").split(",") if mask.strip()]
+
+
+def check_recipients(account: Credential, *addresses: list[str]) -> None:
+    """A mailbox that may write only to some (`allowed_recipients`): a letter to anyone
+    else is not made at all — sent, forwarded or left in Drafts. What a letter the model
+    read asked it to do cannot widen this: the person sets it on the account."""
+    masks = allowed_recipients(account.config)
+    if not masks:
+        return
+
+    refused = [address for group in addresses for address in group if not matches(address, masks)]
+    if refused:
+        raise ToolError(f"С ящика «{account.name}» можно писать только {', '.join(masks)}; не разрешены: {', '.join(refused)}")
 
 
 def mailbox(ctx: ToolContext) -> Credential:

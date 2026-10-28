@@ -180,3 +180,47 @@ def test_placeholders_compare_and_an_empty_variable_is_not_set():
 
     assert plain == {"SSL": "false", "STARTTLS": "false", "PORT": "993"}
     assert default == {"SSL": "true", "STARTTLS": "false", "PORT": "993"}
+
+
+async def test_a_draft_for_accounts_is_tried_with_the_account_named(settings, tmp_path):
+    """tools.try: the person names the account; its process gets the account's settings,
+    and the card says the unapproved code gets its secret."""
+    secrets = SecretStore("file", "test", tmp_path / "secrets-try.enc", "test-password")
+    registry = ToolRegistry(settings.storage)
+    registry.load()
+    runtime = ExecutorRuntime(settings, registry, secrets)
+
+    store.save_draft(settings.storage, "trydemo", manifest={**MANIFEST, "account": {**MANIFEST["account"], "kind": "try_kind"}}, files={"main.py": WHOAMI}, requirements=[])
+    secrets.set("account:work", "secret-of-work")
+    with session() as db:
+        db.add(Account(id="acc_try", name="work", kind="try_kind", config={"host": "imap.work.test"}, secret_ref="account:work"))
+        db.commit()
+
+    def trial(args):
+        return runtime.execute(ExecuteRequest(tool="tools.try", args=args, context=ExecContext(mode="chat", session_id="ses_try")))
+
+    tried = await trial({"name": "trydemo.whoami", "args": {}, "account": "work"})
+    unnamed = await trial({"name": "trydemo.whoami", "args": {}})
+
+    assert tried.status == "ok", tried.error
+    assert tried.output["output"]["host"] == "imap.work.test" and tried.output["output"]["account"] == "work"
+    assert "укажи account" in unnamed.error
+    assert "получит его пароль" in registry.manifest("tools.try")["card"]
+
+    await registry.close()
+
+
+async def test_an_idle_account_server_is_stopped_and_the_next_call_starts_one(setup):
+    runtime, plugins, account = setup
+    account("work", host="imap.work.test")
+
+    first = await _whoami(runtime, "work")
+    assert await plugins.stop_idle() == 0               # not idle yet (15 minutes by default)
+
+    assert await runtime.registry.upstreams["demo"].stop_idle(0) == 1
+    again = await _whoami(runtime, "work")
+
+    assert again.output["pid"] != first.output["pid"]
+    # The catalog's own server is not one of them: it stays, its tools in the catalog.
+    catalog = runtime.registry.upstreams["demo"]
+    assert await catalog.stop_idle(0) == 1 and catalog._session is not None and "demo.whoami" in {m["name"] for m in runtime.registry.catalog()}

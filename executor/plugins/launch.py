@@ -23,6 +23,7 @@ from typing import Any, Callable
 
 from mcp import StdioServerParameters
 
+from common import tunables
 from common.settings import StorageSettings
 from common.storage.db import session
 from common.storage.models import Account, Plugin
@@ -222,6 +223,14 @@ class Plugins:
                 log.error("plugin %s: account kind %s is another's", name, kind.name)
 
 
+    async def stop_idle(self) -> int:
+        """The account servers idle for `plugin_account_idle_min`: stopped (each a process
+        holding an account's secret, kept for nothing)."""
+        idle_sec = tunables.get("plugin_account_idle_min") * 60
+
+        return sum([await upstream.stop_idle(idle_sec) for upstream in list(self.registry.upstreams.values())])
+
+
     def state(self, name: str) -> dict[str, Any]:
         upstream = self.registry.upstreams.get(name)
 
@@ -256,8 +265,10 @@ async def try_draft(storage: StorageSettings, name: str, tool: str, args: dict[s
     if row is None:
         raise ToolError(f"У плагина «{name}» нет черновика: сначала tools.draft")
 
-    if PluginManifest.model_validate(row.manifest).account is not None:
-        raise ToolError(f"Плагин «{name}» работает от имени аккаунта: его пробуют после одобрения")
+    # A plugin for accounts: the account the person named (tools.try's `account`, its
+    # secret loaded by the executor) runs a process of its own, as after approval.
+    if PluginManifest.model_validate(row.manifest).account is not None and "account" not in ctx.credentials:
+        raise ToolError(f"Плагин «{name}» работает от имени аккаунта: укажи account")
 
     upstream = await asyncio.to_thread(upstream_of, storage, row)
 

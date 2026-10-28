@@ -246,3 +246,62 @@ async def test_a_forward_in_a_dry_run_is_a_draft(monkeypatch, source):
     out = await forward(Input(account="work", uid=7, to=["boss@company.local"]), _send_context("run", {"send_directly": True}, dry_run=True))
 
     assert out.mode == "draft" and out.folder == "Drafts"
+
+
+def _guarded(mode="chat", **config):
+    from common.tools import ToolContext
+    from common.tools.context import Credential
+
+    account = {"email": "agent@company.ru", "allowed_recipients": "*@company.ru, Partner@Other.ru", **config}
+    return ToolContext(mode=mode, settings=None, paths=None, credentials={"account": Credential(name="work", kind="imap_smtp", config=account, secret="")})
+
+
+@pytest.mark.parametrize(
+    ("to", "cc", "bcc", "refused"),
+    [
+        (["boss@company.ru"], ["partner@other.ru"], [], None),             # masks and addresses, any case
+        (["boss@company.ru"], [], ["spy@evil.ru"], "spy@evil.ru"),         # a hidden copy is a recipient too
+        (["x@company.ru.evil.ru"], [], [], "x@company.ru.evil.ru"),       # the domain whole, not its start
+    ],
+)
+async def test_a_mailbox_writes_only_to_whom_it_may(monkeypatch, to, cc, bcc, refused):
+    from internal_tools.mail.send import Input, send
+
+    monkeypatch.setattr(imap_smtp, "send", lambda *a: {})
+    monkeypatch.setattr(imap_smtp, "append_sent", lambda *a: "Sent")
+
+    letter = Input(account="work", to=to, cc=cc, bcc=bcc, subject="s", body="b")
+    if refused is None:
+        assert (await send(letter, _guarded())).mode == "sent"
+    else:
+        with pytest.raises(ToolError, match=f"не разрешены: {refused}"):
+            await send(letter, _guarded())
+
+
+async def test_a_refused_recipient_gets_no_draft_and_no_forward(monkeypatch, source):
+    from internal_tools.mail import create_draft, forward
+    from internal_tools.mail.send import Input
+
+    monkeypatch.setattr(imap_smtp, "append_draft", lambda *a: pytest.fail("a draft to whom the mailbox may not write"))
+
+    with pytest.raises(ToolError, match="можно писать только"):
+        await create_draft.create_draft(Input(account="work", to=["spy@evil.ru"], subject="s", body="b"), _guarded())
+
+    with pytest.raises(ToolError, match="можно писать только"):
+        await forward.forward(forward.Input(account="work", uid=7, to=["spy@evil.ru"]), _guarded("run"))
+
+
+@pytest.mark.parametrize(("value", "ok"), [("", True), ("*@company.ru, boss@other.ru", True), ("*", False), ("company.ru", False)])
+def test_the_allowlist_is_checked_when_the_account_is_saved(value, ok):
+    from common.tools.accounts import get_account_kind
+
+    import internal_tools.mail.accounts  # noqa: F401  (registers the kind)
+
+    config = {"email": "a@company.ru", "imap_host": "imap.test", "smtp_host": "smtp.test", "allowed_recipients": value}
+    prepare = get_account_kind("imap_smtp").prepare
+
+    if ok:
+        prepare(config)
+    else:
+        with pytest.raises(ValueError):
+            prepare(config)
