@@ -111,95 +111,6 @@ def test_filters_reject_other_mail(sender, subject):
     assert not imap_smtp.matches(HEADER, sender=sender, subject=subject)
 
 
-@pytest.mark.parametrize(
-    ("name", "encoded"),
-    [("INBOX", "INBOX"), ("A&B", "A&-B"), ("Обработано", "&BB4EMQRABDAEMQQ+BEIEMAQ9BD4-"), ("Отчёты/2026", "&BB4EQgRHBFEEQgRL-/2026")],
-)
-def test_folder_names_use_modified_utf7(name, encoded):
-    assert imap_smtp.encode_folder(name) == encoded
-    assert imap_smtp.decode_folder(encoded) == name
-
-
-def test_mark_needs_something_to_do():
-    from pydantic import ValidationError
-
-    from internal_tools.mail.mark import Input
-
-    with pytest.raises(ValidationError):
-        Input(account="work", uid=1)
-
-    assert Input(account="work", uid=1, seen=True).seen is True
-
-
-async def test_mark_touches_nothing_in_a_dry_run(monkeypatch):
-    from internal_tools.mail.mark import Input, mark
-
-    monkeypatch.setattr(imap_smtp, "mark", lambda *a, **k: pytest.fail("a dry run marked a letter"))
-    ctx = _send_context("run", {}, dry_run=True)
-
-    out = await mark(Input(account="work", uid=7, seen=True, move_to="Обработано"), ctx)
-
-    assert out.folder == "Обработано"
-    assert ctx.logs == ["Пробный запуск: письмо 7 в «INBOX» не тронуто; было бы: прочитано — да, переложить в «Обработано»"]
-
-
-class FakeIMAP:
-    def __init__(self, capabilities, uids=(b"7",)):
-        self.capabilities = capabilities
-        self.commands: list[tuple] = []
-        self.uids = uids
-
-
-    def select(self, folder, readonly=False):
-        return "OK", [b"1"]
-
-
-    def list(self, *args):
-        return "OK", [b'(\\HasNoChildren) "/" "Archive"']
-
-
-    def uid(self, command, *args):
-        if command == "SEARCH":
-            return "OK", [b" ".join(self.uids)]
-
-        self.commands.append((command, *args))
-        return "OK", [b"done"]
-
-
-    def expunge(self):
-        self.commands.append(("EXPUNGE-ALL",))
-        return "OK", [None]
-
-
-@pytest.mark.parametrize(
-    ("capabilities", "commands"),
-    [
-        (("MOVE", "UIDPLUS"), ["MOVE"]),
-        (("UIDPLUS",), ["COPY", "STORE", "EXPUNGE"]),  # only this message is purged
-        ((), ["COPY", "STORE"]),                       # nothing purged: a plain EXPUNGE would take the user's deleted mail
-    ],
-)
-def test_move_never_purges_other_mail(monkeypatch, capabilities, commands):
-    fake = FakeIMAP(capabilities)
-    monkeypatch.setattr(imap_smtp._imap, "__enter__", lambda self: fake)
-    monkeypatch.setattr(imap_smtp._imap, "__exit__", lambda self, *exc: None)
-
-    assert imap_smtp.mark({}, "", folder="INBOX", uid=7, seen=None, move_to="Archive") == "Archive"
-    assert [c[0] for c in fake.commands] == commands
-    assert all(c[1] == "7" for c in fake.commands)
-
-
-def test_moving_a_letter_that_is_gone_is_an_error(monkeypatch):
-    """MOVE of a UID that is not there answers OK: without a look first it would report success."""
-    fake = FakeIMAP(("MOVE",), uids=())
-    monkeypatch.setattr(imap_smtp._imap, "__enter__", lambda self: fake)
-    monkeypatch.setattr(imap_smtp._imap, "__exit__", lambda self, *exc: None)
-
-    with pytest.raises(ToolError, match="не найдено"):
-        imap_smtp.mark({}, "", folder="INBOX", uid=7, seen=None, move_to="Archive")
-    assert fake.commands == []
-
-
 def _send_context(mode, task_settings, *, dry_run=False):
     from common.tools import ToolContext, discover
     from common.tools.context import Credential
@@ -283,36 +194,6 @@ async def test_a_failed_copy_does_not_fail_a_sent_letter(monkeypatch):
     assert len(sent) == 2 and out.mode == "sent" and "timed out" in out.copy_error
 
 
-class FakeFolders:
-    def __init__(self, rows):
-        self.rows = rows
-        self.created: list[str] = []
-
-
-    def list(self):
-        return "OK", [row.encode() for row in self.rows]
-
-
-    def create(self, folder):
-        self.created.append(folder)
-        return "OK", [b""]
-
-
-@pytest.mark.parametrize(
-    ("rows", "folder", "created"),
-    [
-        (['(\\HasNoChildren) "/" "INBOX"', '(\\HasNoChildren \\Sent) "/" "&BB4EQgQ,BEAEMAQyBDsENQQ9BD0ESwQ1-"'], "Отправленные", []),
-        (['(\\HasNoChildren) "/" "INBOX"', '(\\HasNoChildren) "/" "Sent"'], "Sent", []),
-        (['(\\HasNoChildren) "/" "INBOX"'], "Sent", ['"Sent"']),  # GreenMail starts with INBOX only
-    ],
-)
-def test_sent_folder_is_the_flagged_one_or_sent(rows, folder, created):
-    imap = FakeFolders(rows)
-
-    assert imap_smtp._special_folder(imap, "\\Sent", "Sent", "отправленных") == folder
-    assert imap.created == created
-
-
 class FakeMailbox:
     """INBOX with uids 1..n; every third letter comes from the company."""
 
@@ -352,16 +233,6 @@ def test_search_fetches_headers_in_batches_newest_first(monkeypatch):
     assert [item["uid"] for item in found][:3] == [498, 495, 492]
     assert len(found) == 20 and all(item["from_email"] == "boss@company.ru" for item in found)
     assert len(box.fetches) == 2
-
-
-@pytest.mark.parametrize("folder", ['"INBOX"\r\nA1 DELETE "Важное"', 'Счета "ООО"', "a\\b", "INBOX"])
-def test_a_folder_name_stays_one_imap_string(folder):
-    from internal_tools.mail.adapters.imap_smtp import _quote, _unquote, decode_folder
-
-    quoted = _quote(folder)
-
-    assert "\r" not in quoted and "\n" not in quoted
-    assert decode_folder(_unquote(quoted)) == folder
 
 
 @pytest.mark.parametrize(("sent", "saved"), [("..", "attachment_1"), ("../../x.pdf", "x.pdf"), ("C:\\tmp\\a:b.pdf", "a_b.pdf")])

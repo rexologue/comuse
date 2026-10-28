@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import imaplib
 import mimetypes
 import re
@@ -17,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from common.tools import ToolError
-from internal_tools.mail.adapters import letter
+from internal_tools.mail.adapters import folders, letter
 from internal_tools.mail.addresses import matches as address_matches
 
 
@@ -29,8 +28,6 @@ _DEFAULT_PORTS = {
     "imap": {"ssl": 993, "starttls": 143, "none": 143},
     "smtp": {"ssl": 465, "starttls": 587, "none": 25},
 }
-_LIST_RE = re.compile(r'\((?P<flags>[^)]*)\) "(?P<sep>[^"]*)" (?P<name>.+)')
-_UTF7_RE = re.compile(r"&([^-]*)-")
 _FETCH_UID_RE = re.compile(rb"\bUID (\d+)")
 _SIZE_RE = re.compile(rb"\bRFC822\.SIZE (\d+)")
 _FLAGS_RE = re.compile(rb"\bFLAGS \(([^)]*)\)")
@@ -305,45 +302,91 @@ def _flags(match: re.Match | None) -> list[str]:
     return [flag[1:].lower() if flag.startswith("\\") else flag for flag in flags if flag.lower() != "\\recent"]
 
 
-def mark(config: dict[str, Any], secret: str, *, folder: str, uid: int, seen: bool | None, move_to: str | None) -> str:
-    """Set or clear \\Seen and/or move the message; returns the folder it ends up in."""
+# What mail.mark sets: our name → the IMAP flag.
+FLAGS = {"seen": r"\Seen", "flagged": r"\Flagged", "answered": r"\Answered"}
+
+
+def mark(
+    config: dict[str, Any],
+    secret: str,
+    *,
+    folder: str,
+    uids: list[int],
+    flags: dict[str, bool],
+    move_to: str | None = None,
+    move_to_role: str | None = None,
+) -> dict[str, Any]:
+    """Set or clear `flags` (FLAGS names → on/off) and/or move the letters to a folder
+    or to the folder of a role (archive, junk, trash, inbox). The letters that are not
+    in `folder` are named, the others done; none there at all is an error."""
     with _imap(config, secret) as imap:
         _select(imap, folder, readonly=False)
 
         # MOVE and COPY of a UID that is not there answer OK and do nothing.
-        status, data = imap.uid("SEARCH", "UID", str(uid))
-        if status != "OK" or not data or not data[0] or str(uid).encode() not in data[0].split():
-            raise ToolError(f"Письмо {uid} в «{folder}» не найдено")
+        status, data = imap.uid("SEARCH", "UID", ",".join(map(str, uids)))
+        there = {int(uid) for uid in ((data or [None])[0] or b"").split()} if status == "OK" else set()
+        found = [uid for uid in uids if uid in there]
+        missing = [uid for uid in uids if uid not in there]
+        if not found:
+            raise ToolError(f"Писем {', '.join(map(str, uids))} в «{folder}» нет")
 
-        if seen is not None:
-            status, data = imap.uid("STORE", str(uid), "+FLAGS" if seen else "-FLAGS", r"(\Seen)")
-            if status != "OK" or not data or data[0] is None:
-                raise ToolError(f"Письмо {uid} в «{folder}» не найдено")
+        uid_set = ",".join(map(str, found))
 
-        if not move_to or move_to == folder:
-            return folder
+        for name, on in flags.items():
+            _store(imap, uid_set, "+FLAGS" if on else "-FLAGS", FLAGS[name], folder)
 
-        _ensure_folder(imap, move_to)
+        target = move_to
+        if move_to_role == "inbox":
+            target = "INBOX"
+        elif move_to_role is not None:
+            target = folders.special_folder(imap, move_to_role)
+        elif move_to:
+            folders.ensure_folder(imap, move_to)
 
-        if "MOVE" in imap.capabilities:  # RFC 6851
-            status, data = imap.uid("MOVE", str(uid), _quote(move_to))
-            if status != "OK":
-                raise ToolError(f"Не удалось переложить письмо {uid} в «{move_to}»: {data}")
+        if target and target != folder:
+            _move(imap, uid_set, target)
 
-            return move_to
+    return {"uids": found, "missing": missing, "folder": target or folder}
 
-        status, data = imap.uid("COPY", str(uid), _quote(move_to))
+
+def _store(imap: imaplib.IMAP4, uid_set: str, how: str, flag: str, folder: str) -> None:
+    status, data = imap.uid("STORE", uid_set, how, f"({flag})")
+    if status != "OK":
+        raise ToolError(f"Не удалось изменить пометки писем {uid_set} в «{folder}»: {data}")
+
+
+def _move(imap: imaplib.IMAP4, uid_set: str, target: str) -> None:
+    if "MOVE" in imap.capabilities:  # RFC 6851
+        status, data = imap.uid("MOVE", uid_set, folders.quote(target))
         if status != "OK":
-            raise ToolError(f"Не удалось переложить письмо {uid} в «{move_to}»: {data}")
+            raise ToolError(f"Не удалось переложить письма {uid_set} в «{target}»: {data}")
 
-        imap.uid("STORE", str(uid), "+FLAGS", r"(\Deleted)")
+        return
 
-        # A plain EXPUNGE would also purge everything else the user flagged \Deleted;
-        # without UIDPLUS (RFC 4315) the original just stays flagged, which search skips.
-        if "UIDPLUS" in imap.capabilities:
-            imap.uid("EXPUNGE", str(uid))
+    status, data = imap.uid("COPY", uid_set, folders.quote(target))
+    if status != "OK":
+        raise ToolError(f"Не удалось переложить письма {uid_set} в «{target}»: {data}")
 
-    return move_to
+    status, data = imap.uid("STORE", uid_set, "+FLAGS", r"(\Deleted)")
+    if status != "OK":
+        raise ToolError(f"Письма {uid_set} скопированы в «{target}», но оригиналы не помечены удалёнными: {data}")
+
+    # A plain EXPUNGE would also purge everything else the user flagged \Deleted;
+    # without UIDPLUS (RFC 4315) the originals just stay flagged, which search skips.
+    if "UIDPLUS" in imap.capabilities:
+        status, data = imap.uid("EXPUNGE", uid_set)
+        if status != "OK":
+            raise ToolError(f"Письма {uid_set} скопированы в «{target}», но оригиналы не убраны: {data}")
+
+
+def folder_list(config: dict[str, Any], secret: str) -> list[dict[str, Any]]:
+    """The folders mail can be in, with the role of the special ones."""
+    with _imap(config, secret) as imap:
+        found = folders.list_folders(imap)
+
+    role = folders.roles(found)
+
+    return [{"name": folder.name, "role": role.get(folder.name)} for folder in found if folder.selectable]
 
 
 def build_message(
@@ -439,9 +482,9 @@ def _refusals(recipients: dict[str, tuple[int, bytes]]) -> dict[str, str]:
 def append_draft(config: dict[str, Any], secret: str, message: EmailMessage) -> str:
     """Save into the provider's Drafts folder (the one flagged \\Drafts)."""
     with _imap(config, secret) as imap:
-        folder = config.get("drafts_folder") or _special_folder(imap, "\\Drafts", "Drafts", "черновиков")
+        folder = config.get("drafts_folder") or folders.special_folder(imap, "drafts")
 
-        status, data = imap.append(_quote(folder), r"(\Draft \Seen)", None, message.as_bytes())
+        status, data = imap.append(folders.quote(folder), r"(\Draft \Seen)", None, message.as_bytes())
         if status != "OK":
             raise ToolError(f"Не удалось сохранить черновик: {data}")
 
@@ -458,9 +501,9 @@ def saves_sent_copy(config: dict[str, Any]) -> bool:
 def append_sent(config: dict[str, Any], secret: str, message: EmailMessage) -> str:
     """Keep a sent letter in the provider's Sent folder (the one flagged \\Sent)."""
     with _imap(config, secret) as imap:
-        folder = config.get("sent_folder") or _special_folder(imap, "\\Sent", "Sent", "отправленных")
+        folder = config.get("sent_folder") or folders.special_folder(imap, "sent")
 
-        status, data = imap.append(_quote(folder), r"(\Seen)", None, message.as_bytes())
+        status, data = imap.append(folders.quote(folder), r"(\Seen)", None, message.as_bytes())
         if status != "OK":
             raise ToolError(f"Не удалось сохранить письмо в «{folder}»: {data}")
 
@@ -557,98 +600,9 @@ def _close(conn) -> None:
 
 
 def _select(imap: imaplib.IMAP4, folder: str, *, readonly: bool) -> None:
-    status, data = imap.select(_quote(folder), readonly=readonly)
+    status, data = imap.select(folders.quote(folder), readonly=readonly)
     if status != "OK":
         raise ToolError(f"Папка почты «{folder}» не найдена: {data}")
-
-
-def _special_folder(imap: imaplib.IMAP4, flag: str, fallback: str, what: str) -> str:
-    """The folder flagged `flag` (RFC 6154: \\Drafts, \\Sent), else one named `fallback`
-    — created if missing (some servers start with INBOX only)."""
-    names: list[str] = []
-
-    status, rows = imap.list()
-    if status == "OK":
-        for row in rows or []:
-            # A name sent as a literal comes as a tuple: not one of the flagged folders.
-            if not isinstance(row, bytes):
-                continue
-
-            match = _LIST_RE.match(row.decode(errors="replace"))
-            if not match:
-                continue
-
-            name = decode_folder(_unquote(match.group("name")))
-            if flag in match.group("flags"):
-                return name
-
-            names.append(name)
-
-    if fallback not in names:
-        status, data = imap.create(_quote(fallback))
-        if status != "OK":
-            raise ToolError(f"Нет папки {what} и не удалось её создать: {data}")
-
-    return fallback
-
-
-def _ensure_folder(imap: imaplib.IMAP4, folder: str) -> None:
-    status, rows = imap.list('""', _quote(folder))
-    if status == "OK" and any(rows or []):
-        return
-
-    status, data = imap.create(_quote(folder))
-    if status != "OK":
-        raise ToolError(f"Не удалось создать папку почты «{folder}»: {data}")
-
-
-def _quote(folder: str) -> str:
-    """A folder as one IMAP quoted string, whatever the name: it may come from a letter
-    the model read, so nothing in it can end the string or the command."""
-    encoded = encode_folder(folder).replace("\\", "\\\\").replace('"', '\\"')
-
-    return f'"{encoded}"'
-
-
-def _unquote(name: str) -> str:
-    if len(name) >= 2 and name.startswith('"') and name.endswith('"'):
-        return re.sub(r'\\(.)', r"\1", name[1:-1])
-
-    return name
-
-
-def encode_folder(name: str) -> str:
-    """IMAP folder names are modified UTF-7 (RFC 3501 5.1.3): `Входящие` → `&BBIERQQ+BDQETwRJBDgENQ-`."""
-    out: list[str] = []
-    pending: list[str] = []
-
-    def flush() -> None:
-        if pending:
-            raw = base64.b64encode("".join(pending).encode("utf-16-be")).decode()
-            out.append("&" + raw.rstrip("=").replace("/", ",") + "-")
-            pending.clear()
-
-    for char in name:
-        if 0x20 <= ord(char) <= 0x7E:
-            flush()
-            out.append("&-" if char == "&" else char)
-        else:
-            pending.append(char)
-
-    flush()
-    return "".join(out)
-
-
-def decode_folder(name: str) -> str:
-    def decode(match: re.Match) -> str:
-        chunk = match.group(1)
-        if not chunk:
-            return "&"
-
-        raw = chunk.replace(",", "/")
-        return base64.b64decode(raw + "=" * (-len(raw) % 4)).decode("utf-16-be")
-
-    return _UTF7_RE.sub(decode, name)
 
 
 def _attachment_name(filename: str, n: int) -> str:
