@@ -67,6 +67,7 @@ def _render(template, context, images, output) -> None:
         raise ToolError(f"В context не хватает полей шаблона: {missing}; шаблон ждёт: {sorted(expected)}")
 
     _check_table_rows(document, values)
+    _check_fields(expected - set(images), values, {list_name for _, list_name, _ in _loops(document.patch_xml(document.get_xml()))})
 
     for name, path in images.items():
         values[name] = InlineImage(document, str(path), width=Mm(160))
@@ -78,6 +79,17 @@ def _render(template, context, images, output) -> None:
         raise ToolError(f"Не удалось заполнить шаблон: {e}") from e
 
     document.save(str(output))
+
+
+def _check_fields(expected: set[str], values: dict[str, Any], lists: set[str]) -> None:
+    """A field the document prints as it is: an empty one (null) would print «None», a
+    list «['a', 'b']» — a failed step, not a document with that in it."""
+    for name in sorted(expected - lists):
+        value = values.get(name)
+        if value is None:
+            raise ToolError(f"Поле `{name}` пустое (null): шаблон напечатал бы «None». Дай значение или пустую строку")
+        if isinstance(value, list):
+            raise ToolError(f"Поле `{name}` — список, а шаблон печатает его одним значением: дай строку или число")
 
 
 def _check_table_rows(document, values: dict[str, Any]) -> None:
@@ -92,8 +104,12 @@ def _check_table_rows(document, values: dict[str, Any]) -> None:
         keys = set(re.findall(rf"\b{re.escape(loop_var)}\.([A-Za-z_][A-Za-z0-9_]*)", body))
         rows = values.get(list_name)
 
-        if not keys or not isinstance(rows, list):
+        if not keys:
             continue
+
+        # A string would be a row per character, a number nothing at all.
+        if not isinstance(rows, list):
+            raise ToolError(f"`{list_name}` — строки таблицы, нужен список, а пришло: {type(rows).__name__}")
 
         for i, row in enumerate(rows):
             absent = sorted(keys - set(row)) if isinstance(row, dict) else sorted(keys)

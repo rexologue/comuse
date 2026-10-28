@@ -10,6 +10,7 @@ class NotifyInput(ToolInput):
 
 
 class NotifyOutput(ToolOutput):
+    # False in a dry run: the message is in the run's log, not in the chat.
     sent: bool
 
 
@@ -23,4 +24,7 @@ class NotifyOutput(ToolOutput):
 async def notify(inp: NotifyInput, ctx: ToolContext) -> NotifyOutput:
     ctx.notify(inp.message)
 
-    return NotifyOutput(sent=True)
+    if ctx.dry_run:
+        ctx.log("Пробный запуск: уведомление не отправлено в чат, оно только в журнале запуска")
+
+    return NotifyOutput(sent=not ctx.dry_run)

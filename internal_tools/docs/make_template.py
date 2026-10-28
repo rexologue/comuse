@@ -41,6 +41,7 @@ class Input(ToolInput):
     name: str = Field(description="Имя шаблона латиницей, например weekly_sales")
     fields: list[TemplateField] = Field(default_factory=list, description="Значения, которые меняются от раза к разу")
     tables: list[TemplateTable] = Field(default_factory=list, description="Таблицы, строки которых будут другими")
+    overwrite: bool = Field(default=False, description="true — заменить шаблон с таким именем, если он уже есть (им могут пользоваться задачи)")
 
 
 class TableOut(BaseModel):
@@ -84,6 +85,10 @@ async def make_template(inp: Input, ctx: ToolContext) -> Output:
         ctx.log("Пробный запуск: шаблон не сохранён в data:templates, он в результатах запуска")
     else:
         target = ctx.write_path(f"data:templates/{inp.name}.docx")
+        # Another task may fill this template: replaced only when asked.
+        if target.exists() and not inp.overwrite:
+            raise ToolError(f"Шаблон «{inp.name}» уже есть: дайте другое имя или overwrite=true, чтобы заменить его")
+        ctx.artifacts.append(ctx.to_ref(target))
 
     result = await asyncio.to_thread(_make, source, target, inp.fields, inp.tables)
     result["template"] = ctx.to_ref(target)

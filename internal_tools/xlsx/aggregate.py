@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections import defaultdict
+import re
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -11,6 +11,11 @@ from pydantic import BaseModel, Field
 from common.tools import ToolContext, ToolError, ToolInput, ToolOutput, tool
 from common.tools.refs import FileRefs, file_refs
 from common.utils import parse_number
+from internal_tools.xlsx.sheets import read_sheet
+
+# A row of totals the table already has («Итого», «Всего»): summed again it would count
+# everything twice.
+_TOTAL_ROW = re.compile(r"^\s*(итого|всего|итог|total|grand total)\b", re.IGNORECASE)
 
 
 class Input(ToolInput):
@@ -19,6 +24,7 @@ class Input(ToolInput):
     group_by: str | None = Field(default=None, description="Колонка для группировки (например, Клиент)")
     top_n: int | None = Field(default=None, ge=1, description="Оставить N групп с наибольшей суммой первой из sum_columns")
     sheet: str | None = Field(default=None, description="Лист; по умолчанию первый")
+    header_row: int = Field(default=1, ge=1, description="Номер строки с заголовками (если над таблицей есть название)")
 
 
 class Group(BaseModel):
@@ -32,6 +38,8 @@ class Output(ToolOutput):
     rows: int
     totals: dict[str, float]
     groups: list[Group]
+    # Rows of totals the tables had («Итого»): left out of the sums.
+    total_rows_skipped: int = 0
 
 
 @tool(
@@ -40,8 +48,8 @@ class Output(ToolOutput):
     card="Посчитать итоги: суммы {sum_columns}, группировка «{group_by}», топ {top_n}",
     description=(
         "Compute exact totals over the rows of one or more spreadsheets: row count, sums of columns, "
-        "optional group-by with per-group counts and sums, optional top-N groups. Use this for any numbers "
-        "in a report instead of asking the LLM to add them up."
+        "optional group-by with per-group counts and sums, optional top-N groups. Rows of totals the table has "
+        "(«Итого», «Всего») are left out. Use this for any numbers in a report instead of asking the LLM to add them up."
     ),
     confirm=False,
 )
@@ -57,7 +65,7 @@ async def aggregate(inp: Input, ctx: ToolContext) -> Output:
         if not path.is_file():
             raise ToolError(f"Файл `{ctx.to_ref(path)}` не найден")
 
-        header, file_rows = await asyncio.to_thread(_read_rows, path, inp.sheet)
+        header, file_rows = await asyncio.to_thread(_read_rows, path, inp.sheet, inp.header_row)
 
         # Every file: a column named a little differently in one of them would count as 0.
         missing = [c for c in wanted if c not in header]
@@ -66,17 +74,22 @@ async def aggregate(inp: Input, ctx: ToolContext) -> Output:
 
         rows += file_rows
 
-    totals = {column: sum(_number(row.get(column)) for row in rows) for column in inp.sum_columns}
+    kept = [row for row in rows if not _is_total(row, inp.group_by)]
+    skipped, rows = len(rows) - len(kept), kept
+
+    totals = {column: sum(_number(row.get(column), column) for row in rows) for column in inp.sum_columns}
 
     groups: list[Group] = []
     if inp.group_by:
-        buckets: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        # «ООО Ромашка» and «ООО  Ромашка » are one client: spaces and case are not a name.
+        buckets: dict[str, tuple[str, list[dict[str, Any]]]] = {}
         for row in rows:
-            buckets[str(row.get(inp.group_by) or "—")].append(row)
+            key = _key(row.get(inp.group_by))
+            buckets.setdefault(key.casefold(), (key, []))[1].append(row)
 
         groups = [
-            Group(key=key, count=len(items), sums={c: sum(_number(r.get(c)) for r in items) for c in inp.sum_columns})
-            for key, items in buckets.items()
+            Group(key=key, count=len(items), sums={c: sum(_number(r.get(c), c) for r in items) for c in inp.sum_columns})
+            for key, items in buckets.values()
         ]
 
         if inp.sum_columns:
@@ -85,45 +98,35 @@ async def aggregate(inp: Input, ctx: ToolContext) -> Output:
         if inp.top_n:
             groups = groups[: inp.top_n]
 
-    return Output(files=len(paths), rows=len(rows), totals=totals, groups=groups)
+    return Output(files=len(paths), rows=len(rows), totals=totals, groups=groups, total_rows_skipped=skipped)
 
 
-def _read_rows(path, sheet: str | None) -> tuple[list[str], list[dict[str, Any]]]:
+def _read_rows(path, sheet: str | None, header_row: int) -> tuple[list[str], list[dict[str, Any]]]:
     """The file's header and its rows."""
-    if path.suffix.lower() == ".csv":
-        import csv
+    header, values = read_sheet(path, sheet, header_row)
 
-        with path.open(encoding="utf-8-sig", newline="") as fh:
-            reader = csv.DictReader(fh)
-            rows = list(reader)
-
-        return list(reader.fieldnames or []), rows
-
-    from openpyxl import load_workbook
-
-    # read_only keeps the file open until close(): on a Windows share an open file is locked.
-    workbook = load_workbook(str(path), read_only=True, data_only=True)
-
-    try:
-        try:
-            worksheet = workbook[sheet] if sheet else workbook.worksheets[0]
-
-        except KeyError as e:
-            raise ToolError(f"В `{path.name}` нет листа «{sheet}»; есть: {workbook.sheetnames}") from e
-
-        values = worksheet.iter_rows(values_only=True)
-        header = [str(c).strip() if c is not None else f"col_{i + 1}" for i, c in enumerate(next(values, []))]
-
-        return header, [dict(zip(header, row)) for row in values if any(v is not None for v in row)]
-
-    finally:
-        workbook.close()
+    return header, [dict(zip(header, row)) for row in values]
 
 
-def _number(value: Any) -> float:
+def _is_total(row: dict[str, Any], group_by: str | None) -> bool:
+    """A row whose group, or one of its first text cells, says it is a total."""
+    cells = [row.get(group_by)] if group_by else []
+    cells += [value for value in list(row.values())[:3] if isinstance(value, str)]
+
+    return any(isinstance(cell, str) and _TOTAL_ROW.match(cell) for cell in cells)
+
+
+def _key(value: Any) -> str:
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return "—"
+
+    return " ".join(str(value).split())
+
+
+def _number(value: Any, column: str = "") -> float:
     """An empty cell adds nothing; text that is not a number is an error, not a 0."""
     try:
         return parse_number(value) or 0.0
 
     except ValueError as e:
-        raise ToolError(f"Значение {value!r} не число") from e
+        raise ToolError(f"Значение {value!r} в колонке «{column}» не число (заголовки не в первой строке? — header_row)") from e

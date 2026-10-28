@@ -166,4 +166,11 @@ def parse_number(value: Any) -> float | None:
     if isinstance(value, (int, float)):
         return float(value)
 
-    return float(str(value).replace(" ", "").replace("\u00a0", "").replace(",", "."))
+    # Any space inside (thin, narrow no-break: what Excel and Word put in «1 000»), an
+    # apostrophe between thousands; of «.» and «,» both there, the last one is the decimal.
+    text = re.sub(r"[\s'’]", "", str(value))
+    if "," in text and "." in text:
+        decimal = "," if text.rfind(",") > text.rfind(".") else "."
+        text = text.replace("." if decimal == "," else ",", "")
+
+    return float(text.replace(",", "."))

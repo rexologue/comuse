@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any
 
 from pydantic import Field
@@ -42,7 +43,8 @@ def _write(path, inp: WriteInput) -> None:
 
     workbook = Workbook()
     sheet = workbook.active
-    sheet.title = inp.sheet[:31]
+    # Excel refuses []:*?/\ in a sheet's name and more than 31 characters.
+    sheet.title = re.sub(r"[\[\]:*?/\\]", "_", inp.sheet)[:31] or "Лист1"
     sheet.append(columns)
 
     for row in inp.rows:

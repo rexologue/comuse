@@ -94,14 +94,21 @@ class ToolContext:
 
 
     def output_path(self, filename: str, suffix: str = "") -> Path:
-        """A file under `data:outputs/<run or session>/`, recorded as an artifact. The
-        name may come from a model: what Windows refuses becomes `_`, and `suffix`
-        (".docx") is added when the name lacks it."""
-        name = re.sub(r'[\\/:*?"<>|]+', "_", filename).strip(" .") or "output"
+        """A new file under `data:outputs/<run or session>/`, recorded as an artifact. The
+        name may come from a model: what Windows refuses becomes `_` (CON, a control
+        character), and `suffix` (".docx") is added when the name lacks it. A name taken
+        already in this run or chat gets « (2)»: two charts called chart.png are two files."""
+        name = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "_", filename).strip(" .") or "output"
         if suffix and not name.lower().endswith(suffix):
             name += suffix
+        if re.fullmatch(r"(con|prn|aux|nul|com\d|lpt\d)(\..*)?", name, re.IGNORECASE):
+            name = f"_{name}"
 
         path = self.output_dir() / name
+        for copy in range(2, 1000):
+            if not path.exists():
+                break
+            path = path.with_name(f"{Path(name).stem} ({copy}){Path(name).suffix}")
 
         self.artifacts.append(self.to_ref(path))
 

@@ -8,10 +8,11 @@ from pydantic import Field
 
 from common.tools import ToolContext, ToolError, ToolInput, ToolOutput, tool
 from common.tools.fields import WorkspacePath
+from internal_tools.xlsx.sheets import read_sheet
 
 
 class ReadInput(ToolInput):
-    path: WorkspacePath = Field(description="Файл .xlsx")
+    path: WorkspacePath = Field(description="Файл .xlsx или .csv")
     sheet: str | None = Field(default=None, description="Лист; по умолчанию первый")
     header_row: int = Field(default=1, ge=1, description="Номер строки с заголовками")
     max_rows: int = Field(default=1000, ge=1, le=50000)
@@ -27,7 +28,10 @@ class ReadOutput(ToolOutput):
     name="xlsx.read_table",
     title="Прочитать таблицу Excel",
     card="Прочитать таблицу из «{path}»",
-    description="Read an Excel sheet as a list of row objects keyed by the header row.",
+    description=(
+        "Read an Excel sheet (or a CSV) as a list of row objects keyed by the header row; merged cells hold "
+        "their value in every row they cover, columns with the same header get «(2)»."
+    ),
     confirm=False,
 )
 async def read_table(inp: ReadInput, ctx: ToolContext) -> ReadOutput:
@@ -39,43 +43,10 @@ async def read_table(inp: ReadInput, ctx: ToolContext) -> ReadOutput:
 
 
 def _read(path, inp: ReadInput) -> ReadOutput:
-    from openpyxl import load_workbook
+    columns, values = read_sheet(path, inp.sheet, inp.header_row)
+    rows = [{columns[i]: _jsonable(v) for i, v in enumerate(row) if i < len(columns)} for row in values[: inp.max_rows]]
 
-    workbook = load_workbook(str(path), read_only=True, data_only=True)
-
-    # read_only keeps the file open until close(): on a Windows share an open file is locked.
-    try:
-        return _read_sheet(workbook, inp)
-
-    finally:
-        workbook.close()
-
-
-def _read_sheet(workbook, inp: ReadInput) -> ReadOutput:
-    try:
-        sheet = workbook[inp.sheet] if inp.sheet else workbook.worksheets[0]
-
-    except KeyError as e:
-        raise ToolError(f"Листа «{inp.sheet}» нет; есть: {workbook.sheetnames}") from e
-
-    rows_iter = sheet.iter_rows(min_row=inp.header_row, values_only=True)
-    header = next(rows_iter, None)
-    if header is None:
-        raise ToolError("Лист пустой")
-
-    columns = [str(c).strip() if c is not None else f"col_{i + 1}" for i, c in enumerate(header)]
-    rows: list[dict[str, Any]] = []
-    total = 0
-
-    for values in rows_iter:
-        if all(v is None for v in values):
-            continue
-
-        total += 1
-        if len(rows) < inp.max_rows:
-            rows.append({columns[i]: _jsonable(v) for i, v in enumerate(values) if i < len(columns)})
-
-    return ReadOutput(columns=columns, rows=rows, total_rows=total)
+    return ReadOutput(columns=columns, rows=rows, total_rows=len(values))
 
 
 def _jsonable(value: Any) -> Any:

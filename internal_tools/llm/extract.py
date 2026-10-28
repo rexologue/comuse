@@ -43,6 +43,8 @@ async def extract(inp: ExtractInput, ctx: ToolContext) -> ExtractOutput:
     except jsonschema.SchemaError as e:
         raise ToolError(f"Неверная output_schema: {e.message}") from e
 
+    fields = _field_names(inp.output_schema)
+
     def validate(data: Any) -> Any:
         try:
             jsonschema.validate(data, inp.output_schema)
@@ -50,13 +52,23 @@ async def extract(inp: ExtractInput, ctx: ToolContext) -> ExtractOutput:
         except jsonschema.ValidationError as e:
             raise ValueError(f"не соответствует схеме: {e.message}") from e
 
+        # A model lost in a schema of strings answers with the schema's own words
+        # ("qty": "price"): valid by the schema, nothing of the text.
+        echoed = sorted({value for value in _strings(data) if value in fields})
+        if echoed:
+            raise ValueError(f"значения {echoed} — это имена полей схемы, а не данные из текста; извлеки сами значения")
+
         return data
 
     data = await instruct(ctx).structured(
         [
             {
                 "role": "system",
-                "content": "Извлекай данные точно по документам. Числа — числами, без единиц и пробелов. Не выдумывай отсутствующее.",
+                "content": (
+                    "Извлекай данные точно по документам. Каждое поле — того типа, что в схеме: где число — число без "
+                    "единиц и пробелов, где строка — значение строкой, как в документе. Чего в документе нет — null, "
+                    "если схема это допускает, иначе пропусти поле. Не выдумывай отсутствующее."
+                ),
             },
             {"role": "user", "content": f"Задача: {inp.instruction}\n\nДанные:\n{text}"},
         ],
@@ -66,3 +78,30 @@ async def extract(inp: ExtractInput, ctx: ToolContext) -> ExtractOutput:
     )
 
     return ExtractOutput(data=data)
+
+
+def _field_names(schema: Any) -> set[str]:
+    names: set[str] = set()
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            names.update(node.get("properties", {}) if isinstance(node.get("properties"), dict) else {})
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(schema)
+
+    return names
+
+
+def _strings(data: Any) -> list[str]:
+    if isinstance(data, str):
+        return [data]
+    if isinstance(data, dict):
+        return [s for value in data.values() for s in _strings(value)]
+    if isinstance(data, list):
+        return [s for value in data for s in _strings(value)]
+    return []
