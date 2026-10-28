@@ -135,6 +135,7 @@ async def _dry_run(main: MainClient, session_id: str, args: dict[str, Any]) -> A
 
     return {
         "run_id": run["id"],
+        "dry_run": True,
         "status": run["status"],
         "error": run.get("error"),
         "steps": [
@@ -142,10 +143,16 @@ async def _dry_run(main: MainClient, session_id: str, args: dict[str, Any]) -> A
                 "step": step["step_key"],
                 "status": step["status"],
                 "error": step.get("error"),
+                # What a step would have done: a dry run's whole point.
+                "logs": [truncate(line, 300) for line in (step.get("logs") or [])][:10],
                 "output": truncate(step["output"], 600) if step.get("output") is not None else None,
             }
             for step in run.get("steps", [])
         ],
+        "next": (
+            "Это пробный запуск: ничего не изменено, что сделал бы каждый шаг — в его logs. Пересказывай как «сделал бы», "
+            "не «сделал». Упавший шаг или пустой результат — так и скажи, с причиной; задачу без просьбы пользователя не правь."
+        ),
     }
 
 

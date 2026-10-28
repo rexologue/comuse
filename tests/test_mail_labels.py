@@ -138,3 +138,14 @@ def test_the_compiler_refuses_a_label_the_server_would_not_take():
     jsonschema.validate("invoices_forwarded", items)
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate("flagged_итоги", items)
+
+
+def test_older_than_is_searched_by_before_with_english_month_names(imap, monkeypatch):
+    import locale
+    from datetime import date
+
+    box = imap(Searching())
+    imap_smtp.search({}, "", folder="INBOX", sender=None, subject=None, since=date(2026, 9, 1), before=date(2026, 9, 28), unseen=False, limit=1)
+
+    assert box.criteria[:5] == ("UNDELETED", "SINCE", "01-Sep-2026", "BEFORE", "28-Sep-2026")
+    assert imap_smtp._imap_date(date(2026, 11, 3)) == "03-Nov-2026"

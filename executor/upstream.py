@@ -392,8 +392,8 @@ class UpstreamToolSpec:
     async def call(self, inp: dict[str, Any], ctx: ToolContext) -> Any:
         # A dry run changes nothing: a plugin that cannot do one is not called for a tool
         # that would change something; the log says what would have been called.
-        if ctx.dry_run and self.confirm is not False and not self.upstream.manifest.handles_dry_run():
-            ctx.log(f"Пробный запуск: `{self.name}` не вызван (плагин не умеет пробный запуск), вызвал бы с {inp}")
+        if ctx.dry_run and self.confirm is not False and not self.upstream.manifest.handles_dry_run(self.remote_name):
+            ctx.log(f"Пробный запуск: `{self.name}` не вызван (команда не умеет пробный запуск), вызвал бы с {inp}")
             return {}
 
         context = {

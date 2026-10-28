@@ -63,6 +63,10 @@ class ToolEntry(BaseModel):
     output_schema: dict[str, Any] = Field(default_factory=lambda: {"type": "object"})
     # The file with `def run(args, ctx)`.
     entry: str = "main.py"
+    # The function looks at ctx.dry_run itself and changes nothing in a dry run (it only
+    # says, by ctx.log, what it would do). Not said — a dry run does not call it at all
+    # unless it never asks (confirm: false): code from a chat may not look.
+    dry_run: bool = False
 
     @field_validator("input_schema", "output_schema")
     @classmethod
@@ -133,10 +137,10 @@ class PluginManifest(BaseModel):
     # A server's tools the model never sees (by their names on the server): a raw
     # protocol command, what the plugin should not do here.
     hidden_tools: list[str] = Field(default_factory=list)
-    # The plugin does as a dry run asks (_meta context.dry_run): our functions do (ctx.dry_run),
-    # a server from elsewhere does not unless it says so; then in a dry run only its tools
-    # that never ask are called.
-    dry_run: bool | None = None
+    # A server that does as a dry run asks (_meta context.dry_run), by its word; a plugin of
+    # functions says it per function (ToolEntry.dry_run). Otherwise in a dry run only the
+    # tools that never ask are called.
+    dry_run: bool = False
     timeout: int | None = Field(default=None, ge=1, le=86400)
     account: AccountSpec | None = None
 
@@ -164,8 +168,11 @@ class PluginManifest(BaseModel):
         return self
 
 
-    def handles_dry_run(self) -> bool:
-        return self.dry_run if self.dry_run is not None else self.tools is not None
+    def handles_dry_run(self, tool: str) -> bool:
+        """Whether `tool` (its name on the server) does as a dry run asks."""
+        entry = self.entry_of(tool)
+
+        return self.dry_run or (entry is not None and entry.dry_run)
 
 
     def entry_of(self, name: str) -> ToolEntry | None:

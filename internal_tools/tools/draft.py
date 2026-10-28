@@ -19,6 +19,13 @@ class Input(ToolInput):
         default=True, description="Спрашивать ли «да» перед вызовом: false — только если команда ничего не меняет"
     )
     timeout: int | None = Field(default=None, ge=1, le=86400, description="Секунды; пусто — общий тайм-аут")
+    dry_run: bool = Field(
+        default=False,
+        description=(
+            "true — run смотрит ctx.dry_run и в пробном запуске ничего не меняет, только ctx.log, что сделал бы. "
+            "Без этого в пробном запуске задачи команду, которая что-то меняет, не вызовут вовсе"
+        ),
+    )
     input_schema: dict[str, Any] = Field(
         description='JSON Schema аргументов (type: object). Путь в рабочей папке — свойство с "x-path": "path"'
     )
@@ -43,15 +50,16 @@ class Output(ToolOutput):
 @tool(
     name="tools.draft",
     title="Черновик своей команды",
-    card="Записать черновик команды «{name}»",
+    card="Записать код команды «{name}» в черновик её плагина",
     description=(
         "Write or rewrite an own command (group.action, e.g. telegram.send) in the draft of its plugin, the group: "
         "its schemas, Python files, packages; the group's other commands stay as they are. "
         "Nothing runs: the draft is checked (schemas, syntax, packages) and waits for the user to approve it. "
         "Every problem comes back at once; fix them and call again: the same draft is rewritten. "
-        "A draft written by the user or another chat is never replaced."
+        "A draft written by the user or another chat is never replaced. A command that changes something checks "
+        "ctx.dry_run (does nothing, says what it would do) and says so with dry_run=true. Asks the user first."
     ),
-    confirm=False,
+    confirm=True,
     chat_only=True,
 )
 async def draft(inp: Input, ctx: ToolContext) -> Output:
@@ -65,6 +73,7 @@ async def draft(inp: Input, ctx: ToolContext) -> Output:
         "card": inp.card,
         "confirm": inp.confirm,
         "timeout": inp.timeout,
+        "dry_run": inp.dry_run,
         "input_schema": inp.input_schema,
         "output_schema": inp.output_schema,
     }

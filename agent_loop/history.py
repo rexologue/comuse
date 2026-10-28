@@ -319,6 +319,16 @@ def sweep_idle(idle_hours: int) -> list[str]:
     return gone
 
 
+# A call the chat asked about and the user never said «да» to stays needs_approval: for
+# the compiler that is a thing the user did not allow, not a step left to do.
+_STATUS_WORDS = {
+    "ok": "выполнено",
+    "confirmed": "выполнено после «да» пользователя",
+    "needs_approval": "НЕ выполнено: пользователь не подтвердил",
+    "error": "ошибка",
+}
+
+
 def transcript(session_id: str) -> dict[str, Any]:
     """The chat for whoever turns it into a task (the compiler, through main): its text
     with every tool call and result, the tools that worked, and the texts the user gave
@@ -351,7 +361,7 @@ def transcript(session_id: str) -> dict[str, Any]:
                 payload = result.get("output") if result.get("status") in ("ok", "needs_approval") else result.get("error")
                 lines.append(
                     f"→ {event.tool}({json.dumps(event.args, ensure_ascii=False)}) "
-                    f"[{event.status}]: {truncate(payload, 800)}"
+                    f"[{_STATUS_WORDS.get(event.status, event.status)}]: {truncate(payload, 800)}"
                 )
 
     return {

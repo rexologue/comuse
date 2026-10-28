@@ -90,3 +90,27 @@ async def test_the_chat_does_not_replace_someone_elses_draft(settings):
 
     assert store.view(settings.storage, "demo", "draft")["created_by"] == "user"
 
+
+
+def test_the_chat_asks_before_it_writes_code_and_the_card_says_where():
+    from common.tools import discover
+
+    manifest = discover()["tools.draft"].manifest()
+
+    assert manifest["confirm"] is True and "черновик её плагина" in manifest["card"]
+    assert "dry_run" in manifest["input_schema"]["properties"]
+
+
+async def test_a_file_is_replaced_only_when_asked(settings, env):
+    from internal_tools.fs.write import Input, write_file
+
+    paths = WorkspacePaths(env / "workspace", settings.storage.data_dir)
+    ctx = ToolContext(mode="chat", settings=settings, paths=paths, session_id="ses_w")
+    (env / "workspace" / "note.txt").write_text("старое", encoding="utf-8")
+
+    with pytest.raises(ToolError, match="уже существует: заменить его — overwrite=true"):
+        await write_file(Input(path="note.txt", content="новое"), ctx)
+    assert (env / "workspace" / "note.txt").read_text(encoding="utf-8") == "старое"
+
+    await write_file(Input(path="note.txt", content="новое", overwrite=True), ctx)
+    assert (env / "workspace" / "note.txt").read_text(encoding="utf-8") == "новое"

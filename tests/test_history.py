@@ -123,3 +123,14 @@ def test_the_transcript_is_the_chats_own_account_of_itself(settings):
     assert "→ fs.move(" in chat["text"] and "meta:" not in chat["text"]
     assert chat["done_tools"] == ["fs.move"]
     assert "Счета 2026/" in chat["given"] and "x@company.local" not in chat["given"]
+
+
+def test_a_call_the_user_never_confirmed_reads_as_not_done(settings):
+    session_id = history.ensure_session(None, "Скопируй")
+    history.add_message(session_id, "user", "Скопируй b.txt в архив")
+    message_id = history.add_message(session_id, "assistant", "Скопировать?")
+    history.add_trace(session_id, message_id, "fs.copy", {"src": "b.txt"}, {"status": "needs_approval", "output": None}, "needs_approval")
+
+    chat = history.transcript(session_id)
+
+    assert "[НЕ выполнено: пользователь не подтвердил]" in chat["text"] and chat["done_tools"] == []

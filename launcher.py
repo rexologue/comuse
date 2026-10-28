@@ -95,6 +95,10 @@ def _command(service: str, env: dict[str, str], reload: bool, port: int | None =
         "--app-dir",
         str(ROOT_DIR),
         "--no-access-log",
+        # A stop (or a reload) waits this long for open connections, not for ever: the web
+        # page's event stream never closes by itself.
+        "--timeout-graceful-shutdown",
+        "10",
     ]
 
     if reload:

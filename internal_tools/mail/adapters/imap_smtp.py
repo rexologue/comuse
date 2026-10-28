@@ -79,6 +79,7 @@ def search(
     since: date | None,
     unseen: bool,
     limit: int,
+    before: date | None = None,
     sender_in: list[str] = (),
     flagged: bool | None = None,
     answered: bool | None = None,
@@ -90,8 +91,13 @@ def search(
     # A message flagged \\Deleted is gone for the user even before the server purges it.
     criteria: list[str] = ["UNDELETED"]
 
+    # The date the server got the letter (INTERNALDATE), which every letter has: Date is
+    # the sender's word and may be missing.
     if since:
-        criteria += ["SINCE", since.strftime("%d-%b-%Y")]
+        criteria += ["SINCE", _imap_date(since)]
+
+    if before:
+        criteria += ["BEFORE", _imap_date(before)]
 
     if unseen:
         criteria.append("UNSEEN")
@@ -135,6 +141,11 @@ def search(
                     return found
 
     return found
+
+
+def _imap_date(day: date) -> str:
+    """01-Nov-2026: English month names, as IMAP has them, whatever the machine's locale (%b may be «ноя»)."""
+    return f"{day.day:02d}-{('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec')[day.month - 1]}-{day.year}"
 
 
 def _fetch_headers(imap: imaplib.IMAP4, uids: list[int], fields: str = "FROM TO SUBJECT DATE") -> dict[int, tuple[bytes, list[str]]]:

@@ -25,7 +25,11 @@ class Input(ToolInput):
         ),
     )
     subject: str | None = Field(default=None, description="Тема содержит")
-    since: str | None = Field(default=None, description="Не раньше даты YYYY-MM-DD")
+    since: str | None = Field(default=None, description="Не раньше даты YYYY-MM-DD (письма с этого дня и новее)")
+    before: str | None = Field(
+        default=None,
+        description="Раньше даты YYYY-MM-DD, не включая её (письма старше): «старше 30 дней» — before = сегодня минус 30 дней",
+    )
     unseen: bool = Field(default=False, description="Только непрочитанные")
     flagged: bool | None = Field(default=None, description="true — только важные (звёздочка), false — только не важные")
     answered: bool | None = Field(default=None, description="true — только отвеченные, false — только без ответа")
@@ -65,11 +69,7 @@ class Output(ToolOutput):
 async def search(inp: Input, ctx: ToolContext) -> Output:
     account = mailbox(ctx)
 
-    try:
-        since = date.fromisoformat(inp.since[:10]) if inp.since else None
-
-    except ValueError as e:
-        raise ToolError(f"`since` должен быть датой YYYY-MM-DD, получено {inp.since!r}") from e
+    since, before = _date("since", inp.since), _date("before", inp.before)
 
     found = await asyncio.to_thread(
         imap_smtp.search,
@@ -79,6 +79,7 @@ async def search(inp: Input, ctx: ToolContext) -> Output:
         sender=inp.sender,
         subject=inp.subject,
         since=since,
+        before=before,
         unseen=inp.unseen,
         limit=inp.limit,
         sender_in=inp.sender_in,
@@ -89,3 +90,11 @@ async def search(inp: Input, ctx: ToolContext) -> Output:
     )
 
     return Output(messages=[MailHeader.model_validate(item) for item in found])
+
+
+def _date(name: str, value: str | None) -> date | None:
+    try:
+        return date.fromisoformat(value[:10]) if value else None
+
+    except ValueError as e:
+        raise ToolError(f"`{name}` должен быть датой YYYY-MM-DD, получено {value!r}") from e

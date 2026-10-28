@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import string
 from typing import Any
@@ -158,6 +159,15 @@ def _readable(value: Any) -> str:
     return _template_text(str(value))
 
 
+def _arg_value(value: Any) -> str:
+    """An argument's value in a diff: as it is, not as a card shortens it (a mapping by its keys)."""
+    if isinstance(value, dict) and value:
+        text = json.dumps(value, ensure_ascii=False)
+        return _template_text(text if len(text) <= 160 else text[:157] + "…")
+
+    return _readable(value)
+
+
 def _template_text(text: str) -> str:
     """A template as a card reads it: `{{ week_start }}` → ‹week_start›, `{% for f in
     files %}…{% endfor %}` → «для каждого из ‹files›: …», printing filters dropped."""
@@ -213,10 +223,17 @@ def _line(change: dict[str, Any]) -> str:
         return f"− убран шаг: {change['before']}"
 
     if kind == "changed":
+        # Every argument that changed, whatever the card shows: a recipient added in bcc,
+        # which no card names, is what the person approves too.
+        before, after = change.get("args_before") or {}, change.get("args_after") or {}
         notes = [
+            f"{key}: {_arg_value(before.get(key))} → {_arg_value(after.get(key))}"
+            for key in sorted(set(before) | set(after)) if before.get(key) != after.get(key)
+        ]
+        notes += [
             f"{item['field']}: {_readable(item['before'])} → {_readable(item['after'])}" for item in change.get("behaviour") or []
         ]
-        if change["before"] == change["after"] and change.get("args_before") == change.get("args_after"):
+        if change["before"] == change["after"]:
             return f"~ {change['after']}: {'; '.join(notes)}"
 
         line = f"~ было: {change['before']} → стало: {change['after']}"

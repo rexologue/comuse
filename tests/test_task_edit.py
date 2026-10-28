@@ -82,12 +82,16 @@ async def test_agent_dry_run_reports_the_run_as_is():
         async def post(self, path, json=None):
             assert path == "/runs" and json == {"task_version_id": "ver_1", "dry_run": True, "wait": True}
             return {"id": "run_1", "status": "failed", "error": "Шаг `files`: нет папки",
-                    "steps": [{"step_key": "files", "status": "error", "error": "нет папки"}]}
+                    "steps": [{"step_key": "files", "status": "error", "error": "нет папки"},
+                              {"step_key": "write", "status": "ok", "logs": ["Пробный запуск: записал бы в «a.txt»"], "output": {"path": "a.txt"}}]}
 
     result = await meta_tools.call(Main(), "ses_1", "task_dry_run", {"task_id": "task_1", "version_id": "ver_1"})
 
-    assert result["output"]["status"] == "failed"
-    assert result["output"]["steps"] == [{"step": "files", "status": "error", "error": "нет папки", "output": None}]
+    assert result["output"]["status"] == "failed" and result["output"]["dry_run"] is True
+    assert result["output"]["steps"][0] == {"step": "files", "status": "error", "error": "нет папки", "logs": [], "output": None}
+    # What a step would have done reaches the model: it says «записал бы», not «записал».
+    assert result["output"]["steps"][1]["logs"] == ["Пробный запуск: записал бы в «a.txt»"]
+    assert "сделал бы" in result["output"]["next"]
 
 
 async def test_a_second_change_keeps_the_first_one(settings):

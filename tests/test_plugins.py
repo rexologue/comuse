@@ -190,7 +190,7 @@ async def test_arguments_paths_errors_and_a_dry_run(settings, plugins, runtime, 
     assert crashed.error.startswith("ZeroDivisionError") and any("Traceback" in line for line in crashed.logs)
     assert "не по схеме" in (await _call(runtime, {"file": "a.txt"}, tool="demo.wrong")).error
 
-    # Our functions do a dry run themselves: they are called, with ctx.dry_run.
+    # One that never asks is called in a dry run, with ctx.dry_run.
     dry = await _call(runtime, {"file": "a.txt"}, dry_run=True)
     assert dry.status == "ok" and "пробный запуск" in dry.logs
 
@@ -294,3 +294,36 @@ def test_a_draft_whose_packages_do_not_resolve_stays_as_it_was(settings, monkeyp
         store.save_draft(settings.storage, "demo", manifest=_manifest(), files={"main.py": "def run(args, ctx):\n    return {}\n"}, requirements=["nothing-like-it"])
 
     assert store.view(settings.storage, "demo", "draft", files=True) == before
+
+
+TOUCH = """
+from pathlib import Path
+
+
+def run(args, ctx):
+    if ctx.dry_run:
+        ctx.log("Пробный запуск: дописал бы строку")
+        return {"lines": 0, "out": ""}
+
+    path = Path(args["file"])
+    path.write_text(path.read_text(encoding="utf-8") + "ещё\\n", encoding="utf-8")
+    return {"lines": 1, "out": str(path)}
+"""
+
+
+async def test_a_dry_run_calls_a_changing_function_only_if_it_says_it_does_one(settings, plugins, runtime, env):
+    """Code a chat wrote may not look at ctx.dry_run: unless its manifest says it does, a
+    dry run does not call a function that changes something."""
+    changing = {**TOOL, "confirm": True}
+    tools = [{**changing, "name": "careless", "entry": "touch.py"}, {**changing, "name": "careful", "entry": "touch.py", "dry_run": True}]
+    _save(settings, manifest=_manifest(*tools), files={"main.py": COUNT_LINES, "touch.py": TOUCH})
+    await _approve(settings, plugins)
+    target = env / "workspace" / "a.txt"
+    target.write_text("x\\n", encoding="utf-8")
+
+    careless = await _call(runtime, {"file": "a.txt"}, tool="demo.careless", dry_run=True)
+    careful = await _call(runtime, {"file": "a.txt"}, tool="demo.careful", dry_run=True)
+
+    assert careless.status == "ok" and any("не вызван" in line for line in careless.logs)
+    assert careful.status == "ok" and "Пробный запуск: дописал бы строку" in careful.logs
+    assert target.read_text(encoding="utf-8") == "x\\n"
