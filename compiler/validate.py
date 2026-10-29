@@ -4,9 +4,11 @@ written so the LLM can fix the spec from it."""
 from __future__ import annotations
 
 import re
+from datetime import date, datetime
 from typing import Any
 
 import jsonschema
+from jinja2 import nodes
 from pydantic import ValidationError
 
 from common import templating
@@ -61,7 +63,7 @@ def validate_spec(data: Any, catalog: dict[str, dict[str, Any]]) -> TaskSpec:
             errors.append(f"variables.{name}: неизвестные имена {sorted(unknown)}")
 
     scope = templating.BUILTIN_NAMES | variable_names
-    _check_steps(spec.steps, scope, {}, catalog, errors, path="steps")
+    _check_steps(spec.steps, scope, {}, catalog, errors, path="steps", known=_known_before_run(spec))
 
     if errors:
         raise SpecError(errors)
@@ -76,9 +78,11 @@ def _check_steps(
     catalog: dict[str, dict[str, Any]],
     errors: list[str],
     path: str,
+    known: dict[str, Any],
 ) -> None:
     """Each step may reference variables and the steps before it (in its scope).
-    `outputs` maps visible step ids to their tools' output schemas."""
+    `outputs` maps visible step ids to their tools' output schemas; `known`, the values
+    there are before the run (today, now, the variables)."""
     visible = set(scope)
     outputs = dict(outputs)
     # The foreach steps above, by id: the ids of their own steps.
@@ -96,19 +100,47 @@ def _check_steps(
             errors += [f"{where}.foreach: {err}" for err in templating.check_expression(step.foreach)]
             _check_names(templating.expression_names(step.foreach), visible, f"{where}.foreach", errors)
             _check_output_refs(step.foreach, outputs, catalog, f"{where}.foreach", errors)
-            _check_steps(step.steps or [], visible | {step.as_}, outputs, catalog, errors, f"{where}.steps")
-            # A foreach yields a list of per-item results; their fields are not checked, but
-            # the two ways to get them wrong are (_check_foreach_refs).
+            _check_steps(step.steps or [], visible | {step.as_}, outputs, catalog, errors, f"{where}.steps", known)
+            # A foreach yields a list of per-item results: what an item has (its `as`, its
+            # steps, error) and the ways to get at it wrong are checked by _check_foreach_refs.
             outputs[step.id] = None
-            foreachs[step.id] = [child.id for child in step.steps or []]
+            foreachs[step.id] = [step.as_, *(child.id for child in step.steps or [])]
 
         else:
-            _check_tool_step(step, visible, catalog, errors, where)
+            _check_tool_step(step, visible, catalog, errors, where, known)
             _check_output_refs(step.args, outputs, catalog, f"{where}.args", errors)
-            outputs[step.id] = catalog.get(step.tool or "", {}).get("output_schema")
+            outputs[step.id] = _output_schema(step, catalog)
 
         _check_foreach_refs(step, foreachs, f"{where}", errors)
         visible.add(step.id)
+
+
+def _output_schema(step: Step, catalog: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+    """The tool's output schema; a field shaped by an argument (llm.extract's data by its
+    output_schema, marked x-from-arg) is that argument as the step gives it."""
+    schema = catalog.get(step.tool or "", {}).get("output_schema")
+    properties = (schema or {}).get("properties") or {}
+
+    shaped = {}
+    for name, node in properties.items():
+        given = step.args.get(node.get("x-from-arg")) if isinstance(node, dict) and node.get("x-from-arg") else None
+        if isinstance(given, dict) and not _contains_template(given):
+            shaped[name] = given
+
+    return {**schema, "properties": {**properties, **shaped}} if shaped else schema
+
+
+def _known_before_run(spec: TaskSpec) -> dict[str, Any]:
+    """today, now and the variables, as a run would have them today."""
+    known: dict[str, Any] = {"today": date.today(), "now": datetime.now()}
+
+    for name, expr in spec.variables.items():
+        try:
+            known[name] = templating.render_str(expr, known)
+        except Exception:
+            pass  # reported by the variable checks
+
+    return known
 
 
 def _check_tool_step(
@@ -117,6 +149,7 @@ def _check_tool_step(
     catalog: dict[str, dict[str, Any]],
     errors: list[str],
     where: str,
+    known: dict[str, Any],
 ) -> None:
     manifest = catalog.get(step.tool)
     if manifest is None:
@@ -147,7 +180,13 @@ def _check_tool_step(
                 errors.append(f"{where}.args.{key}: абсолютный путь {text!r}; используй путь относительно рабочей папки")
 
         if _contains_template(value):
-            continue
+            # Made of what there is before the run (a variable): checked as it will be.
+            if not templating.referenced_names(value) <= known.keys():
+                continue
+            try:
+                value = templating.jsonable(templating.render(value, known))
+            except Exception:
+                continue
 
         if not isinstance(properties[key], dict):
             if properties[key] is False:
@@ -180,8 +219,9 @@ def _check_output_refs(
                 node = _resolve(node, defs)
                 properties = node.get("properties")
 
-                # Free-form results (llm.extract data, dicts) cannot be checked further.
+                # Free-form results (dicts with no schema) cannot be checked further.
                 if not properties:
+                    node = {}
                     break
 
                 if field not in properties:
@@ -189,9 +229,17 @@ def _check_output_refs(
                         f"{where}: ссылка `{step_id}.output{tail}` — в результате нет поля `{field}`; "
                         f"есть: {sorted(properties)}"
                     )
+                    node = {}
                     break
 
                 node = properties[field]
+
+            # A sum described as a string comes back «$40000»: no number to print or add.
+            if _resolve(node, defs).get("type") == "string" and re.search(rf"{step_id}\.output{re.escape(tail)}\s*\|\s*format_number", text):
+                errors.append(
+                    f"{where}: `{step_id}.output{tail}` выводится как число (format_number), а в схеме это string: "
+                    "сделай поле number"
+                )
 
 
 _TEMPLATE = re.compile(r"\{\{.*?\}\}|\{%.*?%\}", re.S)
@@ -212,12 +260,43 @@ def _check_foreach_refs(step: Step, foreachs: dict[str, list[str]], where: str, 
                         f"например {{% for r in {foreach_id}.output %}}"
                     )
 
-                for child in children:
+                for child in children[1:]:
                     if re.search(rf"[.'\"]{child}\.output\b", template):
                         errors.append(
                             f"{where}: в результате foreach `{foreach_id}` результат шага `{child}` лежит прямо под его id: "
                             f"`r.{child}.<поле>`, без `.output`"
                         )
+
+        for foreach_id, field in _item_fields(text, foreachs):
+            known = [*foreachs[foreach_id], "error"]
+            if field not in known:
+                errors.append(f"{where}: у элемента результата foreach `{foreach_id}` нет поля `{field}`: есть {known}")
+
+
+def _item_fields(text: str, foreachs: dict[str, list[str]]) -> list[tuple[str, str]]:
+    """`r.move` in `{% for r in sort.output %}`: which foreach, which field of its item."""
+    if not templating.has_template(text):
+        return []
+
+    try:
+        tree = templating.make_env().parse(text)
+
+    except Exception:
+        return []  # check_syntax reports it
+
+    found = []
+    for loop in tree.find_all(nodes.For):
+        source = loop.iter
+        if not (isinstance(source, nodes.Getattr) and source.attr == "output" and isinstance(source.node, nodes.Name) and source.node.name in foreachs):
+            continue
+        if not isinstance(loop.target, nodes.Name):
+            continue
+
+        for node in loop.find_all(nodes.Getattr):
+            if isinstance(node.node, nodes.Name) and node.node.name == loop.target.name:
+                found.append((source.node.name, node.attr))
+
+    return found
 
 
 def _strings(value: Any) -> list[str]:

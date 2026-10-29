@@ -191,6 +191,25 @@ async def test_move_in_a_dry_run_only_says_what_it_would_do(settings):
     assert ctx.logs == ["Пробный запуск: переложил бы «Входящие/a.pdf» в «Счета/a.pdf»"]
 
 
+async def test_a_name_with_no_extension_is_a_folder_to_move_into(settings):
+    """«Переложи в Архив»: not a file called «Архив» with the PDF's bytes."""
+    from common import tunables
+    from common.tools import ToolContext
+    from executor.paths import WorkspacePaths
+    from internal_tools.fs.transfer import Input, move_file
+
+    workspace = tunables.get("workspace_dir")
+    (workspace / "Входящие").mkdir()
+    (workspace / "Входящие" / "a.pdf").write_bytes(b"%PDF")
+    (workspace / "Входящие" / "b.pdf").write_bytes(b"%PDF")
+    ctx = ToolContext(mode="run", settings=settings, paths=WorkspacePaths(workspace, settings.storage.data_dir))
+
+    assert (await move_file(Input(src="Входящие/a.pdf", dst="Архив"), ctx)).path == "Архив/a.pdf"
+    # A new name with an extension is still a new name.
+    assert (await move_file(Input(src="Входящие/b.pdf", dst="Архив/счёт.pdf"), ctx)).path == "Архив/счёт.pdf"
+    assert sorted(p.name for p in (workspace / "Архив").iterdir()) == ["a.pdf", "счёт.pdf"]
+
+
 async def test_fs_list_stays_in_its_folder(settings, tmp_path):
     from common import tunables
     from common.tools import ToolContext

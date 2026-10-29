@@ -79,6 +79,9 @@ async def deliver(ctx: ToolContext, account: Credential, message: EmailMessage, 
     uid): the letter it replies to, marked answered once this one is gone."""
     if draft:
         folder = await asyncio.to_thread(imap_smtp.append_draft, account.config, account.secret, message)
+        if ctx.dry_run:
+            # The one thing a dry run leaves: the letter, to be read where it would come from.
+            ctx.log(f"Пробный запуск: письмо «{message['Subject']}» не отправлено, а сохранено черновиком в «{folder}» ящика «{account.name}»")
         return Output(message_id=message["Message-ID"], mode="draft", folder=folder)
 
     try:

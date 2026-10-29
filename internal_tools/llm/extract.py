@@ -19,7 +19,8 @@ class ExtractInput(ToolInput):
 
 
 class ExtractOutput(ToolOutput):
-    data: Any
+    # Shaped by the step's own output_schema: the compiler checks references into it.
+    data: Any = Field(json_schema_extra={"x-from-arg": "output_schema"})
 
 
 @tool(

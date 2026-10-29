@@ -170,6 +170,9 @@ def _readable(value: Any) -> str:
         # Field mappings read best as their names: «client, amount».
         return ", ".join(str(key) for key in value) if value else "—"
 
+    if isinstance(value, bool):
+        return "да" if value else "нет"
+
     return _template_text(str(value))
 
 

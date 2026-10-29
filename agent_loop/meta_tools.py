@@ -126,10 +126,13 @@ async def _compile(main: MainClient, session_id: str, args: dict[str, Any]) -> A
         "summary": result.get("summary"),
         "steps": result.get("cards"),
         "trigger": result.get("trigger"),
+        "description": result.get("description"),
         # Lines the compiler wrote: «Отправлять письма сразу: выключено (по умолчанию). …».
         "settings": result.get("settings") or [],
         "next": (
-            "Покажи пользователю шаги задачи простыми словами. Если есть настройки (settings), перескажи их "
+            "Покажи пользователю шаги задачи простыми словами и когда она запускается — trigger как есть: «вручную» "
+            "значит, что сама по расписанию она не запустится (почему — в description), так и скажи. "
+            "Если есть настройки (settings), перескажи их "
             "как есть: каждая строка — текущее значение и что оно значит. Меняет их только сам пользователь в "
             "настройках задачи; ты их не меняешь и не обещаешь поменять. Дальше решает "
             "пользователь: попросит пробный запуск — вызови task_dry_run; попросит поправить — task_patch; "
@@ -159,7 +162,8 @@ async def _dry_run(main: MainClient, session_id: str, args: dict[str, Any]) -> A
             for step in run.get("steps", [])
         ],
         "next": (
-            "Это пробный запуск: ничего не изменено, что сделал бы каждый шаг — в его logs. Пересказывай как «сделал бы», "
+            "Это пробный запуск: ничего не изменено, кроме черновиков писем (если они есть в logs — скажи, где их "
+            "посмотреть), что сделал бы каждый шаг — в его logs. Пересказывай как «сделал бы», "
             "не «сделал». Упавший шаг или пустой результат — так и скажи, с причиной; задачу без просьбы пользователя не правь."
         ),
     }
@@ -179,9 +183,12 @@ async def _patch(main: MainClient, session_id: str, args: dict[str, Any]) -> Any
         "task_id": result["task_id"],
         "version_id": result["version_id"],
         "summary": result.get("summary"),
+        "trigger": result.get("trigger"),
+        "description": result.get("description"),
         "diff": result.get("diff"),
         "next": (
-            "Покажи пользователю, что изменится (было → стало). Попросит пробный запуск — task_dry_run "
+            "Покажи пользователю, что изменится (было → стало), и когда задача запускается — trigger как есть "
+            "(«вручную» — сама не запустится; почему — в description). Попросит пробный запуск — task_dry_run "
             "с этим version_id. Новую версию включает только сам пользователь — в списке задач."
         ),
     }

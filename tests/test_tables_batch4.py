@@ -173,3 +173,14 @@ async def test_a_notice_in_a_dry_run_is_not_sent():
     out = await notify(NotifyInput(message="Готово"), ctx)
 
     assert out.sent is False and ctx.notifications == ["Готово"] and "не отправлено" in ctx.logs[0]
+
+
+@pytest.mark.parametrize(
+    ("cell", "total"),
+    [("Итого", True), ("ИТОГО:", True), ("Итого по месяцу", True), ("Total for Q3", True),
+     ("Total Logistics LLC", False), ("Всего понемногу", False), ("Итоговый отчёт", False)],
+)
+def test_a_client_named_like_a_total_is_a_client(cell, total):
+    from internal_tools.xlsx.aggregate import _is_total
+
+    assert _is_total({"Клиент": cell, "Сумма": 10}, "Клиент") is total

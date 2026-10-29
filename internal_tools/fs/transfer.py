@@ -1,5 +1,6 @@
-"""fs.copy and fs.move share the destination rules: an existing folder (or a path
-ending with `/`) receives the file under its own name."""
+"""fs.copy and fs.move share the destination rules: an existing folder, a path ending
+with `/` or a name with no extension for a file that has one («Архив» for «a.pdf»)
+receives the file under its own name."""
 
 from __future__ import annotations
 
@@ -72,7 +73,9 @@ def _endpoints(inp: Input, ctx: ToolContext) -> tuple[Path, Path]:
         raise ToolError(f"Файл `{inp.src}` не найден")
 
     dst = ctx.write_path(inp.dst)
-    if inp.dst.endswith(("/", "\\")) or dst.is_dir():
+    # «Архив» for «a.pdf» is a folder to put it in, not the file's new name.
+    folder = not dst.exists() and not dst.suffix and src.suffix
+    if inp.dst.endswith(("/", "\\")) or dst.is_dir() or folder:
         dst = ctx.write_path(f"{inp.dst.rstrip('/').rstrip(chr(92))}/{src.name}")
 
     if dst.exists() and not inp.overwrite:

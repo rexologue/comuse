@@ -439,6 +439,8 @@ async def test_foreach_skips_a_failed_item_and_knows_an_empty_list(settings):
     main = FakeMain({**_tools(), "fs.move": move})
     run = await RunEngine(main).execute(_make_run(spec))
     assert run["status"] == "succeeded" and len(main.calls) == 3
+    # It went on, but the run says not everything was done.
+    assert run["error"] == "Не всё получилось: `each` — 1 из 2 элементов с ошибкой, первая: Шаг `each[0].move`: занят"
 
     each = next(e for e in run_log("run_1") if e["kind"] == "step" and e["step_key"] == "each")
     assert [item.get("error") is not None for item in each["output"]] == [True, False]

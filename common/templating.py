@@ -117,8 +117,19 @@ def describe_filters() -> str:
     return ", ".join(one(name, fn) for name, fn in FILTERS.items())
 
 
+class _Env(SandboxedEnvironment):
+    """`x.items` is the field of a result named so, not the dict's method: commands and
+    extracted data have fields called items, keys, values."""
+
+    def getattr(self, obj: Any, attribute: str) -> Any:
+        if isinstance(obj, dict) and attribute in obj:
+            return obj[attribute]
+
+        return super().getattr(obj, attribute)
+
+
 def make_env() -> SandboxedEnvironment:
-    env = SandboxedEnvironment(undefined=StrictUndefined, autoescape=False)
+    env = _Env(undefined=StrictUndefined, autoescape=False)
     env.filters.update(FILTERS)
 
     return env

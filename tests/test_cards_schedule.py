@@ -31,6 +31,8 @@ def test_a_recipient_no_card_names_shows_in_the_diff():
         ("30 18 * * MON-FRI", "по будням в 18:30"),
         ("0 9 * * MON-WED", "с понедельника по среду в 09:00"),
         ("*/15 * * * *", "каждые 15 минут"),
+        ("*/2 * * * *", "каждые 2 минуты"),
+        ("*/1 * * * *", "каждую минуту"),
         ("*/15 9-18 * * MON-FRI", "по будням каждые 15 минут с 09:00 до 18:59"),
         ("0,30 9-18 * * *", "каждый час в 00 и 30 минут с 09:00 до 18:59"),
         ("*/90 * * * *", "каждый час"),                      # the step starts anew every hour
@@ -44,3 +46,22 @@ def test_a_recipient_no_card_names_shows_in_the_diff():
 )
 def test_a_schedule_reads_as_what_it_does(expr, words):
     assert describe_schedule("cron", expr) == words
+
+
+@pytest.mark.parametrize("expr", ["0 9 31 4 *", "0 9 30 2 *"])
+def test_a_date_that_never_comes_is_refused(expr):
+    from common.cron import cron_trigger
+
+    with pytest.raises(ValueError, match="не наступит никогда"):
+        cron_trigger(expr)
+
+
+def test_a_card_says_yes_and_no_not_true_and_false():
+    from common.tools import discover
+    from compiler.cards import _format_card
+
+    mark = discover()["mail.mark"].manifest()
+
+    assert _format_card(mark["card"], {"account": "Test", "uids": [3], "seen": True, "flagged": False}, fallback="x", schema=mark["input_schema"]) == (
+        "Пометить письма 3 в «Test»: прочитано — да, важное — нет"
+    )

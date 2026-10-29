@@ -41,7 +41,8 @@ class Compiler:
 
 
     async def compile(self, session_id: str, *, title: str | None = None, hint: str | None = None) -> dict[str, Any]:
-        catalog = await self.catalog()
+        # As it is now: a command approved a moment ago in the chat is one the task may call.
+        catalog = await self.catalog(fresh=True)
 
         # The chat is agent-loop's: it says what was said and done there.
         chat = await self.main.get(f"/agent/sessions/{session_id}/transcript")
@@ -78,6 +79,7 @@ class Compiler:
             "version_id": version.id,
             "title": spec.title,
             "summary": summarize(spec),
+            "description": spec.description,
             "trigger": describe_trigger(spec.trigger),
             "settings": task_settings.lines(task_settings.view(settings, spec, catalog, cards)),
             "cards": cards,
@@ -109,16 +111,16 @@ class Compiler:
 
     async def patch(self, task_id: str, instruction: str, *, session_id: str | None = None) -> dict[str, Any]:
         base = store.base_version(task_id)
-        catalog = await self.catalog()
+        catalog = await self.catalog(fresh=True)
 
         messages = prompts.patch_messages(spec=base.spec, instruction=instruction, catalog=catalog, today=date.today())
 
         def validate(data: Any) -> tuple[dict[str, Any], TaskSpec]:
             try:
-                patched = jsonpatch.apply_patch(base.spec, data["ops"])
+                patched = apply_ops(base.spec, data["ops"])
 
             except (jsonpatch.JsonPatchException, jsonpointer.JsonPointerException) as e:
-                raise ValueError(f"JSON Patch не применяется: {e}") from e
+                raise ValueError(f"JSON Patch не применяется: {e}; шаги задачи: {step_paths(base.spec)}") from e
 
             return data, validate_spec(patched, catalog)
 
@@ -149,11 +151,11 @@ class Compiler:
             raise ApiError(status_code=422, message="Нужно одно из двух: spec (задача целиком) или ops (JSON Patch)")
 
         base = store.base_version(task_id)
-        catalog = await self.catalog()
+        catalog = await self.catalog(fresh=True)
 
         if ops is not None:
             try:
-                spec = jsonpatch.apply_patch(base.spec, ops)
+                spec = apply_ops(base.spec, ops)
 
             except (jsonpatch.JsonPatchException, jsonpointer.JsonPointerException) as e:
                 raise ApiError(status_code=422, message=f"JSON Patch не применяется: {e}") from e
@@ -199,6 +201,10 @@ class Compiler:
             ) from e
 
         changed = differences(base.tools, snapshot(spec.tools(), catalog))
+        if not changed and base.status == "draft":
+            # Refreshed before: what is to approve is there already.
+            raise ApiError(status_code=409, message=f"Черновик с командами, как они сейчас, уже ждёт одобрения: версия {base.id}")
+
         if not changed:
             raise ApiError(status_code=422, message="Команды задачи не менялись")
 
@@ -247,6 +253,8 @@ class Compiler:
             "version_id": version.id,
             "title": spec.title,
             "summary": version.summary,
+            "description": spec.description,
+            "trigger": describe_trigger(spec.trigger),
             "diff": diff["lines"],
             "changes": diff["changes"],
             "cards": cards,
@@ -273,6 +281,42 @@ class Compiler:
 
     async def catalog(self, *, fresh: bool = False) -> dict[str, dict[str, Any]]:
         return await self._catalog.get(fresh=fresh)
+
+
+def apply_ops(spec: dict[str, Any], ops: list[dict[str, Any]]) -> dict[str, Any]:
+    """JSON Patch where a step may be named by its id: /steps/totals/args/rows is
+    /steps/5/args/rows — a model counting steps gets the number wrong, an id it copies."""
+    # One at a time: an op that adds a step moves the numbers of the ones after it.
+    for op in ops:
+        spec = jsonpatch.apply_patch(spec, [{**op, **{key: _by_index(spec, op[key]) for key in ("path", "from") if isinstance(op.get(key), str)}}])
+
+    return spec
+
+
+def _by_index(spec: dict[str, Any], path: str) -> str:
+    parts, node = path.split("/"), spec
+    for i, part in enumerate(parts[1:], start=1):
+        if isinstance(node, list) and parts[i - 1] == "steps" and not part.isdigit():
+            ids = [step.get("id") for step in node if isinstance(step, dict)]
+            if part in ids:
+                parts[i] = str(ids.index(part))
+
+        try:
+            node = node[int(parts[i])] if isinstance(node, list) else node[parts[i].replace("~1", "/").replace("~0", "~")]
+        except (KeyError, IndexError, ValueError, TypeError):
+            break
+
+    return "/".join(parts)
+
+
+def step_paths(spec: dict[str, Any], prefix: str = "/steps") -> list[str]:
+    """Where each step is: «/steps/5 (totals)», nested ones under their foreach."""
+    paths = []
+    for i, step in enumerate(spec.get("steps") or []):
+        paths.append(f"{prefix}/{i} ({step.get('id')})")
+        paths += step_paths(step, f"{prefix}/{i}/steps")
+
+    return paths
 
 
 def check_reflects_chat(spec: TaskSpec, chat_tools: set[str]) -> None:

@@ -115,6 +115,10 @@ async def test_refreshing_shows_what_changed_and_keeps_the_steps(settings):
     assert draft.created_by == "tools" and draft.spec == store.get_version(task_id, draft.parent_version_id).spec
     assert draft.tools["demo.count"]["hash"] == NEW_CODE["hash"]
 
+    # Asked again while it waits: that draft is named, not «nothing changed».
+    with pytest.raises(ApiError, match=f"уже ждёт одобрения: версия {draft.id}"):
+        await Compiler(settings, llm=None, main=_Main(NEW_CODE)).refresh_tools(task_id)
+
     # With it the task is approved again, and the kept definition is the new one.
     store.approve(task_id, draft.id, {**INTERNAL, "demo.count": NEW_CODE})
 

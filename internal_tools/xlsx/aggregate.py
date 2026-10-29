@@ -15,7 +15,8 @@ from internal_tools.xlsx.sheets import read_sheet
 
 # A row of totals the table already has («Итого», «Всего»): summed again it would count
 # everything twice.
-_TOTAL_ROW = re.compile(r"^\s*(итого|всего|итог|total|grand total)\b", re.IGNORECASE)
+# «Итого», «Итого:», «Итого по месяцу», «Total for Q3» — not «Total Logistics LLC», a client.
+_TOTAL_ROW = re.compile(r"^\s*(итого|всего|итог|total|grand total)\s*(?:[:.\-–—]|\s(?:по|за|for|of)\b|$)", re.IGNORECASE)
 
 
 class Input(ToolInput):

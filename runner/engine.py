@@ -209,6 +209,10 @@ class RunEngine:
         if status == "succeeded" and not run.dry_run and _found_nothing(state):
             status = "empty"
 
+        # Went to the end, but not everything was done: said where whoever looks will see it.
+        if status in ("succeeded", "empty") and state.skipped:
+            error = _not_all_done(state.skipped)
+
         self._close(run_id, journal, state, status, error)
 
         await self.main.publish(
@@ -275,6 +279,8 @@ class _State:
         self.done: dict[str, Any] = {}
         self.artifacts: list[str] = []
         self.result: dict[str, Any] | None = None
+        # What failed and was skipped (on_error: skip): the run went on, but not all is done.
+        self.skipped: list[str] = []
 
 
 class _Journal:
@@ -397,8 +403,12 @@ class _Walk:
 
             # The item itself, by its `as` name, beside its steps' results: what the
             # results are about («счёт_45.pdf → Документы/счёт»), not just the results.
+            # `error` on every item, null when it went well: a filter on it keeps the good ones.
             result = {step.as_: item, **{child.id: inner.get(child.id, {}).get("output") for child in step.steps or []}}
-            results.append({**result, "error": failed} if failed else result)
+            results.append({**result, "error": failed})
+
+        if failures := [r["error"] for r in results if r["error"]]:
+            self.state.skipped.append(f"`{key}` — {len(failures)} из {len(items)} элементов с ошибкой, первая: {failures[0]}")
 
         return await self._check_empty(step, key, {"items": len(items)}, results)
 
@@ -461,6 +471,7 @@ class _Walk:
             self._record(key, step, status="error", inputs=args, output=None, error=error)
 
         if step.on_error == "skip":
+            self.state.skipped.append(f"`{key}` пропущен: {error}")
             return self._finish(key, step, None, status="skipped", inputs=args, record=False)
 
         raise _Fail(f"Шаг `{key}`: {error}")
@@ -564,6 +575,12 @@ class _Walk:
             **(extra or {}),
         }
         self.journal.add("step", {k: v for k, v in data.items() if v not in (None, [], {}) or k in ("status", "output")}, step_key=key)
+
+
+def _not_all_done(skipped: list[str]) -> str:
+    more = f"; и ещё {len(skipped) - 3}" if len(skipped) > 3 else ""
+
+    return f"Не всё получилось: {'; '.join(skipped[:3])}{more}"
 
 
 def _found_nothing(state: _State) -> bool:

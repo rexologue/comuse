@@ -9,6 +9,7 @@ schedule in words)."""
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 
 from apscheduler.triggers.cron import CronTrigger
 
@@ -23,7 +24,13 @@ def cron_trigger(expr: str) -> CronTrigger:
             f"не числами: «{fields[4]}» планировщик понял бы не так, как обычный cron"
         )
 
-    return CronTrigger.from_crontab(expr)
+    trigger = CronTrigger.from_crontab(expr)
+
+    # 31 April, 30 February: a schedule that is accepted and never comes.
+    if trigger.get_next_fire_time(None, datetime.now(timezone.utc)) is None:
+        raise ValueError(f"«{expr}» не наступит никогда: такой даты нет (например, 31 апреля или 30 февраля)")
+
+    return trigger
 
 
 def describe_schedule(trigger_type: str | None, expr: str | None) -> str:
@@ -98,7 +105,8 @@ def _times(minute: str, hour: str) -> str | None:
     if _NUM.match(minute):
         at = "каждый час" if int(minute) == 0 else f"каждый час в {int(minute):02d} минут"
     elif (step := _STEP.match(minute)) and step.group(1) == "*" and 60 % int(step.group(2)) == 0:
-        at = f"каждые {int(step.group(2))} минут"
+        n = int(step.group(2))
+        at = "каждую минуту" if n == 1 else f"каждые {n} минуты" if n in (2, 3, 4) else f"каждые {n} минут"
     elif step:
         # */45 is 00 and 45 of every hour, */90 only 00: the step starts anew each hour.
         at = _minutes([str(m) for m in range(0, 60, int(step.group(2)))]) if step.group(1) == "*" else None

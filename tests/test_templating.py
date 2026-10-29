@@ -64,3 +64,14 @@ def test_referenced_names():
 def test_sandbox_blocks_attribute_escape():
     with pytest.raises(TemplateError):
         templating.render_str("{{ ''.__class__.__mro__ }}", {})
+
+
+def test_a_field_named_like_a_dict_method_is_the_field():
+    """An extracted invoice has `items`; a dict's method of that name must not stand in."""
+    invoice = {"items": [{"name": "Бумага"}], "keys": ["a"], "values": [1]}
+
+    render = templating.render
+
+    assert render("{{ x.items }}", {"x": invoice}) == [{"name": "Бумага"}]
+    assert render("{% for i in x.items %}{{ i.name }}{% endfor %}", {"x": invoice}) == "Бумага"
+    assert render("{% for k, v in y.items() %}{{ k }}={{ v }}{% endfor %}", {"y": {"a": 1}}) == "a=1"

@@ -244,9 +244,12 @@ async def test_a_forward_in_a_dry_run_is_a_draft(monkeypatch, source):
     monkeypatch.setattr(imap_smtp, "send", lambda *a: pytest.fail("a dry run sent a letter"))
     monkeypatch.setattr(imap_smtp, "append_draft", lambda *a: "Drafts")
 
-    out = await forward(Input(account="work", uid=7, to=["boss@company.local"]), _send_context("run", {"send_directly": True}, dry_run=True))
+    ctx = _send_context("run", {"send_directly": True}, dry_run=True)
+    out = await forward(Input(account="work", uid=7, to=["boss@company.local"]), ctx)
 
     assert out.mode == "draft" and out.folder == "Drafts"
+    # What the dry run left behind is said, not «nothing changed».
+    assert ctx.logs == ["Пробный запуск: письмо «Fwd: Счёт» не отправлено, а сохранено черновиком в «Drafts» ящика «work»"]
 
 
 def _guarded(mode="chat", **config):
