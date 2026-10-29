@@ -90,3 +90,35 @@ def test_an_absolute_path_anywhere_in_the_arguments_is_refused():
 
     # Text that starts with a slash is not a path.
     validate_spec({"title": "t", "steps": [{"id": "n", "tool": "user.notify", "args": {"message": "/start — команда бота"}}]}, catalog)
+
+
+def test_a_docx_reads_tabs_form_fields_and_header_tables(tmp_path):
+    from docx import Document
+    from docx.oxml import parse_xml
+    from docx.oxml.ns import nsdecls
+
+    from internal_tools.docs.reader import read_document
+
+    document = Document()
+    document.settings.odd_and_even_pages_header_footer = True
+    section = document.sections[0]
+    section.header.add_table(rows=1, cols=2, width=section.page_width).rows[0].cells[0].text = "ИНН 7700000001"
+    section.even_page_header.paragraphs[0].text = "Чётная страница"
+
+    paragraph = document.add_paragraph()
+    paragraph.add_run("Итого:")
+    paragraph.add_run().add_tab()
+    paragraph.add_run("150")
+    cell = document.add_table(rows=1, cols=1).rows[0].cells[0]
+    cell.paragraphs[0].add_run("Ром")
+    cell.paragraphs[0].add_run("ашка")
+    document.element.body.append(parse_xml(
+        f'<w:sdt {nsdecls("w")}><w:sdtContent><w:p><w:r><w:t>Подписант: Иванов</w:t></w:r></w:p></w:sdtContent></w:sdt>'
+    ))
+    path = tmp_path / "a.docx"
+    document.save(str(path))
+
+    text = read_document(path)
+
+    assert "Итого: 150" in text and "| Ромашка |" in text and "Подписант: Иванов" in text
+    assert "ИНН 7700000001" in text and "Верхний колонтитул: Чётная страница" in text

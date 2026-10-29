@@ -33,6 +33,7 @@ class TemplateTable(BaseModel):
     table: int = Field(ge=1, description="Номер таблицы: «Таблица T2» в тексте документа → 2")
     name: str = Field(description="Имя таблицы латиницей snake_case")
     header_rows: int = Field(ge=0, description="Сколько строк шапки остаются как есть")
+    footer_rows: int = Field(default=0, ge=0, description="Сколько строк внизу таблицы (Итого) остаются как есть; значение в них можно сделать полем")
     columns: list[str] = Field(min_length=1, description="Ключи колонок по порядку, латиницей snake_case")
 
 
@@ -122,7 +123,6 @@ def _check(document, fields: list[TemplateField], tables: list[TemplateTable]) -
             problems.append(f"{what} «{name}»: имя уже занято")
         names.add(name)
 
-    loops = {spec.table - 1 for spec in tables}
     count = len(document.tables)
 
     for spec in tables:
@@ -132,8 +132,11 @@ def _check(document, fields: list[TemplateField], tables: list[TemplateTable]) -
             continue
 
         rows = document.tables[spec.table - 1].rows
-        if spec.header_rows >= len(rows):
-            problems.append(f"T{spec.table}: строк {len(rows)}, после шапки из {spec.header_rows} не остаётся строки данных")
+        if spec.header_rows + spec.footer_rows >= len(rows):
+            problems.append(
+                f"T{spec.table}: строк {len(rows)}, после шапки из {spec.header_rows} и итогов из {spec.footer_rows} "
+                "не остаётся строки данных"
+            )
             continue
 
         width = len(rows[spec.header_rows].cells)
@@ -144,44 +147,60 @@ def _check(document, fields: list[TemplateField], tables: list[TemplateTable]) -
             if not _NAME_RE.match(column):
                 problems.append(f"T{spec.table}: ключ колонки «{column}» — латиницей snake_case")
 
-    texts = [p.text for p in _text_paragraphs(document, loops)]
+    texts = [p.text for p in _text_paragraphs(document, tables)]
     for field in fields:
         name_ok(field.name, "Поле")
         example = field.example.strip()
         if not example:
             problems.append(f"Поле «{field.name}»: пустой example")
-        elif not any(example in text for text in texts):
-            problems.append(f"Поле «{field.name}»: фрагмента «{example}» нет в тексте документа (вне размеченных таблиц)")
+        elif not any(_occurrences(example, text) for text in texts):
+            problems.append(
+                f"Поле «{field.name}»: фрагмента «{example}» нет в тексте документа отдельно — вне строк данных "
+                "размеченных таблиц и не частью другого числа или слова («12» в «12.10.2026»)"
+            )
 
     return problems
 
 
-def _text_paragraphs(document, skip_tables: set[int]) -> list:
-    """Body paragraphs and those in tables that stay as they are."""
+def _text_paragraphs(document, tables: list[TemplateTable]) -> list:
+    """Body paragraphs and those in table rows that stay as they are: all of a table
+    left alone, the header and the totals of one whose rows become a loop."""
+    loops = {spec.table - 1: spec for spec in tables}
     paragraphs = list(document.paragraphs)
-    for index, table in enumerate(document.tables):
-        if index in skip_tables:
-            continue
 
-        for row in table.rows:
+    for index, table in enumerate(document.tables):
+        rows = list(table.rows)
+        if index in loops:
+            spec = loops[index]
+            rows = rows[: spec.header_rows] + (rows[len(rows) - spec.footer_rows:] if spec.footer_rows else [])
+
+        for row in rows:
             for cell in row.cells:
                 paragraphs.extend(cell.paragraphs)
 
     return paragraphs
 
 
+def _occurrences(example: str, text: str) -> list[int]:
+    """Where `example` stands on its own: «12» in «12 шт.», not in «12.10.2026» or «120»."""
+    left = r"(?<![\w])(?<!\d[.,/:\-])" if example[0].isalnum() else ""
+    right = r"(?![\w])(?![.,/:\-]\d)" if example[-1].isalnum() else ""
+
+    return [match.start() for match in re.finditer(left + re.escape(example) + right, text)]
+
+
 def _apply_markup(document, target: Path, fields: list[TemplateField], tables: list[TemplateTable]) -> dict[str, Any]:
     example_context: dict[str, Any] = {}
 
     for spec in tables:
-        rows = document.tables[spec.table - 1].rows
+        rows = list(document.tables[spec.table - 1].rows)
         example_context[spec.name] = [
             {key: (row.cells[i].text.strip() if i < len(row.cells) else "") for i, key in enumerate(spec.columns)}
-            for row in rows[spec.header_rows:]
+            for row in rows[spec.header_rows : len(rows) - spec.footer_rows]
         ]
-        _make_row_loop(document.tables[spec.table - 1], spec.header_rows, spec.name, spec.columns)
 
-    paragraphs = _text_paragraphs(document, {spec.table - 1 for spec in tables})
+    # The fields first: the totals row is found by its place before the loop moves rows.
+    paragraphs = _text_paragraphs(document, tables)
     missing: list[str] = []
 
     # The longest fragment first: «01.01.2025» becomes a field before «2025» could cut it.
@@ -201,6 +220,9 @@ def _apply_markup(document, target: Path, fields: list[TemplateField], tables: l
     if missing:
         raise ToolError("Разметка не подходит к документу:\n- " + "\n- ".join(missing))
 
+    for spec in tables:
+        _make_row_loop(document.tables[spec.table - 1], spec.header_rows, spec.footer_rows, spec.name, spec.columns)
+
     document.save(str(target))
 
     return {
@@ -210,15 +232,16 @@ def _apply_markup(document, target: Path, fields: list[TemplateField], tables: l
     }
 
 
-def _make_row_loop(table, header: int, name: str, columns: list[str]) -> None:
-    """Keep one data row as the pattern and wrap it in docxtpl `{%tr for %}` rows."""
-    rows = table.rows
+def _make_row_loop(table, header: int, footer: int, name: str, columns: list[str]) -> None:
+    """Keep one data row as the pattern, in its own formatting, and wrap it in docxtpl
+    `{%tr for %}` rows; the totals below it stay."""
+    rows = list(table.rows)
     pattern = rows[header]
 
     for i, cell in enumerate(pattern.cells):
-        cell.text = "{{ row." + columns[i] + " }}" if i < len(columns) else ""
+        _set_cell_text(cell, "{{ row." + columns[i] + " }}" if i < len(columns) else "")
 
-    for row in list(rows[header + 1:]):
+    for row in rows[header + 1 : len(rows) - footer]:
         row._tr.getparent().remove(row._tr)
 
     open_tr = copy.deepcopy(pattern._tr)
@@ -228,6 +251,22 @@ def _make_row_loop(table, header: int, name: str, columns: list[str]) -> None:
 
     _set_row_tag(open_tr, "{%tr for row in " + name + " %}")
     _set_row_tag(close_tr, "{%tr endfor %}")
+
+
+def _set_cell_text(cell, text: str) -> None:
+    """The text in the cell's first run, which keeps its font, size and bold; the rest emptied."""
+    paragraphs = cell.paragraphs
+    runs = [run for paragraph in paragraphs for run in paragraph.runs]
+    if not runs:
+        paragraphs[0].add_run(text)
+        return
+
+    runs[0].text = text
+    for run in runs[1:]:
+        run.text = ""
+    for paragraph in paragraphs[1:]:
+        if not any(run.text for run in paragraph.runs):
+            paragraph._p.getparent().remove(paragraph._p)
 
 
 def _set_row_tag(tr, tag: str) -> None:
@@ -245,8 +284,8 @@ def _replace_in_runs(paragraph, example: str, placeholder: str) -> bool:
     # Inside a placeholder made a moment ago («1» in «{{ day_1 }}») is not the document's text.
     taken = [match.span() for match in _PLACEHOLDER.finditer(joined)]
     starts = [
-        match.start() for match in re.finditer(re.escape(example), joined)
-        if not any(a < match.end() and match.start() < b for a, b in taken)
+        start for start in _occurrences(example, joined)
+        if not any(a < start + len(example) and start < b for a, b in taken)
     ]
 
     # From the end: what is replaced later does not move what comes before.

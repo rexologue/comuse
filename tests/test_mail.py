@@ -235,7 +235,12 @@ def test_search_fetches_headers_in_batches_newest_first(monkeypatch):
     assert len(box.fetches) == 2
 
 
-@pytest.mark.parametrize(("sent", "saved"), [("..", "attachment_1"), ("../../x.pdf", "x.pdf"), ("C:\\tmp\\a:b.pdf", "a_b.pdf")])
+@pytest.mark.parametrize(
+    ("sent", "saved"),
+    [("..", "attachment_1"), ("../../x.pdf", "x.pdf"), ("C:\\tmp\\a:b.pdf", "a_b.pdf"), ("CON.txt", "_CON.txt"),
+     # Too long for a disk: cut, its extension kept (a letter with it was unreadable).
+     ("я" * 250 + ".pdf", "я" * 98 + ".pdf")],
+)
 def test_an_attachment_is_saved_under_a_safe_name(sent, saved):
     from internal_tools.mail.adapters.imap_smtp import _attachment_name
 

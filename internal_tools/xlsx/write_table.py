@@ -39,7 +39,8 @@ async def write_table(inp: WriteInput, ctx: ToolContext) -> WriteOutput:
 def _write(path, inp: WriteInput) -> None:
     from openpyxl import Workbook
 
-    columns = inp.columns or list(inp.rows[0].keys() if inp.rows else [])
+    # Every row's keys, in the order they first come: a field only some rows have is a column too.
+    columns = inp.columns or list(dict.fromkeys(key for row in inp.rows for key in row))
 
     workbook = Workbook()
     sheet = workbook.active

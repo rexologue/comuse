@@ -111,6 +111,9 @@ def _check_table_rows(document, values: dict[str, Any]) -> None:
         if not isinstance(rows, list):
             raise ToolError(f"`{list_name}` — строки таблицы, нужен список, а пришло: {type(rows).__name__}")
 
+        # Copies: an empty cell is filled in below, the caller's rows stay as they came.
+        rows = values[list_name] = [dict(row) if isinstance(row, dict) else row for row in rows]
+
         for i, row in enumerate(rows):
             absent = sorted(keys - set(row)) if isinstance(row, dict) else sorted(keys)
             if absent:
@@ -119,6 +122,17 @@ def _check_table_rows(document, values: dict[str, Any]) -> None:
                     f"Строки `{list_name}` должны иметь поля {sorted(keys)}; в строке {i + 1} нет {absent} "
                     f"(пришло: {got}). Подготовь строки шагом, который переложит их в эти поля."
                 )
+
+            # A cell with nothing in it is an empty cell, not «None»; a list or a mapping
+            # would print as «['a', 'b']».
+            for key in sorted(keys):
+                if row[key] is None:
+                    row[key] = ""
+                elif isinstance(row[key], (list, dict)):
+                    raise ToolError(
+                        f"`{list_name}`, строка {i + 1}: поле `{key}` — {'список' if isinstance(row[key], list) else 'набор полей'}, "
+                        "а ячейка печатает одно значение: дай строку или число"
+                    )
 
 
 def _loops(xml: str) -> list[tuple[str, str, str]]:

@@ -87,8 +87,30 @@ def _xlsx_rows(path: Path, sheet: str | None) -> list[tuple[Any, ...]]:
                         if r - 1 < len(rows) and c - 1 < len(rows[r - 1]):
                             rows[r - 1][c - 1] = value
 
+        _check_formulas(path, worksheet.title, rows)
+
         return [tuple(row) for row in rows]
 
+    finally:
+        workbook.close()
+
+
+def _check_formulas(path: Path, sheet: str, rows: list[list[Any]]) -> None:
+    """A formula with no value saved beside it (a file written by a program that does not
+    calculate) reads as empty: summed as 0 in silence. Said instead."""
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(str(path), read_only=True, data_only=False)
+    try:
+        for r, row in enumerate(workbook[sheet].iter_rows(values_only=True)):
+            for c, formula in enumerate(row):
+                if isinstance(formula, str) and formula.startswith("=") and r < len(rows) and c < len(rows[r]) and rows[r][c] is None:
+                    from openpyxl.utils import get_column_letter
+
+                    raise ToolError(
+                        f"В «{path.name}» формулы без вычисленных значений (например, {get_column_letter(c + 1)}{r + 1}: {formula}): "
+                        "файл сохранила программа, которая не считает формулы. Откройте и сохраните его в Excel или LibreOffice"
+                    )
     finally:
         workbook.close()
 

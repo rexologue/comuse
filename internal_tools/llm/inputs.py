@@ -3,6 +3,7 @@ file is not theirs: a document comes as the text of the step that read it."""
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from common.tools import PermissionDenied, ToolContext, ToolError
@@ -17,8 +18,13 @@ def gather_text(value: Any, ctx: ToolContext, limit: int = MAX_INPUT_CHARS) -> s
         return ""
 
     _refuse_paths(value, ctx)
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
 
-    return truncate(value, limit)
+    # The model reads only the start of a long text: said where the run is looked at.
+    if len(text) > limit:
+        ctx.log(f"Текст длиннее {limit} символов ({len(text)}): модель получила только начало — читай его частями или сократи")
+
+    return truncate(text, limit)
 
 
 def _refuse_paths(value: Any, ctx: ToolContext) -> None:

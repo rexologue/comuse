@@ -67,6 +67,12 @@ def test_fill_template_checks_fields_and_row_keys(tmp_path):
     with pytest.raises(ToolError, match="переложит их в эти поля"):
         _render(template, {"total": 1, "items": [{"key": "a"}]}, {}, out)
 
+    with pytest.raises(ToolError, match="строка 1: поле `name` — список"):
+        _render(template, {"total": 1, "items": [{"name": ["a", "b"]}]}, {}, out)
+
+    _render(template, {"total": "1", "items": [{"name": None}]}, {}, out)
+    assert "None" not in [c.text for t in Document(str(out)).tables for r in t.rows for c in r.cells]
+
     _render(template, {"total": "3", "items": [{"name": "Ромашка"}]}, {}, out)
     text = [p.text for p in Document(str(out)).paragraphs] + [c.text for t in Document(str(out)).tables for r in t.rows for c in r.cells]
 
@@ -114,6 +120,41 @@ def test_make_template_applies_the_markup_and_fills_back(tmp_path):
 
     assert document.paragraphs[0].text == "Отчёт за 8 декабря 2026 г."
     assert cells == [["Клиент", "Сумма"], ["Альфа", "5"]]
+
+
+def test_make_template_keeps_dates_totals_and_formatting(tmp_path):
+    """«12» is the quantity, not the day of «12.10.2026»; the «Итого» row stays, with its
+    value a field; the pattern row keeps its bold."""
+    from docx import Document
+
+    from internal_tools.docs.fill_template import _render
+    from internal_tools.docs.make_template import TemplateField, TemplateTable, _make
+
+    document = Document()
+    document.add_paragraph("Акт от 12.10.2026: поставлено 12 шт.")
+    table = document.add_table(rows=4, cols=2)
+    for row, values in zip(table.rows, [("Товар", "Сумма"), ("Бумага", "100"), ("Скрепки", "50"), ("Итого", "150")]):
+        for cell, value in zip(row.cells, values):
+            cell.paragraphs[0].add_run(value).bold = values[0] == "Бумага"
+    document.save(str(tmp_path / "example.docx"))
+
+    template = tmp_path / "t.docx"
+    result = _make(
+        tmp_path / "example.docx",
+        template,
+        [TemplateField(name="qty", description="Количество", example="12"), TemplateField(name="total", description="Итого", example="150")],
+        [TemplateTable(table=1, name="items", header_rows=1, footer_rows=1, columns=["name", "amount"])],
+    )
+    assert result["example_context"]["items"] == [{"name": "Бумага", "amount": "100"}, {"name": "Скрепки", "amount": "50"}]
+
+    out = tmp_path / "out.docx"
+    _render(template, {"qty": "7", "total": "30", "items": [{"name": "Ручки", "amount": "30"}]}, {}, out)
+    filled = Document(str(out))
+    rows = [[c.text for c in r.cells] for r in filled.tables[0].rows]
+
+    assert filled.paragraphs[0].text == "Акт от 12.10.2026: поставлено 7 шт."
+    assert rows == [["Товар", "Сумма"], ["Ручки", "30"], ["Итого", "30"]]
+    assert filled.tables[0].rows[1].cells[0].paragraphs[0].runs[0].bold is True
 
 
 def test_make_template_names_every_problem_of_the_markup(tmp_path):
@@ -280,8 +321,8 @@ def test_fields_inside_fields_and_formatting(tmp_path):
     assert paragraph.text == "Дата: {{ day }}, год {{ year }} — важно"
     assert paragraph.runs[-1].bold and paragraph.runs[-1].text == "важно"
 
-    # «1» is left only inside the other fields: said so, not dropped in silence.
-    with pytest.raises(ToolError, match="«one».*только внутри другого поля"):
+    # «1» stands only inside the date: said so, not dropped in silence.
+    with pytest.raises(ToolError, match="«one».*нет в тексте документа отдельно"):
         _make(example, tmp_path / "t2.docx", [year, day, TemplateField(name="one", description="", example="1")], [])
 
 
@@ -348,6 +389,10 @@ def test_a_model_step_gets_text_not_file_names(settings):
 
     assert gather_text("Счёт № 5 от ООО «Ромашка»", ctx) == "Счёт № 5 от ООО «Ромашка»"
     assert gather_text({"documents": [{"path": "a.txt", "text": "текст"}]}, ctx).startswith('{"documents"')
+
+    # A text too long for the step is cut, and the run says so.
+    assert len(gather_text("т" * 500, ctx, limit=100)) < 200
+    assert ctx.logs == ["Текст длиннее 100 символов (500): модель получила только начало — читай его частями или сократи"]
 
 
 def test_an_output_name_from_a_model_becomes_a_file_name(settings):

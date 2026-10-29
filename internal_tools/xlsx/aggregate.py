@@ -78,6 +78,13 @@ async def aggregate(inp: Input, ctx: ToolContext) -> Output:
     kept = [row for row in rows if not _is_total(row, inp.group_by)]
     skipped, rows = len(rows) - len(kept), kept
 
+    # The first row all text where numbers are summed: the header is likely lower down.
+    if rows and inp.sum_columns and all(_is_text(rows[0].get(c)) for c in inp.sum_columns):
+        raise ToolError(
+            f"В первой строке под заголовками в {inp.sum_columns} не числа: {[rows[0].get(c) for c in inp.sum_columns]}. "
+            "Если над таблицей есть название, укажи header_row — номер строки с заголовками"
+        )
+
     totals = {column: sum(_number(row.get(column), column) for row in rows) for column in inp.sum_columns}
 
     groups: list[Group] = []
@@ -130,4 +137,14 @@ def _number(value: Any, column: str = "") -> float:
         return parse_number(value) or 0.0
 
     except ValueError as e:
-        raise ToolError(f"Значение {value!r} в колонке «{column}» не число (заголовки не в первой строке? — header_row)") from e
+        raise ToolError(f"Значение {value!r} в колонке «{column}» не число") from e
+
+
+def _is_text(value: Any) -> bool:
+    """Something written there, and not a number."""
+    try:
+        parse_number(value)
+        return False
+
+    except ValueError:
+        return True

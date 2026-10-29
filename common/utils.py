@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import unicodedata
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -154,9 +156,36 @@ def strings_in(value: Any) -> list[str]:
     return []
 
 
+# What a table writes for «nothing here»: a dash for zero, «нет данных».
+_NO_DATA = {"-", "—", "–", "н/д", "нд", "n/a", "na"}
+# A currency or a percent written beside the number: «1 234 ₽», «500 руб.», «12,5%».
+_UNIT = re.compile(r"(?i)^(?:rub|usd|eur)|(?:руб\.?|р\.|rub|usd|eur|%)$")
+
+
+# A name in bytes, under the 255 of most disks with room for « (2)».
+_NAME_BYTES = 200
+
+
+def file_name(name: str, fallback: str) -> str:
+    """What a file from outside (a model, a letter's sender) can be called on any disk:
+    nothing Windows refuses (CON, «:», a control character), no longer than a disk takes
+    (the end of the name cut, its extension kept)."""
+    name = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "_", name).strip(" .")
+    if re.fullmatch(r"(con|prn|aux|nul|com\d|lpt\d)(\..*)?", name, re.IGNORECASE):
+        name = f"_{name}"
+
+    stem, suffix = os.path.splitext(name)
+    if len(suffix.encode()) > 20:
+        stem, suffix = name, ""
+    while len((stem + suffix).encode()) > _NAME_BYTES:
+        stem = stem[:-1]
+
+    return (stem.rstrip(" .") + suffix) if stem.strip(" .") else fallback
+
+
 def parse_number(value: Any) -> float | None:
-    """A number as a table holds it: 1 234,5 → 1234.5; None for an empty cell. Raises
-    ValueError for anything else."""
+    """A number as a table holds it: 1 234,5 → 1234.5, −200 and (200) → -200, 12,5% → 12.5,
+    1 234 ₽ → 1234; None for an empty cell or a dash. Raises ValueError for anything else."""
     if value is None or value == "":
         return None
 
@@ -169,8 +198,18 @@ def parse_number(value: Any) -> float | None:
     # Any space inside (thin, narrow no-break: what Excel and Word put in «1 000»), an
     # apostrophe between thousands; of «.» and «,» both there, the last one is the decimal.
     text = re.sub(r"[\s'’]", "", str(value))
+    if text.lower() in _NO_DATA or not text:
+        return None
+
+    text = _UNIT.sub("", "".join(ch for ch in text if unicodedata.category(ch) != "Sc"))
+    # An accountant's negative: (200).
+    negative = text.startswith("(") and text.endswith(")")
+    text = text.strip("()").replace("−", "-").replace("–", "-")
+
     if "," in text and "." in text:
         decimal = "," if text.rfind(",") > text.rfind(".") else "."
         text = text.replace("." if decimal == "," else ",", "")
 
-    return float(text.replace(",", "."))
+    number = float(text.replace(",", "."))
+
+    return -number if negative else number

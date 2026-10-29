@@ -35,7 +35,7 @@ class ExtractOutput(ToolOutput):
 )
 async def extract(inp: ExtractInput, ctx: ToolContext) -> ExtractOutput:
     text = gather_text(inp.inputs, ctx)
-    if not text:
+    if not text.strip():
         raise ToolError("Нет входных данных для извлечения")
 
     try:
@@ -44,7 +44,8 @@ async def extract(inp: ExtractInput, ctx: ToolContext) -> ExtractOutput:
     except jsonschema.SchemaError as e:
         raise ToolError(f"Неверная output_schema: {e.message}") from e
 
-    fields = _field_names(inp.output_schema)
+    # A value the schema itself allows (an enum) may be a field's name too.
+    fields = _field_names(inp.output_schema) - _allowed_values(inp.output_schema)
 
     def validate(data: Any) -> Any:
         try:
@@ -58,6 +59,10 @@ async def extract(inp: ExtractInput, ctx: ToolContext) -> ExtractOutput:
         echoed = sorted({value for value in _strings(data) if value in fields})
         if echoed:
             raise ValueError(f"значения {echoed} — это имена полей схемы, а не данные из текста; извлеки сами значения")
+
+        # «null» as a string reaches the document as the word.
+        if any(value.strip().lower() in ("null", "none") for value in _strings(data)):
+            raise ValueError("значение «null» строкой: чего в тексте нет — null без кавычек, если схема допускает, иначе пропусти поле")
 
         return data
 
@@ -96,6 +101,18 @@ def _field_names(schema: Any) -> set[str]:
     walk(schema)
 
     return names
+
+
+def _allowed_values(schema: Any) -> set[str]:
+    """The strings an enum or a const of the schema allows."""
+    if isinstance(schema, list):
+        return {value for node in schema for value in _allowed_values(node)}
+    if not isinstance(schema, dict):
+        return set()
+
+    own = [*schema.get("enum", []), *([schema["const"]] if "const" in schema else [])]
+
+    return {value for value in own if isinstance(value, str)} | {value for node in schema.values() for value in _allowed_values(node)}
 
 
 def _strings(data: Any) -> list[str]:

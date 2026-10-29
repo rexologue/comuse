@@ -109,6 +109,10 @@ async def test_a_sheet_name_excel_refuses_is_made_one_it_takes(settings, env):
 
     assert load_workbook(str(ctx.read_path(out.path))).sheetnames == ["Итоги 10_2026"]
 
+    # A field only a later row has is a column all the same.
+    out = await write_table(WriteInput(rows=[{"a": 1}, {"a": 2, "b": 3}]), ctx)
+    assert list(load_workbook(str(ctx.read_path(out.path))).active.values) == [("a", "b"), (1, None), (2, 3)]
+
 
 async def test_a_model_echoing_the_schemas_field_names_is_not_an_answer(monkeypatch, settings, env):
     from internal_tools.llm import extract as extract_tool
@@ -135,6 +139,43 @@ async def test_a_model_echoing_the_schemas_field_names_is_not_an_answer(monkeypa
     )
 
     assert "имена полей схемы" in seen[0] and out.data["total"] == "47500"
+
+
+async def test_extract_refuses_a_null_string_and_lets_an_enum_name_a_field(monkeypatch, settings, env):
+    from internal_tools.llm import extract as extract_tool
+
+    schema = {"type": "object", "properties": {
+        "kind": {"type": "string", "enum": ["total", "partial"]},
+        "total": {"type": ["number", "null"]},
+        "client": {"type": "string"},
+    }}
+    answers = iter([{"kind": "total", "total": 5, "client": "null"}, {"kind": "total", "total": 5, "client": "Ромашка"}])
+    seen = []
+
+    class Model:
+        async def structured(self, messages, *, schema, name, validate):
+            for answer in answers:
+                try:
+                    return validate(answer)
+                except ValueError as e:
+                    seen.append(str(e))
+
+    monkeypatch.setattr(extract_tool, "instruct", lambda ctx: Model())
+    ctx = ToolContext(mode="chat", settings=settings, paths=WorkspacePaths(env / "workspace", settings.storage.data_dir))
+
+    out = await extract_tool.extract(extract_tool.ExtractInput(inputs="Итоговый счёт: 5", instruction="вид и сумма", output_schema=schema), ctx)
+
+    # «total» is an allowed value of kind, not an echo of the field total; «null» is no client.
+    assert len(seen) == 1 and "«null» строкой" in seen[0] and out.data["client"] == "Ромашка"
+
+
+async def test_classify_has_nothing_to_say_about_no_text(settings, env):
+    from internal_tools.llm.classify import ClassifyInput, classify
+
+    ctx = ToolContext(mode="chat", settings=settings, paths=WorkspacePaths(env / "workspace", settings.storage.data_dir))
+
+    with pytest.raises(ToolError, match="Нет текста"):
+        await classify(ClassifyInput(input="  ", labels=["счёт", "акт"]), ctx)
 
 
 @pytest.mark.parametrize(
@@ -184,3 +225,30 @@ def test_a_client_named_like_a_total_is_a_client(cell, total):
     from internal_tools.xlsx.aggregate import _is_total
 
     assert _is_total({"Клиент": cell, "Сумма": 10}, "Клиент") is total
+
+
+def test_a_formula_with_no_saved_value_is_said_not_read_as_empty(tmp_path):
+    from openpyxl import Workbook
+
+    book = Workbook()
+    book.active.append(["Клиент", "Сумма"])
+    book.active.append(["Ромашка", "=1+2"])
+    book.save(tmp_path / "f.xlsx")
+
+    with pytest.raises(ToolError, match="B2: =1\\+2"):
+        read_sheet(tmp_path / "f.xlsx")
+
+
+@pytest.mark.parametrize(
+    ("value", "number"),
+    [("−200", -200), ("(50)", -50), ("-", None), ("—", None), ("н/д", None), ("12,5%", 12.5),
+     ("1 234,56 ₽", 1234.56), ("500 руб.", 500), ("$1,234.50", 1234.5), ("1.234,56", 1234.56)],
+)
+def test_numbers_as_russian_tables_write_them(value, number):
+    assert parse_number(value) == number
+
+
+@pytest.mark.parametrize("value", ["Q3", "abc", "2026-10-12"])
+def test_text_is_still_not_a_number(value):
+    with pytest.raises(ValueError):
+        parse_number(value)

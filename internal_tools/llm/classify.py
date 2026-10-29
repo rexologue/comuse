@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import Field
 
-from common.tools import ToolContext, ToolInput, ToolOutput, tool
+from common.tools import ToolContext, ToolError, ToolInput, ToolOutput, tool
 from internal_tools.llm.inputs import gather_text
 from internal_tools.llm.model import instruct
 
@@ -29,6 +29,9 @@ class ClassifyOutput(ToolOutput):
 )
 async def classify(inp: ClassifyInput, ctx: ToolContext) -> ClassifyOutput:
     text = gather_text(inp.input, ctx, limit=20000)
+    # Nothing to read is no category: a sure answer about it would be made up.
+    if not text.strip():
+        raise ToolError("Нет текста для классификации: шаг перед этим ничего не прочитал")
 
     schema = {
         "type": "object",

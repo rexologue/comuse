@@ -3,10 +3,11 @@ mode. Not the model: asking it is a step of its own (llm.*), not part of another
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol
+
+from common.utils import file_name
 
 if TYPE_CHECKING:
     from common.settings import Settings
@@ -98,11 +99,9 @@ class ToolContext:
         name may come from a model: what Windows refuses becomes `_` (CON, a control
         character), and `suffix` (".docx") is added when the name lacks it. A name taken
         already in this run or chat gets « (2)»: two charts called chart.png are two files."""
-        name = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "_", filename).strip(" .") or "output"
+        name = file_name(filename, "output")
         if suffix and not name.lower().endswith(suffix):
-            name += suffix
-        if re.fullmatch(r"(con|prn|aux|nul|com\d|lpt\d)(\..*)?", name, re.IGNORECASE):
-            name = f"_{name}"
+            name = file_name(name + suffix, "output")
 
         path = self.output_dir() / name
         for copy in range(2, 1000):

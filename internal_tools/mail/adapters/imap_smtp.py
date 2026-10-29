@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from common.tools import ToolError
+from common.utils import file_name
 from internal_tools.mail.adapters import folders, letter
 from internal_tools.mail.addresses import matches as address_matches
 
@@ -686,11 +687,9 @@ def _select(imap: imaplib.IMAP4, folder: str, *, readonly: bool) -> None:
 
 
 def _attachment_name(filename: str, n: int) -> str:
-    """The sender names the file: only its last part, nothing Windows refuses, and never
-    `..` or empty."""
-    name = re.sub(r'[<>:"|?*\x00-\x1f]', "_", filename.replace("\\", "/").rsplit("/", 1)[-1]).strip(" .")
-
-    return name or f"attachment_{n}"
+    """The sender names the file: only its last part, nothing Windows refuses, no longer
+    than a disk takes, never `..` or empty."""
+    return file_name(filename.replace("\\", "/").rsplit("/", 1)[-1], f"attachment_{n}")
 
 
 def _unnamed(file: letter.File, n: int) -> str:

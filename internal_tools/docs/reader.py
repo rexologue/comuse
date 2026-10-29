@@ -3,6 +3,7 @@ markdown, numbered «Таблица T1», «Таблица T2»… — the numbe
 
 from __future__ import annotations
 
+import itertools
 from datetime import date, datetime
 from pathlib import Path
 
@@ -64,56 +65,78 @@ def _read_docx(path: Path) -> str:
     from docx import Document
 
     document = Document(str(path))
-    parts: list[str] = []
-    tables = 0
+    # Tables are numbered as python-docx counts them (body level), so «T2» means
+    # document.tables[1] to docs.make_template.
+    tables = itertools.count(1)
+    parts = _blocks(document.element.body, lambda: f"Таблица T{next(tables)}")
 
-    # Walk the body in order so tables stay where they are in the text. Tables are
-    # numbered as python-docx counts them (body level), so «T2» means document.tables[1]
-    # to docs.make_template.
-    for block in document.element.body.iterchildren():
-        tag = block.tag.rsplit("}", 1)[-1]
-
-        if tag == "p":
-            text = "".join(node.text or "" for node in block.iter() if node.tag.endswith("}t"))
-            if text.strip():
-                parts.append(text)
-
-        elif tag == "tbl":
-            rows = []
-            for row in block.iter():
-                if not row.tag.endswith("}tr"):
-                    continue
-
-                cells = []
-                for cell in row:
-                    if cell.tag.endswith("}tc"):
-                        cells.append(" ".join(n.text or "" for n in cell.iter() if n.tag.endswith("}t")).strip())
-
-                rows.append(cells)
-
-            tables += 1
-            parts.append(f"Таблица T{tables}:\n{markdown_table(rows)}")
-
-    # Headers and footers hold what a body does not (the company, the signature line):
-    # once each, however many sections repeat them.
+    # Headers and footers hold what a body does not (the company, the signature line, a
+    # table of requisites): once each, however many sections and kinds of page repeat them.
     def said(parts_of) -> list[str]:
         seen, found = set(), []
         for section in document.sections:
             for part in parts_of(section):
                 if part.is_linked_to_previous:
                     continue
-                text = " ".join(p.text.strip() for p in part.paragraphs if p.text.strip())
+                text = "\n".join(_blocks(part._element, lambda: "Таблица"))
                 if text and text not in seen:
                     seen.add(text)
                     found.append(text)
         return found
 
-    headers = said(lambda section: (section.first_page_header, section.header))
-    footers = said(lambda section: (section.first_page_footer, section.footer))
+    headers = said(lambda section: (section.first_page_header, section.header, section.even_page_header))
+    footers = said(lambda section: (section.first_page_footer, section.footer, section.even_page_footer))
 
     return "\n\n".join(
         [f"Верхний колонтитул: {text}" for text in headers] + parts + [f"Нижний колонтитул: {text}" for text in footers]
     )
+
+
+def _blocks(parent, table_title) -> list[str]:
+    """The paragraphs and tables under `parent` in their order; a form's fields (content
+    controls, w:sdt) are read as the text they hold."""
+    parts: list[str] = []
+
+    for block in parent.iterchildren():
+        tag = _tag(block)
+
+        if tag == "p":
+            text = _paragraph_text(block)
+            if text.strip():
+                parts.append(text)
+
+        elif tag == "tbl":
+            rows = [
+                [" ".join(t for t in (_paragraph_text(p).strip() for p in cell.iter() if _tag(p) == "p") if t) for cell in row if _tag(cell) == "tc"]
+                for row in block.iter()
+                if _tag(row) == "tr"
+            ]
+            parts.append(f"{table_title()}:\n{markdown_table(rows)}")
+
+        elif tag == "sdt":
+            # Its tables are not the body's: not numbered as docs.make_template counts.
+            for content in block:
+                if _tag(content) == "sdtContent":
+                    parts += _blocks(content, lambda: "Таблица")
+
+    return parts
+
+
+def _paragraph_text(paragraph) -> str:
+    """The text as it reads: a tab or a line break is a space, not two words run together."""
+    pieces = []
+    for node in paragraph.iter():
+        tag = _tag(node)
+        if tag == "t":
+            pieces.append(node.text or "")
+        elif tag in ("tab", "br", "cr"):
+            pieces.append(" ")
+
+    return "".join(pieces)
+
+
+def _tag(node) -> str:
+    return node.tag.rsplit("}", 1)[-1] if isinstance(node.tag, str) else ""
 
 
 def _read_eml(path: Path) -> str:
