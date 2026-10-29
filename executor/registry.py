@@ -73,16 +73,18 @@ class ToolRegistry:
         await upstream.start()
 
         if upstream.group in self.upstreams:
-            await self.upstreams.pop(upstream.group).stop()
+            old = self.upstreams.pop(upstream.group)
+            upstream.adopt(old)
+            await old.stop()
 
         self.upstreams[upstream.group] = upstream
         self.load()
 
 
-    async def disconnect(self, group: str) -> None:
+    async def disconnect(self, group: str, why: str = "") -> None:
         upstream = self.upstreams.pop(group, None)
         if upstream is not None:
-            await upstream.stop()
+            await upstream.stop(why)
             self.load()
 
 

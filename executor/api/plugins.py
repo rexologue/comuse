@@ -104,7 +104,7 @@ async def restart(name: str, request: Request):
 async def remove(name: str, request: Request):
     kinds = _own_kinds(name)
 
-    await request.app.state.plugins.stop(name)
+    await request.app.state.plugins.stop(name, "плагин удалён")
     await _call(store.remove, request.app.state.settings.storage, name)
 
     return {"status": "deleted", "accounts_deleted": _drop_accounts(kinds, request.app.state.secrets)}

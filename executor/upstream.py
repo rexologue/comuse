@@ -55,6 +55,9 @@ log = logging.getLogger("upstream")
 _START_TIMEOUT_SEC = 60
 
 # A server idle this long is pinged before a call: its process may have died meanwhile.
+# Why a server stopped when nothing else is said.
+_RESTARTED = "перезапуск или новый код плагина"
+
 _PING_AFTER_IDLE_SEC = 10
 _PING_TIMEOUT_SEC = 5
 
@@ -100,6 +103,8 @@ class Upstream:
         self._stop: asyncio.Event = asyncio.Event()
         self._failure: BaseException | None = None
         self._starting = asyncio.Lock()
+        # Why it was stopped: what a call cut off by it is told.
+        self._why = _RESTARTED
 
 
     async def start(self) -> None:
@@ -125,14 +130,34 @@ class Upstream:
                 raise ToolError(f"Сервер «{self.group}» не запустился: {self._failure!r}") from self._failure
 
 
-    async def stop(self) -> None:
+    async def stop(self, why: str = "") -> None:
+        self._why = why or _RESTARTED
         async with self._starting:
             await self._end()
 
         for child in self._accounts.values():
-            await child.stop()
+            await child.stop(why)
 
         self._accounts = {}
+
+
+    def adopt(self, old: Upstream) -> None:
+        """The same code started again (its catalog account changed): the other accounts'
+        servers go on under it, their calls not cut; the one this server now has is not
+        needed."""
+        if old.code_hash != self.code_hash:
+            return
+
+        self._accounts = {name: child for name, child in old._accounts.items() if child.account_key != self.account_key}
+        old._accounts = {name: child for name, child in old._accounts.items() if name not in self._accounts}
+
+
+    async def drop_account(self, name: str, why: str) -> None:
+        """An account changed or gone: its server stops (the next call starts one with the
+        account as it is now), and its secret leaves memory with it."""
+        child = self._accounts.pop(name, None)
+        if child is not None:
+            await child.stop(why)
 
 
     def for_account(self, credential: Credential) -> Upstream:
@@ -269,7 +294,7 @@ class Upstream:
             return answer.result()
 
         answer.cancel()
-        raise ToolError(f"Сервер «{self.group}» остановлен посреди вызова (перезапуск или новый код плагина): дошёл ли вызов, неизвестно")
+        raise ToolError(f"Сервер «{self.group}» остановлен посреди вызова ({self._why}): дошёл ли вызов, неизвестно")
 
 
     async def _serve(self) -> None:

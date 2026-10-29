@@ -54,6 +54,36 @@ class AccountKind:
     owner: str | None = None
 
 
+    def settle(self, config: dict[str, Any]) -> dict[str, Any]:
+        """The settings checked by the form's fields, then by the kind itself (prepare):
+        what the form does not offer, a missing required one or a value of the wrong
+        type is refused, not kept to fail later. Raises ValueError for the user."""
+        fields = {f.name: f for f in self.fields}
+
+        # What the form offers is what the account may hold: a typo is not a setting.
+        unknown = sorted(set(config) - set(fields))
+        if unknown:
+            raise ValueError(f"нет таких настроек: {', '.join(unknown)}; есть: {', '.join(fields)}")
+
+        missing = [f.name for f in self.fields if f.required and config.get(f.name) in (None, "")]
+        if missing:
+            raise ValueError(f"не хватает настроек: {', '.join(missing)}")
+
+        for name, value in config.items():
+            field = fields[name]
+            if value in (None, ""):
+                continue
+            if field.type == "choice" and str(value) not in field.choices:
+                raise ValueError(f"{field.title}: «{value}» — нужно одно из: {', '.join(field.choices)}")
+            whole = isinstance(value, int) and not isinstance(value, bool) or isinstance(value, str) and value.strip().isdigit()
+            if field.type == "number" and not whole:
+                raise ValueError(f"{field.title}: «{value}» — нужно целое число")
+            if field.type == "text" and (isinstance(value, bool) or not isinstance(value, (str, int, float))):
+                raise ValueError(f"{field.title}: нужен текст, а не {type(value).__name__}")
+
+        return self.prepare(config)
+
+
 _KINDS: dict[str, AccountKind] = {}
 
 

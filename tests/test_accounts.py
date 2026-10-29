@@ -35,7 +35,7 @@ class _Plugins:
     def __init__(self):
         self.changed: list[str] = []
 
-    async def account_changed(self, kind):
+    async def account_changed(self, kind, name=None):
         self.changed.append(kind)
 
 
@@ -123,6 +123,8 @@ async def test_a_password_does_not_go_to_another_kind(settings):
         ("imap_smtp", None, {"email": "a@b.ru"}),                 # no servers
         ("imap_smtp", "gmail", {}),                               # no address
         ("imap_smtp", "gmail", {"email": "a@b.ru", "security": "tls13"}),
+        ("imap_smtp", "gmail", {"email": "a@b.ru", "secure": "none"}),     # a typo is not a setting
+        ("imap_smtp", "gmail", {"email": "a@b.ru", "imap_port": "abc"}),
     ],
 )
 async def test_the_kind_refuses_incomplete_settings(settings, kind, preset, config):

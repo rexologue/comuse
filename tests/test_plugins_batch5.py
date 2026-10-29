@@ -61,12 +61,13 @@ async def test_a_call_cut_off_by_a_stop_ends_at_once_not_at_its_timeout():
 
     async def stop_soon():
         await asyncio.sleep(0.5)
-        await server.stop()
+        await server.stop("плагин удалён")
 
     started = time.monotonic()
     stopping = asyncio.create_task(stop_soon())
 
-    with pytest.raises(ToolError, match="остановлен посреди вызова"):
+    # Why it stopped, as it was: not «a restart» for a plugin removed.
+    with pytest.raises(ToolError, match="остановлен посреди вызова \\(плагин удалён\\)"):
         await server.call("slow", {"sec": 30})
 
     await stopping
@@ -131,17 +132,22 @@ async def test_a_draft_plugins_own_account_kind_can_be_tried(settings):
     await registry.close()
 
 
-@pytest.mark.parametrize(("config", "says"), [({"host": "h", "extra": 1}, "нет таких настроек"), ({"host": "h", "region": "mars"}, "нужно одно из")])
+@pytest.mark.parametrize(
+    ("config", "says"),
+    [({"host": "h", "extra": 1}, "нет таких настроек"), ({"host": "h", "region": "mars"}, "нужно одно из"),
+     ({"host": {"x": 1}}, "нужен текст"), ({"host": "h", "port": "abc"}, "целое число")],
+)
 def test_an_accounts_form_takes_only_what_it_offers(config, says):
     manifest = {**ACCOUNT_MANIFEST, "account": {**ACCOUNT_MANIFEST["account"], "fields": [
         *ACCOUNT_MANIFEST["account"]["fields"], {"name": "region", "title": "Регион", "type": "choice", "choices": ["ru", "eu"]},
+        {"name": "port", "title": "Порт", "type": "number"},
     ]}}
     kind = kind_of("demo", PluginManifest.model_validate(manifest))
 
     with pytest.raises(ValueError, match=says):
-        kind.prepare(config)
+        kind.settle(config)
 
-    assert kind.prepare({"host": "h", "region": "eu"}) == {"host": "h", "region": "eu"}
+    assert kind.settle({"host": "h", "region": "eu"}) == {"host": "h", "region": "eu"}
 
 
 @needs_uv

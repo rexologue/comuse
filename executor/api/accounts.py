@@ -58,7 +58,7 @@ async def create_account(body: AccountCreate, request: Request):
         raise ApiError(status_code=400, message=f"Unknown preset `{body.preset}`", details={"presets": list(kind.presets)})
 
     try:
-        config = kind.prepare({**kind.presets.get(body.preset or "", {}), **body.config})
+        config = kind.settle({**kind.presets.get(body.preset or "", {}), **body.config})
 
     except ValueError as e:
         raise ApiError(status_code=400, message=str(e)) from e
@@ -92,7 +92,7 @@ async def create_account(body: AccountCreate, request: Request):
     # Plugins that work for accounts of this kind take it into their servers (and those
     # of the kind it was, out of them).
     for changed in dict.fromkeys((kind.name, was)):
-        await request.app.state.plugins.account_changed(changed)
+        await request.app.state.plugins.account_changed(changed, body.name)
 
     return _public(row)
 
@@ -131,7 +131,7 @@ async def delete_account(name: str, request: Request):
         db.delete(row)
         db.commit()
 
-    await request.app.state.plugins.account_changed(kind)
+    await request.app.state.plugins.account_changed(kind, name)
 
     return {"status": "deleted"}
 

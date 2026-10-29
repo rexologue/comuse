@@ -119,26 +119,7 @@ def kind_of(plugin: str, manifest: PluginManifest, *, draft: bool = False) -> Ac
     if spec is None or spec.fields is None:
         return None
 
-    required = [field.name for field in spec.fields if field.required]
-    fields = {field.name: field for field in spec.fields}
-
-    def prepare(config: dict[str, Any]) -> dict[str, Any]:
-        missing = [name for name in required if not config.get(name)]
-        if missing:
-            raise ValueError(f"не хватает настроек: {', '.join(missing)}")
-
-        # What the form offers is what the account may hold: a typo is not a setting.
-        unknown = sorted(set(config) - set(fields))
-        if unknown:
-            raise ValueError(f"нет таких настроек: {', '.join(unknown)}; есть: {', '.join(fields)}")
-
-        for name, value in config.items():
-            field = fields[name]
-            if field.type == "choice" and value not in (None, "") and str(value) not in field.choices:
-                raise ValueError(f"{field.title}: «{value}» — нужно одно из: {', '.join(field.choices)}")
-
-        return config
-
+    # Its fields are its checks (AccountKind.settle): nothing of its own to add.
     return AccountKind(
         name=spec.kind,
         title=(spec.title or manifest.title) + (" (черновик плагина)" if draft else ""),
@@ -147,7 +128,6 @@ def kind_of(plugin: str, manifest: PluginManifest, *, draft: bool = False) -> Ac
             for f in spec.fields
         ),
         secret_title=spec.secret_title,
-        prepare=prepare,
         owner=plugin,
     )
 
@@ -208,21 +188,30 @@ class Plugins:
             self.errors[name] = str(e)
 
 
-    async def stop(self, name: str) -> None:
+    async def stop(self, name: str, why: str = "") -> None:
         self.errors.pop(name, None)
-        await self.registry.disconnect(name)
+        await self.registry.disconnect(name, why)
 
         if name in self._kinds:
             drop_account_kind(self._kinds.pop(name), name)
 
 
-    async def account_changed(self, kind: str) -> None:
-        """An account of this kind was made, changed or removed: the plugins that use the
-        kind start again (their catalog server takes the first account; the account
-        servers start anew at their next call)."""
+    async def account_changed(self, kind: str, name: str | None = None) -> None:
+        """An account of this kind was made, changed or removed: its own server stops (the
+        next call starts it with the account as it is). A plugin starts again only when
+        the account its catalog server holds is another now; the other accounts' calls
+        go on all the same."""
         for row in store.rows("current"):
-            spec = PluginManifest.model_validate(row.manifest).account
-            if spec is not None and spec.kind == kind:
+            manifest = PluginManifest.model_validate(row.manifest)
+            if manifest.account is None or manifest.account.kind != kind:
+                continue
+
+            running = self.registry.upstreams.get(row.name)
+            if running is not None and name is not None:
+                await running.drop_account(name, f"аккаунт «{name}» изменён или удалён")
+
+            first = self.first_account(kind) if self.first_account else None
+            if running is None or running.account_key != account_key(manifest, first):
                 await self.start(row.name)
 
 

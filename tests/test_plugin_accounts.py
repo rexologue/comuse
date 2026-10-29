@@ -242,3 +242,26 @@ async def test_an_account_server_killed_between_calls_is_started_anew(setup):
 
     assert again.status == "ok", again.error
     assert again.output["pid"] != first.output["pid"]
+
+
+async def test_changing_one_account_leaves_the_others_servers_running(setup):
+    """A call of another account must not be cut by it (it was: the whole plugin started again)."""
+    runtime, plugins, account = setup
+    account("alpha", host="a.test")
+    account("beta", host="b.test")
+    await plugins.account_changed("demo_kind")           # alpha holds the catalog's server now
+
+    alpha, beta = await _whoami(runtime, "alpha"), await _whoami(runtime, "beta")
+
+    account("beta", host="b2.test")
+    await plugins.account_changed("demo_kind", "beta")
+    assert (await _whoami(runtime, "alpha")).output["pid"] == alpha.output["pid"]
+    beta = await _whoami(runtime, "beta")
+    assert beta.output["host"] == "b2.test"
+
+    # The catalog's account itself changes: its server starts again, beta's goes on.
+    account("alpha", host="a2.test")
+    await plugins.account_changed("demo_kind", "alpha")
+    assert (await _whoami(runtime, "alpha")).output["host"] == "a2.test"
+    assert (await _whoami(runtime, "beta")).output["pid"] == beta.output["pid"]
+

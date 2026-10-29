@@ -48,6 +48,10 @@ account_kind(
             AccountField("imap_host", "Сервер IMAP", hint="заполняется пресетом"),
             AccountField("imap_port", "Порт IMAP", type="number", default="993 при ssl, иначе 143"),
             AccountField("imap_security", "Защита IMAP", type="choice", choices=("ssl", "starttls", "none"), default="ssl"),
+            AccountField(
+                "security", "Защита IMAP и SMTP сразу", type="choice", choices=("ssl", "starttls", "none"),
+                hint="если у обоих одна; своя у каждого — imap_security, smtp_security",
+            ),
             AccountField("smtp_host", "Сервер SMTP", hint="заполняется пресетом"),
             AccountField("smtp_port", "Порт SMTP", type="number", default="465 при ssl, 587 при starttls, 25 без защиты"),
             AccountField(
