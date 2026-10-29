@@ -224,3 +224,21 @@ async def test_an_idle_account_server_is_stopped_and_the_next_call_starts_one(se
     # The catalog's own server is not one of them: it stays, its tools in the catalog.
     catalog = runtime.registry.upstreams["demo"]
     assert await catalog.stop_idle(0) == 1 and catalog._session is not None and "demo.whoami" in {m["name"] for m in runtime.registry.catalog()}
+
+
+async def test_an_account_server_killed_between_calls_is_started_anew(setup):
+    import os
+    import signal
+
+    runtime, _, account = setup
+    account("work", host="imap.work.test")
+    first = await _whoami(runtime, "work")
+
+    os.kill(first.output["pid"], signal.SIGKILL)
+    for child in runtime.registry.upstreams["demo"]._accounts.values():
+        child._last_used -= 60  # it answered a while ago: the next call asks it first
+
+    again = await _whoami(runtime, "work")
+
+    assert again.status == "ok", again.error
+    assert again.output["pid"] != first.output["pid"]

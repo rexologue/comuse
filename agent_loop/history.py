@@ -19,6 +19,11 @@ from common.utils import new_id, strings_in, truncate, utcnow
 # The result of a call whose turn broke off before it answered.
 _NO_RESULT = '{"status": "error", "error": "Вызов прерван: результата нет"}'
 
+# How far back a chat's history is looked at all, and what an early result of a turn
+# too long for the model is cut to.
+_LOOK_BACK = 200
+_CUT_RESULT = 500
+
 
 def ensure_session(session_id: str | None, first_text: str) -> str:
     with session() as db:
@@ -120,15 +125,14 @@ def add_message(
         return message.id
 
 
-def llm_history(session_id: str, limit: int) -> list[dict[str, Any]]:
-    """Last `limit` messages as OpenAI messages, never starting mid tool-exchange. The
-    current turn always stays whole, from the user's message on, however many tool calls
-    it has taken: cutting it would leave the model without the request it is working on."""
+def llm_history(session_id: str, chars: int) -> list[dict[str, Any]]:
+    """The latest messages within `chars` characters as OpenAI messages, never starting
+    mid tool-exchange. Counted in characters, not messages: three long letters fill a
+    model's context as much as a hundred short replies. The current turn always stays
+    whole, from the user's message on: cutting it would leave the model without the
+    request it is working on; when it alone is over, its earliest tool results are cut."""
     with session() as db:
         messages = db.query(ChatMessage).filter(ChatMessage.session_id == session_id)
-
-        rows = messages.order_by(ChatMessage.id.desc()).limit(limit).all()
-        rows.reverse()
 
         last_user = (
             db.query(func.max(ChatMessage.id))
@@ -136,8 +140,14 @@ def llm_history(session_id: str, limit: int) -> list[dict[str, Any]]:
             .scalar()
         )
 
-        if last_user is not None and (not rows or rows[0].id > last_user):
-            rows = messages.filter(ChatMessage.id >= last_user).order_by(ChatMessage.id).all()
+        rows = messages.filter(ChatMessage.id >= (last_user or 0)).order_by(ChatMessage.id).all()
+        spent = sum(_size(row) for row in rows)
+
+        for row in messages.filter(ChatMessage.id < (last_user or 0)).order_by(ChatMessage.id.desc()).limit(_LOOK_BACK):
+            spent += _size(row)
+            if spent > chars:
+                break
+            rows.insert(0, row)
 
     # A window that starts with tool results (or the call that produced them) would
     # be rejected by the API; drop until the first user message.
@@ -185,23 +195,38 @@ def llm_history(session_id: str, limit: int) -> list[dict[str, Any]]:
             deferred = []
 
     close_unanswered()
+    messages += deferred
 
-    return messages + deferred
+    # The turn alone is over: its earliest results go short, the latest stay as they are.
+    excess = sum(len(m.get("content") or "") for m in messages) - chars
+    for message in messages:
+        if excess <= 0:
+            break
+        if message["role"] == "tool" and len(message["content"]) > _CUT_RESULT:
+            excess -= len(message["content"]) - _CUT_RESULT
+            message["content"] = truncate(message["content"], _CUT_RESULT)
+
+    return messages
 
 
-def user_wrote_after(session_id: str, message_id: int | None) -> bool:
-    """Whether the user has written anything since that message (a task notice does not count)."""
+def _size(row: ChatMessage) -> int:
+    return len(row.content or "") + (len(json.dumps(row.tool_calls, ensure_ascii=False)) if row.tool_calls else 0)
+
+
+def user_reply_after(session_id: str, message_id: int | None) -> str | None:
+    """What the user wrote last since that message (a task notice does not count); None — nothing yet."""
     if message_id is None:
-        return False
+        return None
 
     with session() as db:
         reply = (
-            db.query(ChatMessage.id)
+            db.query(ChatMessage.content)
             .filter(ChatMessage.session_id == session_id, ChatMessage.role == "user", ChatMessage.id > message_id)
+            .order_by(ChatMessage.id.desc())
             .first()
         )
 
-    return reply is not None
+    return None if reply is None else reply.content or ""
 
 
 def add_trace(session_id: str, message_id: int | None, tool: str, args: dict[str, Any], result: Any, status: str) -> int:

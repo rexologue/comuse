@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -33,7 +34,18 @@ _RESULT_CHARS = 6000
 # turn are chosen by what it answers too.
 _SHORT_REPLY_CHARS = 80
 
+# An answer that starts with a no is not a yes, whatever the model makes of it.
+_REFUSAL = re.compile(r"^\W*(нет|не|отмен\w*|стоп|no|cancel)\b", re.IGNORECASE)
+
+_CUT = (
+    "Результат длиннее, чем помещается, и сокращён: помеченного «обрезано» ты не видел. Длинный текст читай "
+    "частями поменьше (max_chars), следующую — с того места, докуда видел."
+)
+
 _MODEL_ATTEMPTS = 3
+
+# The shortest history a model is tried with before its error is the turn's.
+_HISTORY_CHARS_LEAST = 2000
 
 _STALLED = "Не получилось завершить работу. Попробуйте переформулировать просьбу."
 _LIMIT = (
@@ -114,14 +126,8 @@ class AgentLoop:
         failed: dict[str, str] = {}
 
         for _ in range(tunables.get("agent_max_iterations")):
-            messages = [{"role": "system", "content": system_prompt(datetime.now().astimezone(), collect(manifests, "agent"))}]
-            messages += history.llm_history(session_id, tunables.get("agent_history_messages"))
-
             # Turn-local only: the nudge never becomes part of the stored chat.
-            if nudged:
-                messages.append({"role": "user", "content": _NUDGE})
-
-            reply = await self._complete(messages, tools)
+            reply = await self._step(session_id, manifests, tools, [{"role": "user", "content": _NUDGE}] if nudged else [])
             tool_calls = _normalize_calls(reply.get("tool_calls") or [])
 
             # An empty reply with no calls means the model stalled mid-task; ask once more.
@@ -175,7 +181,7 @@ class AgentLoop:
                 history.add_message(
                     session_id,
                     "tool",
-                    shrink(output, _RESULT_CHARS),
+                    _shown(output),
                     tool_call_id=call["id"],
                     name=call["function"]["name"],
                 )
@@ -189,12 +195,8 @@ class AgentLoop:
     async def _limit_answer(self, session_id: str, manifests: list[dict[str, Any]], result: TurnResult) -> str:
         """Out of steps: the model says, without tools, what got done and what did not —
         not a bare «stopped» after a dozen calls the user cannot see."""
-        messages = [{"role": "system", "content": system_prompt(datetime.now().astimezone(), collect(manifests, "agent"))}]
-        messages += history.llm_history(session_id, tunables.get("agent_history_messages"))
-        messages.append({"role": "user", "content": _LIMIT})
-
         try:
-            reply = await self._complete(messages, [])
+            reply = await self._step(session_id, manifests, [], [{"role": "user", "content": _LIMIT}])
             if reply.get("content") and not reply.get("tool_calls"):
                 return reply["content"]
 
@@ -217,6 +219,32 @@ class AgentLoop:
             by_function[name] = manifest
 
         return manifest
+
+
+    async def _step(
+        self,
+        session_id: str,
+        manifests: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        extra: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """One model step on the chat as much of it fits: a server that finds it too long
+        for its context gets it again, shorter, instead of the chat breaking for good."""
+        chars = tunables.get("agent_history_chars")
+
+        while True:
+            messages = [{"role": "system", "content": system_prompt(datetime.now().astimezone(), collect(manifests, "agent"))}]
+            messages += history.llm_history(session_id, chars) + extra
+
+            try:
+                return await self._complete(messages, tools)
+
+            except ApiError as e:
+                if not _too_long(e) or chars <= _HISTORY_CHARS_LEAST:
+                    raise
+
+                chars //= 2
+                log.warning("chat %s too long for the model, history cut to %d characters", session_id, chars)
 
 
     async def _complete(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> dict[str, Any]:
@@ -344,18 +372,29 @@ class AgentLoop:
 
         # The user's yes is a message of theirs after the question, not the model's word for
         # it: text the model has read (a letter, a document) cannot confirm on their behalf.
-        if not history.user_wrote_after(session_id, event.message_id):
+        reply = history.user_reply_after(session_id, event.message_id)
+        if reply is None:
             return {
                 "status": "error",
                 "error": "Пользователь ещё не ответил. Опиши ему действие, закончи ответ и дождись его «да».",
             }
 
+        # Whether the answer is a yes is the model's reading; a plain no is not left to it.
+        if _REFUSAL.match(reply):
+            return {
+                "status": "error",
+                "error": "Пользователь отказался: действие не выполнено. Не делай его; если он захочет иначе — спроси заново.",
+            }
+
+        note = None
         if args.get("remember") is True:
             manifest = (await self.catalog.manifests()).get(event.tool) or {}
 
             # A command that asks every time (sending mail) cannot be let off.
             if manifest.get("confirm") is True:
                 self._consent.setdefault(session_id, set()).add(event.tool)
+            else:
+                note = "Эта команда спрашивает каждый раз: не обещай пользователю, что больше не спросишь"
 
         if event.tool.startswith("meta:"):
             output = await meta_tools.call(self.main, session_id, event.tool.removeprefix("meta:"), event.args)
@@ -364,7 +403,7 @@ class AgentLoop:
 
         history.update_trace(event.id, status="confirmed" if output["status"] == "ok" else output["status"], result=output)
 
-        return output
+        return {**output, "note": note} if note else output
 
 
     async def _execute(self, session_id: str, tool: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -375,6 +414,21 @@ class AgentLoop:
             return {"status": "error", "error": e.message}
 
         return {key: value for key, value in response.items() if value not in (None, [], {}) or key == "output"}
+
+
+def _shown(output: dict[str, Any]) -> str:
+    """The result as the model gets it. A cut one says so where the model looks first: a
+    text read in windows of 20000 and shown 6000 would otherwise go on from 20000."""
+    text = shrink(output, _RESULT_CHARS)
+    if text == json.dumps(output, ensure_ascii=False, default=str):
+        return text
+
+    return shrink({"note": _CUT, **output}, _RESULT_CHARS)
+
+
+def _too_long(error: ApiError) -> bool:
+    """The server's own words: every one names its context when a request does not fit."""
+    return error.status_code in (400, 413) and "context" in json.dumps(error.details or {}, ensure_ascii=False).lower()
 
 
 def _normalize_calls(calls: list[dict[str, Any]]) -> list[dict[str, Any]]:

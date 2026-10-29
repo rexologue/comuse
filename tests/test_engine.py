@@ -356,6 +356,25 @@ async def test_a_run_cancelled_in_the_queue_is_closed_like_any_other(settings):
     assert main.calls == [] and len(run_log("run_1")) == 1
 
 
+async def test_a_cancel_while_the_run_reads_the_catalog_stops_it(settings, monkeypatch):
+    """The run left the queue but has not started a step: it stops before the first one,
+    instead of the cancel closing it and the run then going all the way."""
+    main = FakeMain(_tools())
+    engine = RunEngine(main)
+    _make_run(SPEC)
+    tools = engine._catalog
+
+    async def catalog():
+        assert await engine.cancel("run_1") == "cancelling"
+        return await tools()
+
+    monkeypatch.setattr(engine, "_catalog", catalog)
+    run = await engine.execute("run_1")
+
+    assert run["status"] == "cancelled" and main.calls == []
+    assert [e["kind"] for e in run_log("run_1")].count("end") == 1
+
+
 async def test_a_step_its_when_left_out_does_not_hide_an_empty_check(settings):
     spec = {
         "title": "Проверка почты",

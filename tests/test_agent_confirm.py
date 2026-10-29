@@ -97,6 +97,24 @@ async def test_the_model_cannot_confirm_in_the_same_turn(settings):
     assert loop.main.executed == []
 
 
+async def test_a_no_is_not_a_yes_whatever_the_model_makes_of_it(settings):
+    loop = _loop()
+    session_id, message_id = _asking_turn()
+
+    asked = await loop._dispatch(session_id, message_id, _call("mail.send", SEND), {})
+
+    for answer in ("нет", "Нет, не надо", "не отправляй пока", "отмена", "стоп"):
+        history.add_message(session_id, "user", answer)
+        refused = await loop._confirm(session_id, {"action_id": asked["action_id"]})
+        assert refused["status"] == "error" and "отказался" in refused["error"]
+
+    assert loop.main.executed == []
+
+    # The latest answer decides: a yes after the no.
+    history.add_message(session_id, "user", "ладно, отправляй")
+    assert (await loop._confirm(session_id, {"action_id": asked["action_id"]}))["status"] == "ok"
+
+
 async def test_invalid_external_call_is_reported_before_asking(settings):
     loop = _loop()
 
@@ -150,7 +168,8 @@ async def test_sending_mail_asks_every_time_whatever_the_user_said(settings):
 
     asked = await loop._dispatch(session_id, message_id, _call("mail.send", SEND), {})
     history.add_message(session_id, "user", "да, и больше не спрашивай")
-    await loop._confirm(session_id, {"action_id": asked["action_id"], "remember": True})
+    sent = await loop._confirm(session_id, {"action_id": asked["action_id"], "remember": True})
+    assert "не обещай" in sent["note"]
 
     again = await loop._dispatch(session_id, message_id, _call("mail.send", SEND), {})
     assert again["status"] == "needs_approval"
@@ -198,6 +217,7 @@ async def test_a_task_runs_or_changes_only_after_the_users_yes(settings):
     for name, args, path in (
         ("task_run_now", {"task_id": "task_1"}, "/runs"),
         ("task_control", {"task_id": "task_1", "action": "pause"}, "/tasks/task_1/pause"),
+        ("task_reject", {"task_id": "task_1", "version_id": "ver_1"}, "/tasks/task_1/versions/ver_1/reject"),
     ):
         session_id, message_id = _asking_turn("Прочитай последнее письмо")
         asked = await loop._dispatch(session_id, message_id, _call(name, args), {})

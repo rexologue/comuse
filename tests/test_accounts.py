@@ -91,6 +91,30 @@ async def test_a_new_account_needs_a_password(settings):
     assert e.value.status_code == 400 and "пароля" in e.value.message
 
 
+async def test_a_password_does_not_go_to_another_kind(settings):
+    """A mailbox renamed into a plugin's kind would hand the plugin the mail password."""
+    from common.tools.accounts import AccountKind, account_kind, drop_account_kind
+
+    account_kind(AccountKind(name="notes_kind", title="Заметки", owner="notes"))
+    secrets, request = _Secrets(), _request()
+    request.app.state.secrets = secrets
+    await create_account(AccountCreate(name="work", kind="imap_smtp", preset="yandex", config={"email": "me@yandex.ru"}, secret="mail-pass"), request)
+
+    try:
+        with pytest.raises(ApiError) as e:
+            await create_account(AccountCreate(name="work", kind="notes_kind", config={}), request)
+        assert e.value.status_code == 400 and "передайте его пароль" in e.value.message
+        assert secrets.values == {"account:work": "mail-pass"}
+
+        # With a password of its own it may: the mail one is gone, both kinds' plugins hear.
+        await create_account(AccountCreate(name="work", kind="notes_kind", config={}, secret="notes-token"), request)
+        assert secrets.values == {"account:work": "notes-token"}
+        assert request.app.state.plugins.changed[-2:] == ["notes_kind", "imap_smtp"]
+
+    finally:
+        drop_account_kind("notes_kind", "notes")
+
+
 @pytest.mark.parametrize(
     ("kind", "preset", "config"),
     [

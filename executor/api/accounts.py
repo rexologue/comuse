@@ -66,6 +66,14 @@ async def create_account(body: AccountCreate, request: Request):
     secret_ref = f"account:{body.name}"
     secrets = request.app.state.secrets
 
+    with session() as db:
+        row = db.query(Account).filter(Account.name == body.name).one_or_none()
+        was = row.kind if row is not None else kind.name
+
+    # A password is for the kind it was given to: a mailbox's must not go to a plugin.
+    if body.secret is None and was != kind.name:
+        raise ApiError(status_code=400, message=f"Аккаунт `{body.name}` был вида `{was}`: для вида `{kind.name}` передайте его пароль (secret)")
+
     if body.secret is not None:
         secrets.set(secret_ref, body.secret)
 
@@ -81,8 +89,10 @@ async def create_account(body: AccountCreate, request: Request):
         db.add(row)
         db.commit()
 
-    # Plugins that work for accounts of this kind take it into their servers.
-    await request.app.state.plugins.account_changed(kind.name)
+    # Plugins that work for accounts of this kind take it into their servers (and those
+    # of the kind it was, out of them).
+    for changed in dict.fromkeys((kind.name, was)):
+        await request.app.state.plugins.account_changed(changed)
 
     return _public(row)
 

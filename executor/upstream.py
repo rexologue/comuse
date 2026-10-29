@@ -87,7 +87,10 @@ class Upstream:
         # A plugin with accounts: a server per account, started at its first call and
         # stopped when no call came for a while (stop_idle).
         self._accounts: dict[str, Upstream] = {}
+        # When it last answered (a ping can be skipped) and when a call last picked it
+        # (not idle, though it has not answered yet: maybe its process died meanwhile).
         self._last_used = time.monotonic()
+        self._picked = self._last_used
         self._busy = 0
 
         self.tools: list[types.Tool] = []
@@ -149,7 +152,7 @@ class Upstream:
             self._accounts[credential.name] = child
 
         # Its call comes next: not idle, whatever stop_idle sees meanwhile.
-        child._last_used = time.monotonic()
+        child._picked = time.monotonic()
 
         return child
 
@@ -160,7 +163,7 @@ class Upstream:
         now, stopped = time.monotonic(), 0
 
         for name, child in list(self._accounts.items()):
-            if child._busy == 0 and now - child._last_used > idle_sec:
+            if child._busy == 0 and now - max(child._last_used, child._picked) > idle_sec:
                 del self._accounts[name]
                 await child.stop()
                 stopped += 1

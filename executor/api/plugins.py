@@ -83,10 +83,14 @@ async def check_draft(name: str, request: Request):
 
 @router.post("/plugins/{name}/draft/approve", summary="Approve the draft: freeze it, install its packages, start its server")
 async def approve(name: str, body: Approval, request: Request):
+    before = _own_kinds(name, ("current",))
     view = await _call(store.approve, request.app.state.settings.storage, name, body.hash)
     await request.app.state.plugins.start(name)
 
-    return {**view, **request.app.state.plugins.state(name)}
+    # A kind the new code no longer has (renamed, dropped): its accounts go as on removal.
+    gone = _drop_accounts(before - _own_kinds(name, ("current",)), request.app.state.secrets)
+
+    return {**view, **request.app.state.plugins.state(name), "accounts_deleted": gone}
 
 
 @router.post("/plugins/{name}/restart", summary="Start the plugin's server again")
@@ -103,23 +107,27 @@ async def remove(name: str, request: Request):
     await request.app.state.plugins.stop(name)
     await _call(store.remove, request.app.state.settings.storage, name)
 
-    # Accounts of a kind only this plugin had: their secrets are for nothing now, and a
-    # plugin made later with the same kind must not inherit them.
+    return {"status": "deleted", "accounts_deleted": _drop_accounts(kinds, request.app.state.secrets)}
+
+
+def _drop_accounts(kinds: set[str], secrets) -> list[str]:
+    """Accounts of a kind only this plugin had: their secrets are for nothing now, and a
+    plugin made later with the same kind must not inherit them."""
     with session() as db:
         accounts = db.query(Account).filter(Account.kind.in_(kinds)).all() if kinds else []
         names = sorted(account.name for account in accounts)
         for account in accounts:
-            request.app.state.secrets.delete(account.secret_ref)
+            secrets.delete(account.secret_ref)
             db.delete(account)
         db.commit()
 
-    return {"status": "deleted", "accounts_deleted": names}
+    return names
 
 
-def _own_kinds(name: str) -> set[str]:
+def _own_kinds(name: str, rows: tuple[str, ...] = ("current", "draft")) -> set[str]:
     """The account kinds the plugin declared as its own (with fields), in its code or draft."""
     kinds = set()
-    for which in ("current", "draft"):
+    for which in rows:
         row = store.row(name, which)
         account = (row.manifest or {}).get("account") if row else None
         if account and account.get("fields") is not None:

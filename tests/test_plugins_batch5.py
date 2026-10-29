@@ -159,3 +159,47 @@ def test_a_failed_first_save_leaves_no_empty_folder(settings, monkeypatch):
 
     assert not (settings.storage.plugins_dir / "fresh").exists()
 
+
+
+@needs_uv
+async def test_a_kind_the_new_code_renamed_takes_its_accounts_with_it(settings, tmp_path):
+    """Left behind, they would be inherited by whichever plugin takes the old name later."""
+    import httpx
+    from fastapi import FastAPI
+
+    from common.errors import install_error_handlers
+    from common.secrets import SecretStore
+    from common.storage.db import session
+    from common.storage.models import Account
+    from executor.api import plugins as plugins_api
+
+    secrets = SecretStore("file", "test", tmp_path / "secrets.enc", "test-password")
+    registry = ToolRegistry(settings.storage)
+    registry.load()
+    app = FastAPI()
+    install_error_handlers(app)
+    app.include_router(plugins_api.router)
+    app.state.settings, app.state.secrets, app.state.registry = settings, secrets, registry
+    app.state.plugins = Plugins(registry, settings.storage)
+
+    first = store.save_draft(settings.storage, "demo", manifest=ACCOUNT_MANIFEST, files={"main.py": WHOAMI}, requirements=[])
+    store.approve(settings.storage, "demo", first["hash"])
+    secrets.set("account:mine", "secret")
+    with session() as db:
+        db.add(Account(id="acc_mine", name="mine", kind="demo_kind", config={"host": "h"}, secret_ref="account:mine"))
+        db.commit()
+
+    renamed = {**ACCOUNT_MANIFEST, "account": {**ACCOUNT_MANIFEST["account"], "kind": "demo_kind2"}}
+    draft = store.save_draft(settings.storage, "demo", manifest=renamed, files={"main.py": WHOAMI}, requirements=[])
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://executor") as client:
+        approved = await client.post("/plugins/demo/draft/approve", json={"hash": draft["hash"]})
+
+    with session() as db:
+        left = [account.name for account in db.query(Account).all()]
+
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["accounts_deleted"] == ["mine"] and left == []
+    assert secrets.get("account:mine") is None
+    await app.state.plugins.stop("demo")
+    await registry.close()

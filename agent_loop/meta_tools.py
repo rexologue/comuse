@@ -103,7 +103,7 @@ TITLES = {
 
 # What changes the user's tasks for real asks first, every time, like a command with
 # confirm="always": text the model read (a letter, a document) must not start a run.
-ASKING = {"task_run_now", "task_control"}
+ASKING = {"task_run_now", "task_control", "task_reject"}
 
 
 def manifest(name: str) -> dict[str, Any] | None:

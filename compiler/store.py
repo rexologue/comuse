@@ -217,6 +217,11 @@ def reject(task_id: str, version_id: str) -> TaskVersion:
 
         version.status = "rejected"
 
+        # An edit of a draft: rejecting the edit gives the draft back, as it was before it.
+        parent = db.get(TaskVersion, version.parent_version_id) if version.parent_version_id else None
+        if parent is not None and parent.status == "superseded":
+            parent.status = "draft"
+
         # A task never approved, its last draft gone: nothing is left of it to run or to
         # change. It goes to the archive, not to stay a «draft» with no draft.
         task = db.get(Task, task_id)

@@ -21,7 +21,7 @@ from common.clients.main_client import MainClient
 from common.errors import ApiError
 from common.schemas.task import Step, TaskSpec
 from common.storage.db import session
-from common.storage.models import RUN_FINISHED, Run, RunLog, Task, TaskVersion
+from common.storage.models import Run, RunLog, Task, TaskVersion
 from common.storage.queries import run_detail
 from common.tools.definition import changed, down
 from common.tools.settings import resolve
@@ -89,7 +89,8 @@ class RunEngine:
             run = db.get(Run, run_id)
             task = db.get(Task, run.task_id)
 
-        if run.status != "queued":
+        # It may start this very moment: whichever of the two takes it from the queue first wins.
+        if not self._take(run_id, status="cancelled"):
             self._cancelled.add(run_id)
             return "cancelling"
 
@@ -113,7 +114,7 @@ class RunEngine:
             task = db.get(Task, run.task_id)
 
         # Cancelled before it started.
-        if run.status in RUN_FINISHED:
+        if not self._take(run_id, status="running", started_at=utcnow()):
             return run_detail(run_id)
 
         state = _State()
@@ -158,7 +159,6 @@ class RunEngine:
 
             return run_detail(run_id)
 
-        self.update(run_id, status="running", started_at=utcnow())
         await self.main.publish("run.started", {"run_id": run_id, "task_id": run.task_id, "title": task.title, "dry_run": run.dry_run})
 
         hashes = {tool: kept.get("hash") for tool, kept in version.tools.items()}
@@ -253,6 +253,15 @@ class RunEngine:
                 setattr(run, key, value)
 
             db.commit()
+
+
+    def _take(self, run_id: str, **fields: Any) -> bool:
+        """Change a run that is still queued; False — it has left the queue already."""
+        with session() as db:
+            taken = db.query(Run).filter(Run.id == run_id, Run.status == "queued").update(fields)
+            db.commit()
+
+        return taken == 1
 
 
     def is_cancelled(self, run_id: str) -> bool:

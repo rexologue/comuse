@@ -16,8 +16,8 @@ class Input(ToolInput):
 
 
 class Document(BaseModel):
+    # What was read of a document; its text is in the output's `text`, not again here.
     path: str
-    text: str
     # The text goes on past this window: read on with offset + max_chars.
     truncated: bool
     text_length: int = 0
@@ -48,16 +48,17 @@ async def read(inp: Input, ctx: ToolContext) -> Output:
     if not refs:
         raise ToolError("Нет документов для чтения")
 
-    documents = []
+    documents, texts = [], []
     for ref in refs:
         path = ctx.read_path(ref)
         text = await asyncio.to_thread(read_document, path)
         end = inp.offset + inp.max_chars
-        documents.append(Document(path=ctx.to_ref(path), text=text[inp.offset : end], truncated=len(text) > end, text_length=len(text)))
+        documents.append(Document(path=ctx.to_ref(path), truncated=len(text) > end, text_length=len(text)))
+        texts.append(text[inp.offset : end])
 
     if len(documents) == 1:
-        text = documents[0].text
+        text = texts[0]
     else:
-        text = "\n\n".join(f"### Файл {document.path}\n\n{document.text}" for document in documents)
+        text = "\n\n".join(f"### Файл {document.path}\n\n{part}" for document, part in zip(documents, texts))
 
     return Output(path=documents[0].path, text=text, truncated=any(d.truncated for d in documents), documents=documents)

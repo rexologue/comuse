@@ -92,6 +92,19 @@ def test_a_task_whose_only_draft_is_rejected_goes_to_the_archive(settings):
         assert db.get(Task, task_id).status == "archived"
 
 
+async def test_rejecting_an_edit_of_a_draft_gives_the_draft_back(settings):
+    """Not the archive for a task never approved: what is rejected is the edit."""
+    task_id = _task()
+    first = store.base_version(task_id).id
+
+    edited = await _compiler(settings).edit(task_id, spec=None, ops=[{"op": "replace", "path": "/steps/0/args/folder", "value": "Архив"}], summary=None)
+    store.reject(task_id, edited["version_id"])
+
+    with session() as db:
+        assert db.get(Task, task_id).status == "draft"
+    assert store.base_version(task_id).id == first
+
+
 async def test_a_draft_shows_what_changes_against_what_runs_now(settings):
     """Two changes after approval: the second draft's diff has both, as approving it does."""
     task_id = _task()

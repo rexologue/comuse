@@ -18,22 +18,38 @@ def test_a_long_turn_keeps_the_users_request(settings):
     session_id = history.ensure_session(None, "Сделай отчёт")
     _long_turn(session_id, tool_messages=30)
 
-    messages = history.llm_history(session_id, limit=40)
+    messages = history.llm_history(session_id, chars=32000)
 
     assert messages[0] == {"role": "user", "content": "Сделай отчёт по всем файлам"}
     assert len(messages) == 61
 
 
-def test_earlier_turns_are_still_cut_to_the_limit(settings):
+def test_earlier_turns_are_cut_by_their_size_not_their_number(settings):
+    """Three long letters fill a model's context as much as a hundred short replies."""
     session_id = history.ensure_session(None, "Привет")
-    for i in range(30):
-        history.add_message(session_id, "user", f"вопрос {i}")
+    for i in range(3):
+        history.add_message(session_id, "user", f"письмо {i}: " + "т" * 9000)
         history.add_message(session_id, "assistant", f"ответ {i}")
+    history.add_message(session_id, "user", "что было во втором письме?")
 
-    messages = history.llm_history(session_id, limit=10)
+    messages = history.llm_history(session_id, chars=20000)
 
-    assert len(messages) == 10
-    assert messages[0] == {"role": "user", "content": "вопрос 25"}
+    assert [m["content"][:8] for m in messages] == ["письмо 1", "ответ 1", "письмо 2", "ответ 2", "что было"]
+    assert sum(len(m["content"]) for m in messages) <= 20000
+
+
+def test_a_turn_too_long_by_itself_cuts_its_earliest_results(settings):
+    session_id = history.ensure_session(None, "Сделай отчёт")
+    history.add_message(session_id, "user", "Сделай отчёт по всем файлам")
+    for i in range(4):
+        call = {"id": f"c{i}", "type": "function", "function": {"name": "docs__read", "arguments": "{}"}}
+        history.add_message(session_id, "assistant", "", tool_calls=[call])
+        history.add_message(session_id, "tool", f"файл {i} " + "т" * 6000, tool_call_id=f"c{i}", name="docs__read")
+
+    results = [m["content"] for m in history.llm_history(session_id, chars=14000) if m["role"] == "tool"]
+
+    assert [len(r) < 1000 for r in results] == [True, True, False, False]
+    assert results[0].startswith("файл 0") and "обрезано" in results[0]
 
 
 def test_a_task_notice_never_splits_a_tool_exchange(settings):
@@ -46,10 +62,10 @@ def test_a_task_notice_never_splits_a_tool_exchange(settings):
     history.add_message(session_id, "notice", "Задача «Сводка»: готово")
     history.add_message(session_id, "tool", "файлы", tool_call_id="c1", name="fs__list")
 
-    roles = [m["role"] for m in history.llm_history(session_id, limit=40)]
+    roles = [m["role"] for m in history.llm_history(session_id, chars=32000)]
 
     assert roles == ["user", "assistant", "tool", "assistant"]
-    assert history.llm_history(session_id, limit=40)[-1]["content"].endswith("Задача «Сводка»: готово")
+    assert history.llm_history(session_id, chars=32000)[-1]["content"].endswith("Задача «Сводка»: готово")
 
 
 def test_a_notice_is_not_the_users_turn(settings):
@@ -61,7 +77,7 @@ def test_a_notice_is_not_the_users_turn(settings):
         history.add_message(session_id, "tool", "текст", tool_call_id=f"c{i}", name="docs__read")
     history.add_message(session_id, "notice", "Задача «Сводка»: готово")
 
-    assert history.llm_history(session_id, limit=10)[0] == {"role": "user", "content": "Сделай отчёт"}
+    assert history.llm_history(session_id, chars=100)[0] == {"role": "user", "content": "Сделай отчёт"}
 
 
 def test_a_plain_client_finds_its_chat_by_the_conversation(settings):
@@ -101,7 +117,7 @@ def test_a_call_left_without_a_result_does_not_break_the_chat(settings):
     history.add_message(session_id, "tool", "ok", tool_call_id="c1", name="fs__move")
     history.add_message(session_id, "user", "Ну что там?")
 
-    messages = history.llm_history(session_id, limit=20)
+    messages = history.llm_history(session_id, chars=32000)
 
     assert [m["role"] for m in messages] == ["user", "assistant", "tool", "tool", "user"]
     assert messages[3]["tool_call_id"] == "c2" and "прерван" in messages[3]["content"]

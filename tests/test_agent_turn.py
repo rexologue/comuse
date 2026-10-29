@@ -100,7 +100,7 @@ async def test_a_tool_reached_outside_the_selection_joins_the_turn(settings):
 
 
 async def test_the_same_failing_call_is_not_made_again(settings, monkeypatch):
-    monkeypatch.setattr(tunables, "get", lambda key: {"agent_max_iterations": 4, "agent_history_messages": 40}.get(key, 24))
+    monkeypatch.setattr(tunables, "get", lambda key: {"agent_max_iterations": 4, "agent_history_chars": 32000}.get(key, 24))
     listing = _calling("fs.list", {"folder": "Нет такой"})
     loop = _loop([listing, listing, listing, listing, {"content": "Не нашёл папку «Нет такой».", "tool_calls": []}])
     session_id = history.ensure_session(None, "x")
@@ -112,6 +112,31 @@ async def test_the_same_failing_call_is_not_made_again(settings, monkeypatch):
     assert result.content == "Не нашёл папку «Нет такой»." and loop.llm.chat.tools_given[-1] == []
 
 
+async def test_a_chat_too_long_for_the_model_is_sent_again_shorter(settings):
+    """The server's context is not known beforehand: its «too long» gets a shorter history,
+    not a chat broken for good."""
+    from common.errors import ApiError
+
+    class Overflowing(FakeChat):
+        async def complete(self, messages, tools=None):
+            if sum(len(m["content"]) for m in messages[1:]) > 12000:
+                self.seen.append(messages)
+                raise ApiError(400, "LLM responded with HTTP 400", {"body": {"error": {"message": "This model's maximum context length is 28768 tokens"}}})
+            return await super().complete(messages, tools)
+
+    loop = _loop([])
+    loop.llm.chat = Overflowing([{"content": "Во втором — счёт", "tool_calls": []}])
+    session_id = history.ensure_session(None, "x")
+    for i in range(3):
+        history.add_message(session_id, "user", f"письмо {i}: " + "т" * 9000)
+        history.add_message(session_id, "assistant", "Прочитал")
+
+    result = await loop._turn(session_id, "что было во втором письме?")
+
+    assert result.content == "Во втором — счёт"
+    assert len(loop.llm.chat.seen) == 2  # 32000 characters of history, then 16000
+
+
 def test_a_cut_result_keeps_every_field():
     text = shrink({"status": "ok", "output": {"text": "x" * 30000, "truncated": True, "attachments": ["a.pdf"]}}, 6000)
     output = json.loads(text)["output"]
@@ -121,6 +146,17 @@ def test_a_cut_result_keeps_every_field():
 
     listed = json.loads(shrink({"files": [{"path": f"f{i}.txt"} for i in range(2000)]}, 6000))["files"]
     assert listed[-1].endswith("из 2000]")
+
+
+def test_a_result_cut_for_the_model_says_so_first():
+    from agent_loop.loop import _shown
+
+    short = {"status": "ok", "output": {"text": "акт"}}
+    assert json.loads(_shown(short)) == short
+
+    shown = json.loads(_shown({"status": "ok", "output": {"text": "т" * 20000, "truncated": False}}))
+    assert list(shown) == ["note", "status", "output"] and "max_chars" in shown["note"]
+    assert "обрезано" in shown["output"]["text"]
 
 
 async def test_a_message_too_long_is_refused_before_it_is_kept(settings):
